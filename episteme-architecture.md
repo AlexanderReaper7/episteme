@@ -1,7 +1,7 @@
-# Helios — AI-Driven Personalized News Aggregator & Synthesizer
+# Episteme — AI-Driven Personalized News Aggregator & Synthesizer
 ## Architectural Blueprint & Execution Plan v1.0
 
-> **Naming note:** "Helios" (the sun, light-bearer, illumination) fits the Odysseus voyage theme.
+> **Naming note:** "Episteme" (ἐπίστημη, knowledge/science) fits the Odysseus voyage theme.
 > The system lives as a sibling service inside your existing `docker-compose.yml` stack.
 
 ---
@@ -41,39 +41,39 @@ flowchart TD
         OLLAMA["Ollama :11434\nqwen2.5:14b (synthesis)\nllama3.2:3b (feedback parser)"]
     end
 
-    subgraph DOCKER["Docker Compose — Helios Stack"]
+    subgraph DOCKER["Docker Compose — Episteme Stack"]
         direction TB
 
         subgraph INGEST["Ingestion Layer"]
-            ING["helios-ingestion\nfeedparser · newspaper4k\narxiv-py · Playwright\nfaster-whisper (podcast)"]
-            RAWDB[("SQLite\nraw_content.db\n/data/helios/")]
+            ING["episteme-ingestion\nfeedparser · newspaper4k\narxiv-py · Playwright\nfaster-whisper (podcast)"]
+            RAWDB[("SQLite\nraw_content.db\n/data/episteme/")]
         end
 
         subgraph ENRICH["Enrichment Layer"]
-            ENR["helios-enricher\nSource Tracer · MinHash Dedup\nOpenAlex lookup · Metadata Tagger"]
+            ENR["episteme-enricher\nSource Tracer · MinHash Dedup\nOpenAlex lookup · Metadata Tagger"]
         end
 
         subgraph EMBED["Embedding Layer"]
-            EMBD["helios-embedder\nnomic-embed-text via Ollama\nor FastEmbed fallback"]
+            EMBD["episteme-embedder\nnomic-embed-text via Ollama\nor FastEmbed fallback"]
         end
 
         subgraph SYNTH["Synthesis Layer"]
-            ORCH["helios-synthesizer\nCluster Detector\nPrompt Builder\nJob Scheduler (APScheduler)"]
+            ORCH["episteme-synthesizer\nCluster Detector\nPrompt Builder\nJob Scheduler (APScheduler)"]
             IMGQ["Image Job Queue\n(SQLite queue table)"]
         end
 
         subgraph IMGGEN["Image Generation"]
             COMFY["comfyui :8188\nSD 1.5 + LCM-LoRA\nCPU offload mode"]
-            IMGS[("image-store\n/data/helios/images/")]
+            IMGS[("image-store\n/data/episteme/images/")]
         end
 
         subgraph DELIVERY["Delivery Layer"]
-            API["helios-api :8200\nFastAPI\nfeed · feedback · sources"]
-            FE["Helios Frontend\nVanilla JS/CSS\nserved by helios-api"]
+            API["episteme-api :8200\nFastAPI\nfeed · feedback · sources"]
+            FE["Episteme Frontend\nVanilla JS/CSS\nserved by episteme-api"]
         end
 
         subgraph EXISTING["Existing Odysseus Services"]
-            CHROMA["ChromaDB :8100\nhelios_articles\nhelios_sources\nhelios_user_profiles"]
+            CHROMA["ChromaDB :8100\nepisteme_articles\nepisteme_sources\nepisteme_user_profiles"]
             SRXNG["SearXNG :8080\nsource verification\ndiscovery search"]
             NTFY["ntfy :8091\njob coordination\npush alerts"]
             ODS["Odysseus :7000\nknowledge graph hook\nmemory hook"]
@@ -81,7 +81,7 @@ flowchart TD
     end
 
     subgraph BROWSER["Browser Client"]
-        UI["Helios Feed\nArticle Viewer\nFeedback UI"]
+        UI["Episteme Feed\nArticle Viewer\nFeedback UI"]
     end
 
     %% Ingestion flow
@@ -148,16 +148,16 @@ flowchart TD
 | Component | Location | Reason |
 |---|---|---|
 | **Ollama** | Host (bare metal) | Already running; GPU access without passthrough complexity on Windows |
-| **helios-ingestion** | Docker | Network isolation; easy restart; schedule via APScheduler inside container |
-| **helios-enricher** | Docker | Shares `raw_content.db` volume with ingestion |
-| **helios-embedder** | Docker | Calls Ollama via `host.docker.internal:11434` |
-| **helios-synthesizer** | Docker | Orchestrates LLM calls via `host.docker.internal:11434` |
-| **helios-api** | Docker | FastAPI server; bridges all Helios components |
+| **episteme-ingestion** | Docker | Network isolation; easy restart; schedule via APScheduler inside container |
+| **episteme-enricher** | Docker | Shares `raw_content.db` volume with ingestion |
+| **episteme-embedder** | Docker | Calls Ollama via `host.docker.internal:11434` |
+| **episteme-synthesizer** | Docker | Orchestrates LLM calls via `host.docker.internal:11434` |
+| **episteme-api** | Docker | FastAPI server; bridges all Episteme components |
 | **comfyui** | Docker | Isolated; CPU offload configured via `--cpu` flag; port `8188` |
 | **ChromaDB** | Docker (existing) | Add new collections; no schema change needed |
 | **SearXNG** | Docker (existing) | Reused for source verification queries |
 | **ntfy** | Docker (existing) | Job coordination events between synthesizer and ComfyUI |
-| **SQLite raw_content.db** | Docker volume | Bind-mounted at `/data/helios/` for easy host access |
+| **SQLite raw_content.db** | Docker volume | Bind-mounted at `/data/episteme/` for easy host access |
 
 ---
 
@@ -307,8 +307,8 @@ Topic classification uses a zero-shot prompt to `llama3.2:3b` (fast, small):
 
 ```python
 # Collection 1: Article embeddings
-helios_articles = chroma.get_or_create_collection(
-    name="helios_articles",
+episteme_articles = chroma.get_or_create_collection(
+    name="episteme_articles",
     metadata={"hnsw:space": "cosine"}
 )
 # Documents: synthesized_posts (body text)
@@ -316,16 +316,16 @@ helios_articles = chroma.get_or_create_collection(
 # Metadata: {topic, source_type, published_at, authority_score, post_id, doi}
 
 # Collection 2: Source authority registry
-helios_sources = chroma.get_or_create_collection(
-    name="helios_sources",
+episteme_sources = chroma.get_or_create_collection(
+    name="episteme_sources",
     metadata={"hnsw:space": "cosine"}
 )
 # Documents: abstract or description of each primary source
 # Metadata: {doi, arxiv_id, citation_count, journal, domain}
 
 # Collection 3: User preference profiles
-helios_user_profiles = chroma.get_or_create_collection(
-    name="helios_user_profiles",
+episteme_user_profiles = chroma.get_or_create_collection(
+    name="episteme_user_profiles",
     metadata={"hnsw:space": "cosine"}
 )
 # One document per user: their preference embedding vector + filter state
@@ -406,7 +406,7 @@ Output format: HTML with <h2>, <p>, <blockquote> (for direct quotes), and <foote
 Do NOT include <html>, <head>, or <body> tags.
 ```
 
-#### Job Scheduling (APScheduler inside helios-synthesizer)
+#### Job Scheduling (APScheduler inside episteme-synthesizer)
 
 ```
 Ingestion jobs:    every 2h (RSS/news), 6h (arXiv), daily (podcasts)
@@ -430,12 +430,12 @@ scheduling**:
 
 ```
 1. Synthesizer writes finished article text to SQLite + sends ntfy event
-   "helios/synthesis_complete" with post_id
+   "episteme/synthesis_complete" with post_id
 2. Ollama model is unloaded (Ollama auto-evicts after keep_alive timeout;
    set OLLAMA_KEEP_ALIVE=30s in environment so it releases VRAM quickly)
-3. ntfy subscriber in helios-synthesizer receives the event
+3. ntfy subscriber in episteme-synthesizer receives the event
 4. Image job is submitted to ComfyUI API
-5. ComfyUI generates image → saves to /data/helios/images/{post_id}.png
+5. ComfyUI generates image → saves to /data/episteme/images/{post_id}.png
 6. Synthesizer updates SQLite with image_path
 ```
 
@@ -482,7 +482,7 @@ comfyui:
     - "127.0.0.1:8188:8188"
   volumes:
     - comfyui-models:/opt/ComfyUI/models
-    - helios-images:/data/helios/images
+    - episteme-images:/data/episteme/images
   environment:
     - CLI_ARGS=--lowvram --preview-method none
   restart: unless-stopped
@@ -495,7 +495,7 @@ comfyui:
 #### User Preference Vector
 
 Each user has a preference embedding vector `U` (same dimensionality as article
-embeddings: 768 dims for nomic-embed-text) stored in `helios_user_profiles`.
+embeddings: 768 dims for nomic-embed-text) stored in `episteme_user_profiles`.
 
 **Initialization:** `U = mean(embeddings of first 10 articles shown)`
 
@@ -555,7 +555,7 @@ def apply_nl_feedback(U: np.ndarray, parsed: dict, chroma_client) -> np.ndarray:
     # Retrieve topic centroid embeddings
     for topic, delta in parsed["topic_boosts"].items():
         results = chroma_client.query(
-            collection="helios_articles",
+            collection="episteme_articles",
             query_texts=[topic],
             n_results=50,
             where={"topic": topic}
@@ -754,20 +754,20 @@ OLLAMA_NUM_PARALLEL=1          # one request at a time; prevents memory fragment
 
 **Goal:** Working feed with LLM-synthesized articles from RSS + arXiv. No images, no recommendation yet.
 
-- [ ] Add `helios-ingestion` container to `docker-compose.yml`
+- [ ] Add `episteme-ingestion` container to `docker-compose.yml`
   - `feedparser` for 10 initial RSS feeds
   - `arxiv` package for cs.AI, astro-ph.GA, q-bio.GN
   - Store to `raw_content.db`
-- [ ] Add `helios-api` container (FastAPI, port 8200)
+- [ ] Add `episteme-api` container (FastAPI, port 8200)
   - `GET /feed` — returns latest 20 posts
   - `GET /feed/{id}` — returns full post HTML
   - `GET /health`
-- [ ] Build `helios-synthesizer` as a function called from `helios-api`
+- [ ] Build `episteme-synthesizer` as a function called from `episteme-api`
   - APScheduler runs every 4 hours
   - Stage 1 summaries via `llama3.2:3b`
   - Stage 2 synthesis via `qwen2.5:14b`
   - Store to `synthesized_posts` table
-- [ ] Minimal frontend: static HTML page served from `helios-api`
+- [ ] Minimal frontend: static HTML page served from `episteme-api`
   - Card grid of articles
   - Click → article modal with citations
 
@@ -779,7 +779,7 @@ OLLAMA_NUM_PARALLEL=1          # one request at a time; prevents memory fragment
 
 **Goal:** Source tracing, near-duplicate filtering, image generation, and ChromaDB integration.
 
-- [ ] Build `helios-enricher`
+- [ ] Build `episteme-enricher`
   - OpenAlex DOI resolution
   - `datasketch` MinHash deduplication
   - Topic classifier (llama3.2:3b zero-shot)
@@ -803,7 +803,7 @@ OLLAMA_NUM_PARALLEL=1          # one request at a time; prevents memory fragment
 
 **Goal:** Like/Dislike signals, NL feedback, preference vector, ranked feed.
 
-- [ ] Implement user preference vector in `helios_user_profiles` ChromaDB collection
+- [ ] Implement user preference vector in `episteme_user_profiles` ChromaDB collection
 - [ ] `POST /feed/{id}/signal` — update user vector on like/dislike
 - [ ] `POST /feed/feedback` — NL feedback → llama3.2:3b parse → apply to user vector
 - [ ] `GET /feed` — ranked by scoring formula
@@ -811,7 +811,7 @@ OLLAMA_NUM_PARALLEL=1          # one request at a time; prevents memory fragment
   - faster-whisper transcription pipeline
   - Chunk embedding + storage
 - [ ] Playwright scraper for 3–5 JS-heavy priority sources
-- [ ] Add ntfy push alerts: "New Helios digest ready" → Odysseus notification
+- [ ] Add ntfy push alerts: "New Episteme digest ready" → Odysseus notification
 
 **Deliverable:** Feed that improves with each interaction.
 
@@ -819,21 +819,21 @@ OLLAMA_NUM_PARALLEL=1          # one request at a time; prevents memory fragment
 
 ### Phase 4 — Odysseus Integration (Weeks 13+)
 
-**Goal:** Bidirectional hooks between Helios and Odysseus.
+**Goal:** Bidirectional hooks between Episteme and Odysseus.
 
 - [ ] `POST /hooks/knowledge-graph`
-  - Helios pushes synthesized article to Odysseus memory/notes
+  - Episteme pushes synthesized article to Odysseus memory/notes
   - Article becomes a node in Odysseus's knowledge base
   - Requires: read `routes/memory_routes.py` and `routes/note_routes.py` to
     understand the existing write API
 - [ ] `GET /hooks/context`
-  - Helios pulls user's active topics from Odysseus calendar (upcoming events →
+  - Episteme pulls user's active topics from Odysseus calendar (upcoming events →
     boost adjacent topics; e.g., calendar entry "exoplanet talk" → boost space)
   - Pulls from Odysseus task/note recency signals as soft topic hints
-- [ ] Unified auth: Helios checks Odysseus session token via shared `core/auth.py`
+- [ ] Unified auth: Episteme checks Odysseus session token via shared `core/auth.py`
   so there's no second login
-- [ ] Surface Helios feed as a panel inside Odysseus's UI (iframe embed or
-  dedicated Odysseus route `routes/helios_routes.py`)
+- [ ] Surface Episteme feed as a panel inside Odysseus's UI (iframe embed or
+  dedicated Odysseus route `routes/episteme_routes.py`)
 
 ---
 
@@ -841,14 +841,14 @@ OLLAMA_NUM_PARALLEL=1          # one request at a time; prevents memory fragment
 
 ### Integration Point Map
 
-| Odysseus Route | Helios Usage | Direction |
+| Odysseus Route | Episteme Usage | Direction |
 |---|---|---|
-| `routes/memory_routes.py` | Push synthesized articles as memory entries | Helios → Odysseus |
-| `routes/note_routes.py` | Save user-flagged articles as notes | Helios → Odysseus |
-| `routes/task_routes.py` | Create "read later" tasks from bookmarked articles | Helios → Odysseus |
-| `routes/calendar_routes.py` | Pull upcoming events as topic hint signals | Odysseus → Helios |
-| `routes/research_routes.py` | Trigger Deep Research from Helios article | Helios → Odysseus |
-| `routes/webhook_routes.py` | Receive Odysseus agent actions (e.g., "add source") | Odysseus → Helios |
+| `routes/memory_routes.py` | Push synthesized articles as memory entries | Episteme → Odysseus |
+| `routes/note_routes.py` | Save user-flagged articles as notes | Episteme → Odysseus |
+| `routes/task_routes.py` | Create "read later" tasks from bookmarked articles | Episteme → Odysseus |
+| `routes/calendar_routes.py` | Pull upcoming events as topic hint signals | Odysseus → Episteme |
+| `routes/research_routes.py` | Trigger Deep Research from Episteme article | Episteme → Odysseus |
+| `routes/webhook_routes.py` | Receive Odysseus agent actions (e.g., "add source") | Odysseus → Episteme |
 | `routes/embedding_routes.py` | Share embedding infrastructure | Both |
 
 ### Future Knowledge Graph Design (Phase 4+)
@@ -896,7 +896,7 @@ at minimum ~2 GB to load the UNet. They cannot run simultaneously.
 
 **Mitigation (implemented in architecture):**
 1. `OLLAMA_KEEP_ALIVE=30s` ensures the LLM evicts from VRAM quickly after synthesis.
-2. Synthesis orchestrator sends ntfy event `helios/synthesis_complete` only after
+2. Synthesis orchestrator sends ntfy event `episteme/synthesis_complete` only after
    the Ollama request returns and a 35-second buffer wait.
 3. ComfyUI subscribes to that ntfy topic. Image jobs queue locally and process
    sequentially. No polling; event-driven.
@@ -947,14 +947,14 @@ on CPU. This blocks the ingestion worker thread.
 
 ### Bottleneck 5: ChromaDB Metadata Filter Performance at Scale
 
-**Problem:** As `helios_articles` grows (estimate: ~5K articles/month),
+**Problem:** As `episteme_articles` grows (estimate: ~5K articles/month),
 metadata-filtered queries (e.g., "get all space articles from last 7 days") may slow.
 
 **Mitigation:**
 - ChromaDB's HNSW index is fast at ANN search but metadata filtering is post-hoc.
   For a personal aggregator, 60K articles/year is well within ChromaDB's comfortable range.
 - Partition by time if needed: archive articles older than 90 days to a separate
-  `helios_articles_archive` collection. Active queries only hit the small recent collection.
+  `episteme_articles_archive` collection. Active queries only hit the small recent collection.
 - SQLite `synthesized_posts` table handles all non-vector queries (pagination, date
   range filtering, topic filtering by exact match). ChromaDB is used only for
   semantic similarity queries.
@@ -983,21 +983,21 @@ or conflate two different studies in a synthesis.
 Add the following services to your existing `c:\selfhosting\odysseus\docker-compose.yml`:
 
 ```yaml
-  helios-api:
+  episteme-api:
     build:
-      context: ./helios
+      context: ./episteme
       dockerfile: Dockerfile
     ports:
       - "127.0.0.1:8200:8200"
     volumes:
-      - helios-data:/data/helios
+      - episteme-data:/data/episteme
     environment:
       - CHROMADB_HOST=chromadb
       - CHROMADB_PORT=8000
       - OLLAMA_BASE_URL=http://host.docker.internal:11434
       - SEARXNG_URL=http://searxng:8080
       - NTFY_URL=http://ntfy:80
-      - HELIOS_DATA=/data/helios
+      - HELIOS_DATA=/data/episteme
     depends_on:
       - chromadb
       - searxng
@@ -1012,13 +1012,13 @@ Add the following services to your existing `c:\selfhosting\odysseus\docker-comp
       - "127.0.0.1:8188:8188"
     volumes:
       - comfyui-models:/opt/ComfyUI/models
-      - helios-data:/data/helios
+      - episteme-data:/data/episteme
     environment:
       - CLI_ARGS=--lowvram --preview-method none
     restart: unless-stopped
 
 # Add to volumes section:
-#   helios-data:
+#   episteme-data:
 #   comfyui-models:
 ```
 
