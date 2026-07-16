@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>{% block title %}Episteme{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <!-- Vendored htmx preferred; falls back to CDN until static/htmx.min.js exists.
+       Vendor it with:
+       curl -sL -o src/episteme/web/static/htmx.min.js https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js -->
+  <script src="/static/htmx.min.js"
+          onerror="var s=document.createElement('script');s.src='https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js';document.head.appendChild(s);"></script>
+</head>
+<body>
+  <header class="site-header">
+    <h1>Episteme</h1>
+    <p class="tagline">your personal science feed</p>
+  </header>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

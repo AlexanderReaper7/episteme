@@ -1,0 +1,43 @@
+{% for item in items %}
+{% set banner = item.media_refs | banner_image %}
+<article class="card">
+  {% if banner %}
+  {# Hotlinked (never cached, per spec §6) — remove the banner if the remote image is gone. #}
+  <a class="card-banner" href="{{ item.url }}" target="_blank" rel="noopener noreferrer">
+    <img src="{{ banner }}" alt="" loading="lazy"
+         onerror="this.closest('.card-banner').remove()">
+  </a>
+  {% endif %}
+  <div class="card-body">
+    <div class="card-meta">
+      <span class="source-name">{{ item.source.name }}</span>
+      {% if item.published_at %}<time>{{ item.published_at | dt }}</time>{% endif %}
+    </div>
+    <h2 class="card-title">
+      <a href="{{ item.url }}" target="_blank" rel="noopener noreferrer">
+        {{ item.title or item.url }}
+      </a>
+    </h2>
+    {% set snippet = item.extracted_text or (item.raw_content | striptags if item.raw_content else None) %}
+    {% if snippet %}
+    <p class="card-snippet">{{ snippet | truncate(300) }}</p>
+    {% endif %}
+  </div>
+</article>
+{% else %}
+{% if page == 1 %}
+<p class="empty-state">
+  No items yet — the worker fetches feeds on its schedule. Trigger a run now with:
+  <code>docker compose exec worker procrastinate --app=episteme.worker.app.app defer episteme.ingest_all '{}'</code>
+</p>
+{% endif %}
+{% endfor %}
+
+{% if has_more %}
+<div class="load-sentinel"
+     hx-get="/partials/items?page={{ page + 1 }}"
+     hx-trigger="revealed"
+     hx-swap="outerHTML">
+  <span class="loading">loading…</span>
+</div>
+{% endif %}

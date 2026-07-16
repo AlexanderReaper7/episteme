@@ -194,6 +194,18 @@ news story: citation counts, journal, authors. Used for:
 Ingestion is cheap and runs on its own schedule (e.g., every 1–2 h) — it does **not**
 wait for idle time. Only LLM processing is deferred to idle/overnight windows.
 
+**Politeness (be a good citizen toward sources):**
+
+- **Global throttle:** every outbound request to any source goes through one shared
+  rate limiter — min 2 s gap, normally distributed around a 3 s mean — regardless of
+  how many sources/items are queued.
+- **Conditional GETs:** feed fetches send `If-None-Match`/`If-Modified-Since` from
+  stored validators; an unchanged feed costs the server a 304 and no body.
+- **Rate-limit respect:** a 429 sets a per-source cooldown honoring `Retry-After`
+  (1 h fallback); cooled-down sources are skipped, never retried immediately.
+- **Fetch-once:** deduplication guarantees an article URL is fetched at most once,
+  ever; honest identifying User-Agent on all requests.
+
 ---
 
 ## 6. Article Format & Template System

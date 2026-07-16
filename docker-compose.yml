@@ -1,0 +1,49 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: episteme
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-episteme}
+      POSTGRES_DB: episteme
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U episteme -d episteme"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  # One-shot: creates the pgvector extension, tables, seed sources, and the
+  # procrastinate job-queue schema. Idempotent; re-runs on every `up`.
+  migrate:
+    build: .
+    command: python -m episteme.bootstrap
+    environment: &env
+      DATABASE_URL: postgresql://episteme:${POSTGRES_PASSWORD:-episteme}@db:5432/episteme
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    build: .
+    command: uvicorn episteme.web.app:app --host 0.0.0.0 --port 8200
+    environment: *env
+    ports:
+      - "127.0.0.1:8200:8200"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  worker:
+    build: .
+    command: procrastinate --app=episteme.worker.app.app worker
+    environment: *env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  pgdata:
