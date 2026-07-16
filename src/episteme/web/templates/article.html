@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+
+{% block title %}{{ article.title }} — Episteme{% endblock %}
+
+{% block content %}
+<article class="article-page">
+  <header class="article-header">
+    <div class="card-meta">
+      <span class="byline">Episteme</span>
+      <span>{{ article.reading_time_minutes }} min · {{ article.difficulty }}</span>
+      <time>{{ article.generated_at | dt }}</time>
+    </div>
+    <h1>{{ article.title }}</h1>
+    <p class="article-summary">{{ article.summary }}</p>
+    <div class="topic-chips">
+      {% for topic in article.topics %}<span class="chip">{{ topic }}</span>{% endfor %}
+    </div>
+  </header>
+
+  {% for section in article.sections %}
+    {% if section.type == "prose" %}
+      <div class="section-prose">{{ section.text | markdown }}</div>
+    {% elif section.type == "key_points" %}
+      <div class="section-key-points">
+        <h2>Key points</h2>
+        <ul>
+          {% for point in section["items"] %}<li>{{ point }}</li>{% endfor %}
+        </ul>
+      </div>
+    {% elif section.type == "sources" %}
+      <footer class="section-sources">
+        <h2>Sources</h2>
+        <ul>
+          {% for src in section["items"] %}
+          <li>
+            <a href="{{ src.url }}" target="_blank" rel="noopener noreferrer">{{ src.title }}</a>
+            <span class="source-name">{{ src.outlet }}</span>
+          </li>
+          {% endfor %}
+        </ul>
+      </footer>
+    {% endif %}
+  {% endfor %}
+
+  <p class="article-footnote">
+    Written by a local model ({{ article.model_used }}) from the sources above.
+    <a href="/">← back to feed</a>
+  </p>
+</article>
+{% endblock %}

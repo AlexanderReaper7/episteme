@@ -1,7 +1,50 @@
 {% extends "base.html" %}
 
 {% block content %}
-<section id="feed" class="feed">
-  {% include "_items.html" %}
+{% if articles %}
+<section class="feed" id="articles">
+  {% for article in articles %}
+  {% set banner = article.story | story_banner %}
+  <article class="card article-card">
+    {% if banner %}
+    <a class="card-banner" href="/article/{{ article.id }}">
+      <img src="{{ banner }}" alt="" loading="lazy"
+           onerror="this.closest('.card-banner').remove()">
+    </a>
+    {% endif %}
+    <div class="card-body">
+      <div class="card-meta">
+        <span class="byline">Episteme</span>
+        <span>{{ article.reading_time_minutes }} min · {{ article.difficulty }}</span>
+        <time>{{ article.generated_at | dt }}</time>
+      </div>
+      <h2 class="card-title"><a href="/article/{{ article.id }}">{{ article.title }}</a></h2>
+      <p class="card-snippet">{{ article.summary | truncate(300) }}</p>
+      <div class="topic-chips">
+        {% for topic in article.topics %}<span class="chip">{{ topic }}</span>{% endfor %}
+      </div>
+    </div>
+  </article>
+  {% endfor %}
 </section>
+
+<div class="divider"><span>you're caught up — below is the raw stream</span></div>
+{% endif %}
+
+{% if fallback %}
+<p class="note">The pipeline hasn't produced articles or story clusters yet — showing raw
+source items. Trigger a run with:
+<code>docker compose exec worker procrastinate --app=episteme.worker.app.app defer episteme.run_pipeline '{}'</code></p>
+<section id="feed" class="feed">
+  {% with items = fallback["items"], page = fallback.page, has_more = fallback.has_more %}
+  {% include "_items.html" %}
+  {% endwith %}
+</section>
+{% else %}
+<section id="stream" class="feed stream">
+  {% with stories = stream.stories, page = stream.page, has_more = stream.has_more %}
+  {% include "_stories.html" %}
+  {% endwith %}
+</section>
+{% endif %}
 {% endblock %}

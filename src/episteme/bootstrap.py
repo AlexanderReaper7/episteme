@@ -45,6 +45,8 @@ ADDITIVE_MIGRATIONS = [
     "ALTER TABLE sources ADD COLUMN IF NOT EXISTS http_etag TEXT",
     "ALTER TABLE sources ADD COLUMN IF NOT EXISTS http_last_modified TEXT",
     "ALTER TABLE sources ADD COLUMN IF NOT EXISTS cooldown_until TIMESTAMPTZ",
+    # Phase 2 (stories table itself comes from create_all, which runs first)
+    "ALTER TABLE source_items ADD COLUMN IF NOT EXISTS story_id INT REFERENCES stories(id)",
 ]
 
 

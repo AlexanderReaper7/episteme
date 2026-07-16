@@ -46,6 +46,7 @@ class SourceItem(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     source_id: Mapped[int] = mapped_column(ForeignKey("sources.id"))
+    story_id: Mapped[int | None] = mapped_column(ForeignKey("stories.id"))
     url: Mapped[str] = mapped_column(Text)
     hash: Mapped[str] = mapped_column(String(64), unique=True)  # sha256(canonical url)
     title: Mapped[str | None] = mapped_column(Text)
@@ -63,3 +64,50 @@ class SourceItem(Base):
     )
 
     source: Mapped[Source] = relationship(back_populates="items")
+    story: Mapped[Story | None] = relationship(back_populates="items")
+
+
+class Story(Base):
+    """A cluster of SourceItems about the same underlying event/paper (spec §4)."""
+
+    __tablename__ = "stories"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # new -> triaged (decision recorded) -> written | aggregated | skipped
+    status: Mapped[str] = mapped_column(String(20), default="new")
+    triage_decision: Mapped[str | None] = mapped_column(String(20))
+    triage_reason: Mapped[str | None] = mapped_column(Text)
+    topics: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    centroid: Mapped[Any | None] = mapped_column(Vector(EMBEDDING_DIM))
+    item_count: Mapped[int] = mapped_column(default=0)
+    first_item_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_item_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    items: Mapped[list[SourceItem]] = relationship(back_populates="story")
+    articles: Mapped[list[Article]] = relationship(back_populates="story")
+
+
+class Article(Base):
+    """A generated article; `sections` is the typed-section data of spec §6."""
+
+    __tablename__ = "articles"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    story_id: Mapped[int] = mapped_column(ForeignKey("stories.id"))
+    title: Mapped[str] = mapped_column(Text)
+    summary: Mapped[str] = mapped_column(Text)
+    difficulty: Mapped[str] = mapped_column(String(20))
+    topics: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    sections: Mapped[list[Any]] = mapped_column(JSONB, default=list)
+    reading_time_minutes: Mapped[int] = mapped_column(default=1)
+    model_used: Mapped[str | None] = mapped_column(Text)
+    quality_score: Mapped[float | None] = mapped_column()  # populated by verify (Phase 4)
+    status: Mapped[str] = mapped_column(String(20), default="published")
+    generated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    story: Mapped[Story] = relationship(back_populates="articles")

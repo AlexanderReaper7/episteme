@@ -112,6 +112,139 @@ main {
   color: var(--muted);
 }
 
+/* Generated-article cards: visually distinct from the raw stream. */
+.article-card {
+  border-color: #2b3a5e;
+}
+
+.byline {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.topic-chips {
+  margin-top: 0.6rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.chip {
+  font-size: 0.72rem;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.05rem 0.6rem;
+}
+
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin: 2rem 0;
+}
+
+.divider::before,
+.divider::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--border);
+}
+
+.story-links {
+  list-style: none;
+  margin: 0.6rem 0 0;
+  padding: 0.6rem 0 0;
+  border-top: 1px solid var(--border);
+  font-size: 0.82rem;
+}
+
+.story-links li { margin-bottom: 0.3rem; }
+
+.story-links a {
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.story-links a:hover { color: var(--accent); }
+
+.note {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin-bottom: 1.5rem;
+}
+
+.note code { word-break: break-all; }
+
+/* Article page */
+.article-page {
+  max-width: 46rem;
+  margin: 0 auto;
+  padding: 1rem 0 4rem;
+}
+
+.article-header h1 {
+  margin: 0.5rem 0;
+  font-size: 2rem;
+  line-height: 1.25;
+}
+
+.article-summary {
+  font-size: 1.1rem;
+  color: var(--muted);
+}
+
+.section-prose {
+  font-size: 1.02rem;
+  line-height: 1.7;
+}
+
+.section-prose a { color: var(--accent); }
+
+.section-key-points,
+.section-sources {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem 1.5rem;
+  margin: 1.5rem 0;
+}
+
+.section-key-points h2,
+.section-sources h2 {
+  margin-top: 0;
+  font-size: 1rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.section-sources ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.section-sources li { margin-bottom: 0.5rem; }
+
+.section-sources a { color: var(--text); }
+
+.section-sources .source-name {
+  margin-left: 0.5rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.article-footnote {
+  margin-top: 3rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.article-footnote a { color: var(--accent); }
+
 .empty-state,
 .load-sentinel {
   grid-column: 1 / -1;
