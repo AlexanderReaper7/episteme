@@ -102,10 +102,13 @@ async def polite_get(
     mode: HttpMode = DEFAULT_MODE,
     extra_headers: dict[str, str] | None = None,
     follow_redirects: bool = True,
+    extensions: dict | None = None,
 ) -> FetchResponse:
     """Throttled GET in the given transport mode. Redirects are followed unless
     `follow_redirects=False` (the research fetcher disables auto-follow so it can
-    re-run its SSRF check on each hop — see research.tools)."""
+    re-run its SSRF check on each hop — see research.tools). `extensions` are httpx
+    request extensions (e.g. `sni_hostname` for the research fetcher's DNS pinning);
+    honored only in ``polite`` mode — curl_cffi has no equivalent."""
     await polite_wait()
     if mode == "impersonate":
         # curl_cffi supplies a full browser header set (UA, sec-ch-ua, Accept, ...)
@@ -140,7 +143,7 @@ async def polite_get(
     async with httpx.AsyncClient(
         timeout=settings.http_timeout_seconds, follow_redirects=follow_redirects, headers=headers
     ) as client:
-        response = await client.get(url)
+        response = await client.get(url, extensions=extensions)
     return FetchResponse(
         response.status_code, response.content, response.text, response.headers
     )

@@ -135,15 +135,14 @@ async def api_status():
         ).scalar_one_or_none()
 
     llm_models: list[dict] | None = None
-    llm_available = await gateway.is_available()
-    if llm_available:
-        try:
-            llm_models = [
-                {"id": m.get("id"), "status": (m.get("status") or {}).get("value")}
-                for m in await gateway.list_models()
-            ]
-        except Exception:
-            llm_models = None
+    try:
+        llm_models = [
+            {"id": m.get("id"), "status": (m.get("status") or {}).get("value")}
+            for m in await gateway.list_models()
+        ]
+        llm_available = True
+    except Exception:
+        llm_available = False
 
     return {
         "llm": {

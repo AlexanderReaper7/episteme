@@ -211,10 +211,21 @@ class LLMGateway:
         if not texts:
             return []
         start = time.monotonic()
-        response = await self._client.post(
-            "/embeddings", json={"model": self.model_for("embed"), "input": texts}
-        )
-        response.raise_for_status()
+        try:
+            response = await self._client.post(
+                "/embeddings", json={"model": self.model_for("embed"), "input": texts}
+            )
+            response.raise_for_status()
+        except Exception as exc:
+            await record_llm_call(
+                role="embed",
+                model=self.model_for("embed"),
+                kind="embed",
+                duration_ms=int((time.monotonic() - start) * 1000),
+                request={"batch_size": len(texts)},
+                error=str(exc),
+            )
+            raise
         # Batch size only — 300+ full payloads a night would drown the log.
         await record_llm_call(
             role="embed",

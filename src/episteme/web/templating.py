@@ -4,6 +4,7 @@ from datetime import datetime
 from pathlib import Path
 
 import markdown as md
+import nh3
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 
@@ -34,7 +35,10 @@ def _story_banner(story: Story) -> str | None:
 
 
 def _markdown(value: str) -> Markup:
-    return Markup(md.markdown(value))
+    # python-markdown passes raw HTML through untouched, and the LLM prose it renders
+    # is downstream of fetched web content (prompt-injectable) — so sanitize before
+    # marking the result safe for the template.
+    return Markup(nh3.clean(md.markdown(value)))
 
 
 templates.env.filters["dt"] = _format_dt

@@ -5,7 +5,7 @@ handlers are plain async functions, so the admin routes call them directly."""
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
 from .api import (
@@ -85,10 +85,7 @@ def _group_calls(calls: list[dict]) -> list[dict]:
 
 @router.get("/story/{story_id}", response_class=HTMLResponse)
 async def story_provenance(request: Request, story_id: int):
-    try:
-        story = await api_story(story_id)
-    except HTTPException:
-        raise
+    story = await api_story(story_id)
     calls = await api_story_llm_calls(story_id, full=True)
     total_prompt = sum(c["prompt_tokens"] or 0 for c in calls)
     total_completion = sum(c["completion_tokens"] or 0 for c in calls)
