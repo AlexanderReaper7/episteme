@@ -127,11 +127,14 @@ class LLMGateway:
         role: Role,
         messages: list[dict],
         tools: list[dict] | None = None,
+        response_schema: dict | None = None,
         temperature: float = 0.3,
     ) -> dict:
-        """Lower-level chat over a full message list, optionally with tools. Returns
-        the raw assistant message dict (may carry `tool_calls`). Used by the research
-        agent loop; `chat`/`complete_json` remain the path for single-shot calls."""
+        """Lower-level chat over a full message list, optionally with tools and/or a
+        grammar-constraining response schema. Returns the raw assistant message dict
+        (may carry `tool_calls`). Used by the writer's agentic loop (the schema turn
+        produces the final draft inside the same conversation); `chat`/`complete_json`
+        remain the path for single-shot calls."""
         payload: dict = {
             "model": self.model_for(role),
             "messages": messages,
@@ -142,9 +145,18 @@ class LLMGateway:
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
+        if response_schema is not None:
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {"name": "response", "strict": True, "schema": response_schema},
+            }
         start = time.monotonic()
         try:
             response = await self._client.post("/chat/completions", json=payload)
+            if response.status_code == 400 and response_schema is not None:
+                # Older llama.cpp builds use the pre-OpenAI "json_object" + schema form.
+                payload["response_format"] = {"type": "json_object", "schema": response_schema}
+                response = await self._client.post("/chat/completions", json=payload)
             response.raise_for_status()
         except Exception as exc:
             await record_llm_call(
