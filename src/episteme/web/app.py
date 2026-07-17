@@ -1,54 +1,20 @@
-from datetime import datetime
-from pathlib import Path
-
-import markdown as md
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
-from markupsafe import Markup
 from sqlalchemy import select, text
 from sqlalchemy.orm import joinedload, selectinload
 
 from ..config import settings
 from ..db import SessionLocal
 from ..models import Article, SourceItem, Story
-
-BASE_DIR = Path(__file__).parent
+from .admin import router as admin_router
+from .api import router as api_router
+from .templating import BASE_DIR, templates
 
 app = FastAPI(title="Episteme")
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
-
-templates = Jinja2Templates(directory=BASE_DIR / "templates")
-
-
-def _format_dt(value: datetime | None) -> str:
-    return value.strftime("%Y-%m-%d %H:%M") if value else ""
-
-
-def _banner_image(media_refs: list | None) -> str | None:
-    for ref in media_refs or []:
-        if ref.get("kind") == "image" and ref.get("url"):
-            return ref["url"]
-    return None
-
-
-def _story_banner(story: Story) -> str | None:
-    for item in story.items:
-        banner = _banner_image(item.media_refs)
-        if banner:
-            return banner
-    return None
-
-
-def _markdown(value: str) -> Markup:
-    return Markup(md.markdown(value))
-
-
-templates.env.filters["dt"] = _format_dt
-templates.env.filters["banner_image"] = _banner_image
-templates.env.filters["story_banner"] = _story_banner
-templates.env.filters["markdown"] = _markdown
+app.include_router(api_router)
+app.include_router(admin_router)
 
 
 async def _stream_page(session, page: int) -> dict:

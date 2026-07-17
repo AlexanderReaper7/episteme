@@ -74,6 +74,9 @@ ADDITIVE_MIGRATIONS = [
     # Phase 3 research-writer: story ranking + gathered-research provenance.
     "ALTER TABLE stories ADD COLUMN IF NOT EXISTS rank_score DOUBLE PRECISION",
     "ALTER TABLE stories ADD COLUMN IF NOT EXISTS research_notes JSONB",
+    # Observability: tool-loop calls store message deltas chained by chain_id/seq.
+    "ALTER TABLE llm_calls ADD COLUMN IF NOT EXISTS chain_id VARCHAR(36)",
+    "ALTER TABLE llm_calls ADD COLUMN IF NOT EXISTS seq INT",
     # Phys.org needs TLS impersonation (seeds.py explains why); the seed only runs
     # on an empty table, so flip the existing row, clear the superseded disguise_ua
     # key, and drop the cooldown its 429s left.

@@ -34,6 +34,13 @@ spec (data model, pipeline stages, feed-composition rules, roadmap phases, decid
   researched facts (no verbatim-summary restatement). `sources` section matched
   the DB row exactly; `further_reading` built from research fetches with
   already-cited URLs deduplicated. Zero errors, article page renders.
+- **Observability + admin + API verified live (2026-07-17)**: `llm_calls` /
+  `pipeline_runs` tables, gateway instrumentation, `/api/*` JSON routes, and the
+  `/admin` dashboard + per-story provenance page all live-tested — a story-284
+  rewrite produced 5 tagged rows (4 research tool-chats + 1 writer call, correct
+  stage/story_id/tokens/timing) rendered on `/admin/story/284`. Postgres is
+  published to the host at `127.0.0.1:5433` (5432 was taken) for pgAdmin;
+  credentials in `.env`.
 - Embedding models: `Octen-Embedding-4B.Q8_0` (default `embed` role),
   `Octen-Embedding-0.6B.f16` (faster alternative). `EMBEDDING_DIM` is **1024**
   (0.6B native; 4B's 2560 truncated + re-normalized by the gateway). Octen is NOT
@@ -68,8 +75,19 @@ spec (data model, pipeline stages, feed-composition rules, roadmap phases, decid
   gets HTTP 200 and the full feed; robots.txt (read literally) permits `/rss-feed/`.
   Mullvad (WireGuard tunnel present) is the exit-IP lever in reserve if IP-based
   blocking ever appears.
-- Next up per roadmap: Phase 3 (feedback + recommendation). Phase 2 quality tuning
-  (see gaps above) is worth folding in, since Phase 3's signal informs it.
+- **Decided with the user (2026-07-17), spec updated — next up is Phase 2.5**
+  (before Phase 3): (a) *writer-led agentic write* — research + editorial authority
+  move onto the large model in one tool loop per story; fast keeps triage only;
+  (b) *qa stage with vision* — render the post, screenshot (headless Chromium),
+  the main model critiques and revises in bounded rounds (stock Qwen3.6 mmproj on
+  disk IS compatible with Qwopus — user-confirmed; enable via `--mmproj` in
+  models-preset.ini); (c) *renames*: role `writer`→`main`; content units are
+  **post** (any feed item) / **feature** (long-form kind), `articles` table →
+  `posts` + `kind`; (d) prompts carry guidance, not quotas (drop "2–4 sources"
+  phrasing); (e) *model residency*: ≤1 decode model in VRAM at a time, embed
+  pinned to system RAM (`--n-gpu-layers 0`) — enforced host-side in the router
+  config. Mission framing: entertainment + education blended, zero manipulative
+  mechanics ("a good Reddit"). See spec §1/§7/§12.
 
 ## Commands
 
@@ -78,8 +96,14 @@ docker compose up --build -d          # full stack: db (pgvector), migrate (one-
 curl http://127.0.0.1:8200/health     # web app: http://127.0.0.1:8200
 
 # Trigger jobs immediately (otherwise: ingestion cron */30, pipeline cron 03:00)
-docker compose exec worker procrastinate --app=episteme.worker.app.app defer episteme.ingest_all '{}'
-docker compose exec worker procrastinate --app=episteme.worker.app.app defer episteme.run_pipeline '{}'
+curl -X POST http://127.0.0.1:8200/api/jobs/defer/ingest_all      # or run_pipeline
+# (equivalent: docker compose exec worker procrastinate --app=episteme.worker.app.app defer episteme.ingest_all '{}')
+
+# Admin dashboard + JSON API (single-user, no auth — decided constraint)
+# http://127.0.0.1:8200/admin            status, sources, pipeline runs, job queue, defer buttons
+# http://127.0.0.1:8200/admin/story/{id} provenance: every LLM call behind a story's article
+curl http://127.0.0.1:8200/api/status    # /api/{status,sources,runs,jobs,stories,articles,llm-calls}
+curl "http://127.0.0.1:8200/api/llm-calls?story_id=284&full=true"  # full prompts/responses
 
 # Database
 docker compose exec -T db psql -U episteme -d episteme
@@ -110,6 +134,20 @@ docker compose exec -T db psql -U episteme -d episteme
   functions wrapped in procrastinate tasks; the orchestrator runs them role-batched so
   each model loads once per run. **The article `sources` section is always built from
   the DB, never by the LLM** — citations must not be able to hallucinate.
+- **Observability** (`llm/observe.py`): every gateway call is persisted to `llm_calls`
+  (request/response, tokens, timing; embeds log batch size only) — the gateway is
+  the single choke point, so instrumentation there covers everything including
+  JSON-repair retries. The pipeline tags calls with stage + story via contextvars
+  (`llm_context`), never by changing gateway signatures. Tool loops wrap themselves
+  in `llm_conversation()`: their rows store message **deltas** chained by
+  `chain_id`/`seq` (full transcript = concat of `request.messages` + `response` in
+  seq order; a prefix hash detects rewritten history and starts a fresh chain
+  rather than storing a broken delta). Reconstruction lives in `web/admin.py:_group_calls`. Each orchestrator pass writes
+  a `pipeline_runs` row (per-stage counters, outcome). Recording is best-effort
+  (failures swallowed, `llm_log_enabled` off in unit tests via conftest) and pruned
+  after `llm_log_retention_days`. The `/api/*` JSON routes are the query layer; the
+  `/admin` HTML pages (dashboard, queue, per-story provenance) are thin views over
+  the same functions.
 - **Jobs**: procrastinate (Postgres-backed queue, no broker). Worker and web are the
   same image with different entrypoints. Periodic tasks via `@app.periodic(cron=...)`,
   crons configurable through settings (`config.py` reads env / `.env`).
@@ -130,6 +168,23 @@ docker compose exec -T db psql -U episteme -d episteme
   `/partials/*` pages). Falls back to raw source items until the pipeline has output.
   Frontend is server-rendered Jinja2 + htmx + vanilla CSS — no SPA framework, htmx
   until it demonstrably fails (user decision).
+
+## Engineering principles (user feedback — hard)
+
+- **Fix root causes, not symptoms.** If downstream code has to compensate for how
+  data is produced or stored — deduplicating on render, filtering on read,
+  patching on display — the producer/storage layer is wrong; fix it there. A
+  consumer-side workaround is acceptable only as an explicitly temporary bridge,
+  agreed with the user, never silently shipped as the fix.
+  *Origin (2026-07-17): `llm_calls` stored the full growing transcript per tool
+  turn and the provenance page deduplicated at render time; the right fix was
+  delta storage (`chain_id`/`seq` + prefix-hash integrity) at the source.*
+- **Don't self-authorize known design debt.** Noticing a design smell and filing
+  it under "acceptable for now" in the docs is a decision the user makes, not
+  Claude. Surface the smell and the proper fix; let the user choose.
+- **When data is derivable, store the canonical minimum** and derive the rest in
+  code (cf. sources sections built from the DB, transcripts from deltas).
+  Redundant copies drift and bloat; derivation is testable.
 
 ## Constraints decided with the user (do not silently revisit)
 

@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+
+{% block title %}Story {{ story.id }} provenance — Episteme{% endblock %}
+
+{% block content %}
+<div class="admin-page">
+  <p class="note"><a href="/admin">← admin</a></p>
+
+  <section class="admin-card admin-card-wide">
+    <h2>Story {{ story.id }} — {{ story.status }}</h2>
+    <table class="admin-table">
+      <tr><th>triage</th><td>{{ story.triage_decision }} (score {{ story.rank_score }}) — {{ story.triage_reason }}</td></tr>
+      <tr><th>topics</th><td>{{ story.topics | join(", ") }}</td></tr>
+      <tr><th>items</th><td>
+        {% for item in story["items"] %}
+        <div><a href="{{ item.url }}" target="_blank" rel="noopener noreferrer">{{ item.title }}</a> <span class="mono">[{{ item.source }}]</span></div>
+        {% endfor %}
+      </td></tr>
+      {% for article in story.articles %}
+      <tr><th>article</th><td><a href="/article/{{ article.id }}">{{ article.title }}</a> ({{ article.generated_at | dt }})</td></tr>
+      {% endfor %}
+    </table>
+
+    {% if story.research_notes %}
+    <h3>Research notes</h3>
+    {% if story.research_notes.fetched %}
+    <ul>
+      {% for f in story.research_notes.fetched %}
+      <li><a href="{{ f.url }}" target="_blank" rel="noopener noreferrer">{{ f.title }}</a></li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+    {% if story.research_notes.notes %}
+    <div class="llm-text">{{ story.research_notes.notes }}</div>
+    {% endif %}
+    {% endif %}
+  </section>
+
+  <section class="admin-card admin-card-wide">
+    <h2>LLM calls</h2>
+    <p class="note">
+      {{ totals.calls }} calls · {{ totals.prompt_tokens }} prompt + {{ totals.completion_tokens }}
+      completion tokens · {{ (totals.duration_ms / 1000) | round(1) }}s model time
+    </p>
+
+    {% for group in groups %}
+    <details class="llm-call">
+      <summary>
+        <strong>{{ group.stage or '?' }}</strong> · {{ group.kind }} · {{ group.calls[0].role }}
+        {% if group.calls | length > 1 %} · {{ group.calls | length }} turns{% endif %}
+        · {{ group.prompt_tokens }}+{{ group.completion_tokens }} tok
+        · {{ (group.duration_ms / 1000) | round(1) }}s
+        {% if group.errors %}<span class="bad">error</span>{% endif %}
+        <span class="muted">{{ group.calls[0].created_at | dt }}</span>
+      </summary>
+
+      {% if group.calls | length > 1 %}
+      <p class="muted mono">
+        {% for c in group.calls %}#{{ c.id }}: {{ c.prompt_tokens or 0 }}+{{ c.completion_tokens or 0 }} tok, {{ (c.duration_ms / 1000) | round(1) }}s{{ " · " if not loop.last }}{% endfor %}
+      </p>
+      {% endif %}
+      {% for c in group.errors %}<p class="bad mono">#{{ c.id }}: {{ c.error }}</p>{% endfor %}
+
+      {% for msg in group.transcript %}
+      <div class="llm-msg llm-msg-{{ msg.role or 'assistant' }}">
+        <span class="llm-msg-role">{{ msg.role or 'assistant' }}</span>
+        {% if msg.reasoning_content %}
+        <details><summary class="muted">thinking</summary>
+          <div class="llm-text muted">{{ msg.reasoning_content }}</div>
+        </details>
+        {% endif %}
+        {% if msg.content %}<div class="llm-text">{{ msg.content }}</div>{% endif %}
+        {% if msg.tool_calls %}<pre class="llm-json">{{ msg.tool_calls | tojson(indent=2) }}</pre>{% endif %}
+      </div>
+      {% endfor %}
+      {% if group.request_raw %}<pre class="llm-json">{{ group.request_raw | tojson(indent=2) }}</pre>{% endif %}
+    </details>
+    {% endfor %}
+  </section>
+</div>
+{% endblock %}

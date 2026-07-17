@@ -118,3 +118,47 @@ class Article(Base):
     )
 
     story: Mapped[Story] = relationship(back_populates="articles")
+
+
+class LlmCall(Base):
+    """One gateway call: full request/response plus timing, for the admin
+    provenance view. Written best-effort by llm.observe — never blocks the
+    pipeline. story_id is a plain int (no FK) so logging can't fail a write."""
+
+    __tablename__ = "llm_calls"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    role: Mapped[str] = mapped_column(String(10))  # writer | fast | embed
+    model: Mapped[str] = mapped_column(Text)
+    kind: Mapped[str] = mapped_column(String(20))  # chat | tool-chat | embed
+    stage: Mapped[str | None] = mapped_column(String(20))  # embed|triage|research|condense|write
+    story_id: Mapped[int | None] = mapped_column(index=True)
+    # Tool loops store per-row message DELTAS: rows sharing a chain_id are one
+    # conversation; full transcript = concat(request.messages + response) by seq.
+    chain_id: Mapped[str | None] = mapped_column(String(36))
+    seq: Mapped[int | None] = mapped_column()
+    duration_ms: Mapped[int] = mapped_column(default=0)
+    prompt_tokens: Mapped[int | None] = mapped_column()
+    completion_tokens: Mapped[int | None] = mapped_column()
+    request: Mapped[Any | None] = mapped_column(JSONB)  # {"messages": [...], ...}
+    response: Mapped[Any | None] = mapped_column(JSONB)  # raw assistant message
+    error: Mapped[str | None] = mapped_column(Text)
+
+
+class PipelineRun(Base):
+    """One orchestrator pass with per-stage counters — turns 'did last night's
+    run work?' into a table row instead of log archaeology."""
+
+    __tablename__ = "pipeline_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(20), default="running")  # running|succeeded|failed|skipped
+    stages: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)  # {"embed": 323, ...}
+    error: Mapped[str | None] = mapped_column(Text)

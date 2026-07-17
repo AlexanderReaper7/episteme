@@ -9,6 +9,7 @@ same pydantic model client-side, with repair-prompt retries.
 
 import logging
 import math
+import time
 from typing import Literal, TypeVar
 
 import httpx
@@ -16,6 +17,7 @@ from pydantic import BaseModel, ValidationError
 
 from ..config import settings
 from ..models import EMBEDDING_DIM
+from .observe import record_llm_call
 
 log = logging.getLogger("episteme.llm")
 
@@ -53,6 +55,12 @@ class LLMGateway:
         except httpx.HTTPError:
             return False
 
+    async def list_models(self) -> list[dict]:
+        """Raw /models rows (llama-server router mode includes load state)."""
+        response = await self._client.get("/models", timeout=5.0)
+        response.raise_for_status()
+        return response.json().get("data", [])
+
     async def chat(
         self,
         role: Role,
@@ -76,12 +84,24 @@ class LLMGateway:
                 "type": "json_schema",
                 "json_schema": {"name": "response", "strict": True, "schema": response_schema},
             }
-        response = await self._client.post("/chat/completions", json=payload)
-        if response.status_code == 400 and response_schema is not None:
-            # Older llama.cpp builds use the pre-OpenAI "json_object" + schema form.
-            payload["response_format"] = {"type": "json_object", "schema": response_schema}
+        start = time.monotonic()
+        try:
             response = await self._client.post("/chat/completions", json=payload)
-        response.raise_for_status()
+            if response.status_code == 400 and response_schema is not None:
+                # Older llama.cpp builds use the pre-OpenAI "json_object" + schema form.
+                payload["response_format"] = {"type": "json_object", "schema": response_schema}
+                response = await self._client.post("/chat/completions", json=payload)
+            response.raise_for_status()
+        except Exception as exc:
+            await record_llm_call(
+                role=role,
+                model=payload["model"],
+                kind="chat",
+                duration_ms=int((time.monotonic() - start) * 1000),
+                request={"messages": payload["messages"], "constrained": response_schema is not None},
+                error=str(exc),
+            )
+            raise
         data = response.json()
         usage = data.get("usage", {})
         log.info(
@@ -89,6 +109,16 @@ class LLMGateway:
             role,
             usage.get("prompt_tokens", "?"),
             usage.get("completion_tokens", "?"),
+        )
+        await record_llm_call(
+            role=role,
+            model=payload["model"],
+            kind="chat",
+            duration_ms=int((time.monotonic() - start) * 1000),
+            request={"messages": payload["messages"], "constrained": response_schema is not None},
+            response=data["choices"][0]["message"],
+            prompt_tokens=usage.get("prompt_tokens"),
+            completion_tokens=usage.get("completion_tokens"),
         )
         return data["choices"][0]["message"]["content"]
 
@@ -112,8 +142,20 @@ class LLMGateway:
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
-        response = await self._client.post("/chat/completions", json=payload)
-        response.raise_for_status()
+        start = time.monotonic()
+        try:
+            response = await self._client.post("/chat/completions", json=payload)
+            response.raise_for_status()
+        except Exception as exc:
+            await record_llm_call(
+                role=role,
+                model=payload["model"],
+                kind="tool-chat",
+                duration_ms=int((time.monotonic() - start) * 1000),
+                request={"messages": messages, "tools": bool(tools)},
+                error=str(exc),
+            )
+            raise
         data = response.json()
         usage = data.get("usage", {})
         log.info(
@@ -121,6 +163,16 @@ class LLMGateway:
             role,
             usage.get("prompt_tokens", "?"),
             usage.get("completion_tokens", "?"),
+        )
+        await record_llm_call(
+            role=role,
+            model=payload["model"],
+            kind="tool-chat",
+            duration_ms=int((time.monotonic() - start) * 1000),
+            request={"messages": messages, "tools": bool(tools)},
+            response=data["choices"][0]["message"],
+            prompt_tokens=usage.get("prompt_tokens"),
+            completion_tokens=usage.get("completion_tokens"),
         )
         return data["choices"][0]["message"]
 
@@ -158,10 +210,19 @@ class LLMGateway:
         so the DB column stays valid across embedding-model swaps."""
         if not texts:
             return []
+        start = time.monotonic()
         response = await self._client.post(
             "/embeddings", json={"model": self.model_for("embed"), "input": texts}
         )
         response.raise_for_status()
+        # Batch size only — 300+ full payloads a night would drown the log.
+        await record_llm_call(
+            role="embed",
+            model=self.model_for("embed"),
+            kind="embed",
+            duration_ms=int((time.monotonic() - start) * 1000),
+            request={"batch_size": len(texts)},
+        )
         rows = sorted(response.json()["data"], key=lambda r: r["index"])
         return [_truncate_normalize(row["embedding"]) for row in rows]
 

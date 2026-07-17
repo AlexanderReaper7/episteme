@@ -9,7 +9,7 @@ deferrable for testing.
 import logging
 import re
 import time
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +18,7 @@ from ..config import settings
 from ..db import SessionLocal
 from ..llm import LLMError, gateway
 from ..llm.agent import ResearchResult, run_research_loop
+from ..llm.observe import llm_context
 from ..llm.prompts import (
     RESEARCH_AGENT_SYSTEM,
     RESEARCH_WRITER_SYSTEM,
@@ -25,7 +26,7 @@ from ..llm.prompts import (
     TRIAGE_SYSTEM,
 )
 from ..llm.schemas import ArticleDraft, SourceSummary, TriageResult
-from ..models import Article, SourceItem, Story
+from ..models import Article, LlmCall, PipelineRun, SourceItem, Story
 from .app import app
 
 log = logging.getLogger("episteme.pipeline")
@@ -71,7 +72,8 @@ async def embed_new_items(session: AsyncSession) -> int:
     for start in range(0, len(items), settings.embed_batch_size):
         batch = items[start : start + settings.embed_batch_size]
         texts = [f"{item.title or ''}\n{_plain_text(item)[:1500]}" for item in batch]
-        vectors = await gateway.embed(texts)
+        with llm_context(stage="embed"):
+            vectors = await gateway.embed(texts)
         for item, vector in zip(batch, vectors, strict=True):
             item.embedding = vector
         await session.commit()
@@ -157,9 +159,10 @@ async def triage_stories(session: AsyncSession) -> int:
         items = await _story_items(session, story)
         digest = _story_digest(items)
         try:
-            result = await gateway.complete_json(
-                "fast", TRIAGE_SYSTEM, f"Story items:\n\n{digest}", TriageResult
-            )
+            with llm_context(stage="triage", story_id=story.id):
+                result = await gateway.complete_json(
+                    "fast", TRIAGE_SYSTEM, f"Story items:\n\n{digest}", TriageResult
+                )
         except LLMError as exc:
             log.warning("Triage failed for story %d: %s", story.id, exc)
             continue
@@ -201,12 +204,13 @@ async def _story_items(session: AsyncSession, story: Story) -> list[SourceItem]:
 async def _condensed_source(item: SourceItem) -> str:
     text = _plain_text(item)
     if len(text) > settings.summarize_above_chars:
-        summary = await gateway.complete_json(
-            "fast",
-            SUMMARIZE_SYSTEM,
-            f"Title: {item.title}\n\n{text[: settings.summarize_above_chars * 4]}",
-            SourceSummary,
-        )
+        with llm_context(stage="condense"):
+            summary = await gateway.complete_json(
+                "fast",
+                SUMMARIZE_SYSTEM,
+                f"Title: {item.title}\n\n{text[: settings.summarize_above_chars * 4]}",
+                SourceSummary,
+            )
         return summary.summary
     return text[: settings.summarize_above_chars]
 
@@ -270,7 +274,8 @@ async def _research_story(story: Story, items: list[SourceItem]) -> ResearchResu
         + "\n\n---\n\n".join(seed_parts)
     )
     try:
-        return await run_research_loop(RESEARCH_AGENT_SYSTEM, seed)
+        with llm_context(stage="research"):
+            return await run_research_loop(RESEARCH_AGENT_SYSTEM, seed)
     except Exception as exc:  # research is best-effort; never sink a story over it
         log.warning("Research loop failed for story %d: %s", story.id, exc)
         return ResearchResult(dossier="")
@@ -312,7 +317,8 @@ async def write_articles(session: AsyncSession) -> int:
             log.info("write stage hit wall-clock budget (%ds)", settings.write_budget_seconds)
             break
         items = await _story_items(session, story)
-        research = await _research_story(story, items)
+        with llm_context(stage="write", story_id=story.id):
+            research = await _research_story(story, items)
         story.research_notes = {
             "fetched": research.fetch_log,
             "notes": research.agent_notes,
@@ -330,17 +336,18 @@ async def write_articles(session: AsyncSession) -> int:
             continue
 
         try:
-            condensed = [
-                f"[{item.source.name}] {item.title}\n{await _condensed_source(item)}"
-                for item in items
-            ]
-            draft = await gateway.complete_json(
-                "writer",
-                RESEARCH_WRITER_SYSTEM,
-                _writer_input(items, research, condensed),
-                ArticleDraft,
-                temperature=0.4,
-            )
+            with llm_context(stage="write", story_id=story.id):
+                condensed = [
+                    f"[{item.source.name}] {item.title}\n{await _condensed_source(item)}"
+                    for item in items
+                ]
+                draft = await gateway.complete_json(
+                    "writer",
+                    RESEARCH_WRITER_SYSTEM,
+                    _writer_input(items, research, condensed),
+                    ArticleDraft,
+                    temperature=0.4,
+                )
         except LLMError as exc:
             log.warning("Writing failed for story %d: %s", story.id, exc)
             continue
@@ -373,24 +380,61 @@ async def write_articles(session: AsyncSession) -> int:
 # --- Orchestrator ----------------------------------------------------------------
 
 
+async def _prune_llm_calls(session: AsyncSession) -> None:
+    from sqlalchemy import delete
+
+    cutoff = datetime.now(UTC) - timedelta(days=settings.llm_log_retention_days)
+    await session.execute(delete(LlmCall).where(LlmCall.created_at < cutoff))
+    await session.commit()
+
+
 @app.task(name="episteme.run_pipeline")
 async def run_pipeline() -> None:
-    """Full nightly pass, batched by model role so each model loads once."""
-    if not await gateway.is_available():
-        log.warning("LLM endpoint %s unavailable; skipping pipeline run", settings.llm_base_url)
-        return
+    """Full nightly pass, batched by model role so each model loads once. Each pass
+    records a PipelineRun row (per-stage counters, outcome) for the admin view."""
     async with SessionLocal() as session:
-        for name, stage in (
-            ("embed", embed_new_items),
-            ("cluster", cluster_items),
-            ("triage", triage_stories),
-            ("write", write_articles),
-        ):
-            try:
-                count = await stage(session)
-                log.info("Pipeline stage %s: %d processed", name, count)
-            except LLMError as exc:
-                log.warning("Pipeline stage %s skipped: %s", name, exc)
+        run = PipelineRun()
+        session.add(run)
+        await session.commit()
+
+        if not await gateway.is_available():
+            log.warning("LLM endpoint %s unavailable; skipping pipeline run", settings.llm_base_url)
+            run.status = "skipped"
+            run.error = f"LLM endpoint {settings.llm_base_url} unavailable"
+            run.finished_at = datetime.now(UTC)
+            await session.commit()
+            return
+
+        errors: list[str] = []
+        try:
+            for name, stage in (
+                ("embed", embed_new_items),
+                ("cluster", cluster_items),
+                ("triage", triage_stories),
+                ("write", write_articles),
+            ):
+                try:
+                    count = await stage(session)
+                    log.info("Pipeline stage %s: %d processed", name, count)
+                    run.stages = {**run.stages, name: count}
+                except LLMError as exc:
+                    log.warning("Pipeline stage %s skipped: %s", name, exc)
+                    errors.append(f"{name}: {exc}")
+                await session.commit()
+        except Exception as exc:
+            # Unexpected failure: don't leave the run row stuck at "running".
+            await session.rollback()
+            run.status = "failed"
+            run.error = f"{type(exc).__name__}: {exc}"
+            run.finished_at = datetime.now(UTC)
+            await session.commit()
+            raise
+
+        run.status = "failed" if errors else "succeeded"
+        run.error = "; ".join(errors) or None
+        run.finished_at = datetime.now(UTC)
+        await session.commit()
+        await _prune_llm_calls(session)
 
 
 @app.periodic(cron=settings.pipeline_cron)

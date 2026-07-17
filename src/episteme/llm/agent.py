@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from ..config import settings
 from ..research import ResearchError, fetch_page, web_search
 from . import gateway
+from .observe import llm_conversation
 
 log = logging.getLogger("episteme.agent")
 
@@ -83,6 +84,11 @@ def _parse_args(raw) -> dict:
 
 
 async def run_research_loop(system: str, seed: str) -> ResearchResult:
+    with llm_conversation():  # calls log as one chain (delta storage, see observe)
+        return await _run_research_loop(system, seed)
+
+
+async def _run_research_loop(system: str, seed: str) -> ResearchResult:
     messages: list[dict] = [
         {"role": "system", "content": system},
         {"role": "user", "content": seed},

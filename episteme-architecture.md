@@ -1,16 +1,32 @@
 # Episteme — System Specification
 
-A self-hosted, single-user system that ingests news from many sources, processes it
-overnight with a local LLM, and produces a personalized, healthy, science- and
-learning-focused newsfeed of newly written articles with interactive components.
+A self-hosted, single-user system that ingests content from many sources, processes it
+overnight with local LLMs, and produces a personalized, healthy feed that blends
+informative, educational, and genuinely entertaining posts with interactive components.
 
 ---
 
 ## 1. Vision & Principles
 
 **What it is:** a personal editor/researcher that reads the internet for you at night
-and hands you a small, high-quality, finite feed of articles in the morning — written
-for you, citing its sources, and designed to teach rather than to maximize engagement.
+and hands you a finite, high-quality feed in the morning — a deliberate blend of the
+informative, the educational, and the genuinely fun, built the way a feed *should* be:
+citing its sources, transparent about why things appear, and free of the manipulative
+and destructive mechanics (rage-bait, engagement traps, doomscroll filler) that fund
+ordinary feeds. "A good Reddit" is a rough approximation — varied, browsable, alive —
+but curated for your curiosity and growth rather than your compulsion.
+
+**Nomenclature** (used consistently across code, schema, and docs):
+
+- **Post** — any single item in the feed, of whatever kind.
+- **Feature** — the long-form written kind of post (what Phase 2 generates today).
+  Future post kinds: micro-posts ("word of the day"), minigames (e.g. a
+  Connections-style word association game), aggregation cluster cards, ...
+- **Model roles:** `main` — the large, most capable model; researches, writes,
+  reviews, and holds final editorial authority. `fast` — a small model for cheap
+  first-pass work (triage, condensation). `embed` — the embedding model, resident
+  in system RAM. (Code currently says `writer` for `main`; the rename lands with
+  the agentic-writer refactor.)
 
 **Design principles**
 
@@ -18,7 +34,8 @@ for you, citing its sources, and designed to teach rather than to maximize engag
    ("you're caught up"), balanced across topics, transparent about *why* an item
    appears, and always cites sources. Scrolling past the daily selection continues
    into clearly labeled lightweight aggregation — never disguised filler ranked for
-   engagement.
+   engagement. Entertainment is welcome — manipulation is not: fun posts earn their
+   place by being genuinely fun, never by exploiting compulsion loops.
 2. **Local-first** — all processing on your machine. External calls are only for
    fetching content. The LLM runtime is swappable via an OpenAI-compatible API.
 3. **Data ≠ presentation** — articles are stored as structured data; standardized
@@ -96,12 +113,12 @@ can be upgraded without a rewrite.
 - Runtime: llama.cpp (`llama-server`, OpenAI-compatible) — its `json_schema`
   constrained generation is what makes the schema-validated section output (§6)
   reliable on local models.
-- Baseline `writer` model: Qwen3.6-35B-A3B (Q4_K_M, MTP, KV cache quant q5/q4) —
+- Baseline `main` model: Qwen3.6-35B-A3B (Q4_K_M, MTP, KV cache quant q5/q4) —
   MoE with small active parameter count, so experts offload to system RAM while
-  attention stays on GPU. Works decently but **not yet rigorously tested**; Phase 2
-  includes benchmarking it (and candidates for the `fast` and `embed` roles) on real
-  pipeline tasks: structured-output validity rate, claim faithfulness in `verify`,
-  tokens/s overnight throughput.
+  attention stays on GPU; vision-capable via the stock Qwen3.6 mmproj on disk.
+  Works decently but **not yet rigorously benchmarked** on pipeline tasks
+  (structured-output validity rate, claim faithfulness in `qa`, tokens/s
+  overnight throughput).
 - Model roles stay config-mapped (§7), so none of this is load-bearing for the code.
 
 ---
@@ -119,9 +136,12 @@ PaperRef        — traced primary source: doi/arxiv_id, title, authors, journal
 Story           — id, cluster of related SourceItems (same underlying event/paper),
                   topic tags, embedding centroid,
                   status (new|written|aggregated|skipped)
-Article         — id, story_id, title, slug, summary, sections JSON (see §6),
-                  topics[], reading_time, difficulty, generated_at, model_used,
-                  quality_score, status (draft|published|archived)
+Post            — id, story_id?, kind (feature|micro|game|...), title, slug, summary,
+                  sections JSON (see §6), topics[], reading_time, difficulty,
+                  generated_at, model_used, quality_score,
+                  status (draft|published|archived)
+                  (current code: the `articles` table is the `feature` kind; the
+                  rename to `posts` + `kind` lands with the post-kinds refactor)
 MediaAsset      — id, article_id?, source_item_id?, kind (image|video-embed|chart-spec),
                   remote_url, attribution, last_verified_at,
                   cached_path (nullable — unused for now; enables opt-in caching later)
@@ -267,35 +287,43 @@ A chain of composable stages; each stage is a Procrastinate job, checkpointed in
 
 ```
 1. cluster    — group new SourceItems into Stories (embedding similarity + time window)
-2. triage     — small/fast model scores each Story: relevance to profile, science/
-                learning value, credibility signals → write | aggregate | skip
-                (write = full article generation; aggregate = surface directly in
-                the feed as a Google-News-style cluster card, near-zero LLM cost)
-3. research   — hierarchical context assembly: the `fast` model condenses each
-                source item to a ~200-token summary preserving facts, numbers, and
-                named entities, so the writer's input stays bounded (~2K tokens)
-                no matter how large the cluster is. Hard cap ~12 sources per story
-                (larger clusters split by sub-facet). Related past articles and
-                traced PaperRefs included as metadata.
-4. write      — main model produces the Article section data (structured output,
-                schema-validated), synthesizing across sources, noting disagreement
-                and uncertainty explicitly
-5. enrich     — generate quiz, glossary, chart specs where the content supports them;
+2. triage     — `fast` model scores each Story: relevance to profile, learning/
+                entertainment value, credibility signals → write | aggregate | skip.
+                A cheap first pass over everything; the `main` model can overrule
+                its `write` calls during the write stage (demote → aggregate).
+3. write      — **the `main` model, agentic and authoritative.** One bounded tool
+                loop per story: web_search / fetch_page (more tools over time) to
+                research as it sees fit, judge whether the story merits a feature
+                at all, then produce the post's section data (structured output,
+                schema-validated), synthesizing across sources and noting
+                disagreement and uncertainty explicitly. Prompts give editorial
+                guidance, not quotas — the model's judgment is trusted over rigid
+                rules ("2–4 sources"-style constraints are out). The `fast` model
+                may serve as a cheap subroutine (condensing very long sources),
+                batched so it never causes mid-story model swapping.
+4. enrich     — generate quiz, glossary, chart specs where the content supports them;
                 select/caption source media
-6. verify     — runs on EVERY written article: claims traced back to source text;
-                hallucinated or unsupported claims flagged → fix or demote
-                quality_score
-7. publish    — quality gate (score threshold), else mark draft for manual review
+5. qa         — **the `main` model reviews the rendered post.** The post is rendered
+                through the real templates and screenshotted (headless Chromium is
+                already in the worker image); the vision-capable `main` model
+                critiques the result against the sources — factual grounding,
+                layout-breaking content, verbatim-summary repetition, boilerplate —
+                and may revise sections, re-render, and iterate (bounded rounds).
+                Sets quality_score; can demote to aggregate. The stock Qwen3.6
+                mmproj (already on disk) is compatible with the Qwopus writer —
+                enabling vision is a `--mmproj` line in its models-preset.ini entry.
+6. publish    — quality gate (score threshold), else mark draft for manual review
 ```
 
 **LLM Gateway** (single module all stages go through):
 
 - Talks to any OpenAI-compatible endpoint; base URL + model names in config.
-- **Model roles, not model names**, in code: `embed`, `fast` (triage/extraction),
-  `writer` (article generation) — each role maps to a configured model, so upgrading
-  a model is a config change.
-- Enforces structured output (JSON Schema), retries with repair prompts, logs
-  tokens/latency per job for visibility.
+- **Model roles, not model names**, in code: `embed`, `fast` (first-pass work),
+  `main` (research, writing, QA — the authority) — each role maps to a configured
+  model, so upgrading a model is a config change.
+- Enforces structured output (JSON Schema), retries with repair prompts, and
+  persists every call (prompts, responses, tokens, latency) to `llm_calls` for
+  the admin provenance view.
 
 **Scheduling & idle behavior**
 
@@ -304,9 +332,15 @@ A chain of composable stages; each stage is a Procrastinate job, checkpointed in
 - Workers poll the flag between jobs: overnight window (configurable, e.g. 01:00–07:00)
   always allowed; daytime allowed after N minutes idle; any user activity pauses
   after the current job finishes (jobs are sized to minutes, not hours).
-- **Jobs are batched by model role** (all triage, then all research summaries, then
-  all writing) so the GPU loads each model once per night instead of thrashing
-  between `fast` and `writer` on every story.
+- **Jobs are batched by model role** (all triage, then all writing) so the GPU
+  loads each model once per night instead of thrashing between `fast` and `main`
+  on every story. The agentic write stage keeps everything on `main` precisely so
+  no swap happens mid-story.
+- **Model residency (decided constraint):** at most ONE decode model (`fast` or
+  `main`) resident in VRAM at a time; the `embed` model is pinned to CPU/system RAM
+  (`--n-gpu-layers 0` in its models-preset.ini entry) so it can stay loaded
+  alongside either. Enforced host-side in the llama-server router config; the
+  pipeline's role-batching is what makes it cheap to honor.
 - Morning target: pipeline drains the night's stories into a fresh feed.
 
 ---
@@ -428,20 +462,30 @@ No media volume — media is hotlinked, and chart/diagram specs live in the DB.
 Compose setup, data model, RSS + full-article adapters, ingestion loop, minimal feed
 UI showing extracted source items. *Proves ingestion + UI plumbing.*
 
-**Phase 2 — The writer**
+**Phase 2 — The writer** *(done 2026-07; incl. research agent, observability,
+admin dashboard + JSON API)*
 LLM gateway, clustering, triage (write/aggregate/skip), aggregation cluster cards
 with infinite scroll, article writing with `prose`/`key_points`/`sources` sections,
 schema validation, article view. *First generated morning feed — with the
 aggregation tier as fallback so the feed is useful even on light processing nights.*
+
+**Phase 2.5 — Agentic writer, QA & nomenclature (next)**
+Move research + editorial authority onto the `main` model (one agentic tool loop
+per story, §7); `qa` stage with rendered-screenshot review and bounded revise
+rounds (vision via the Qwen3.6 mmproj); generalize prompts from quotas to
+guidance; rename roles (`writer`→`main`) and content entities (`articles`→`posts`
+with `kind`, long-form = `feature`); provenance view renders tool loops as one
+conversation.
 
 **Phase 3 — Personalization & health**
 Feedback capture, interest profile, scoring, healthy feed composition, "why am I
 seeing this", natural-language feedback box.
 
 **Phase 4 — Rich content & provenance**
-Quiz/chart/diagram/timeline/glossary sections, source media reuse with attribution,
-video embeds, verify stage, quality gate + draft review UI, OpenAlex source tracing
-(primary-vs-secondary source distinction in articles).
+Quiz/chart/diagram/timeline/glossary sections, new post kinds (micro-posts,
+minigames), source media reuse with attribution, video embeds, quality gate +
+draft review UI, OpenAlex source tracing (primary-vs-secondary source distinction
+in features).
 
 **Phase 5 — More sources & polish**
 arXiv/PubMed/HN/Reddit/X/email adapters, idle-aware scheduling agent, admin panel,
@@ -455,11 +499,9 @@ spaced-repetition quiz resurfacing.
 
 ## 13. Open Questions
 
-- Rigorous benchmarking of the model baseline (§3) on real pipeline tasks, and
-  picking the `fast` and `embed` role models — early Phase 2.
-- Whether `verify`-on-everything fits in the nightly window at target feed size
-  (10–15 articles); if nights run long, shrink the daily selection rather than
-  skipping verification.
+- Whether `qa`-on-everything (rendered-screenshot review + revise rounds) fits in
+  the nightly window at target feed size (10–15 features); if nights run long,
+  shrink the daily selection rather than skipping QA.
 - Aggregation-stream page size and retention (how far back the infinite scroll
   reaches before items expire).
 

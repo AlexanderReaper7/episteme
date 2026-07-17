@@ -40,6 +40,12 @@ class Settings(BaseSettings):
     llm_timeout_seconds: float = 600.0
     llm_max_json_retries: int = 2
     llm_disable_thinking: bool = True
+    # Observability: persist every gateway call (prompts, responses, tokens, timing)
+    # to the llm_calls table for the admin provenance view. Embeds log batch sizes
+    # only. Rows older than the retention window are pruned at the end of each
+    # pipeline run.
+    llm_log_enabled: bool = True
+    llm_log_retention_days: int = 30
 
     # --- Pipeline ---
     pipeline_cron: str = "0 3 * * *"  # nightly; idle-aware gating comes in Phase 5

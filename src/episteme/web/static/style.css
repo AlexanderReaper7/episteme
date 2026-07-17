@@ -260,3 +260,142 @@ main {
   font-size: 0.8rem;
   word-break: break-all;
 }
+
+/* Header nav (feed / admin) */
+.site-nav {
+  margin-left: auto;
+  font-size: 0.85rem;
+}
+
+.site-nav a {
+  color: var(--muted);
+  text-decoration: none;
+  margin-left: 1rem;
+}
+
+.site-nav a:hover { color: var(--accent); }
+
+/* Admin dashboard */
+.admin-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(26rem, 1fr));
+  gap: 1.25rem;
+  align-items: start;
+}
+
+.admin-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1rem 1.25rem;
+}
+
+.admin-card h2 {
+  margin: 0 0 0.6rem;
+  font-size: 0.95rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.admin-card-wide { grid-column: 1 / -1; }
+
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.admin-table th {
+  text-align: left;
+  color: var(--muted);
+  font-weight: 600;
+  padding: 0.25rem 0.75rem 0.25rem 0;
+}
+
+.admin-table td {
+  padding: 0.25rem 0.75rem 0.25rem 0;
+  border-top: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.mono {
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 0.8rem;
+  word-break: break-all;
+}
+
+.muted { color: var(--muted); }
+.ok { color: #9ece6a; }
+.bad { color: #f7768e; }
+
+.admin-card button {
+  background: var(--card-hover);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.35rem 0.9rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.admin-card button:hover { border-color: var(--accent); color: var(--accent); }
+
+/* Provenance timeline */
+.llm-call {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin: 0.6rem 0;
+  padding: 0.5rem 0.9rem;
+}
+
+.llm-call summary {
+  cursor: pointer;
+  font-size: 0.88rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: baseline;
+}
+
+.llm-call h4 {
+  margin: 0.9rem 0 0.4rem;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.llm-msg {
+  border-left: 3px solid var(--border);
+  padding: 0.3rem 0 0.3rem 0.8rem;
+  margin: 0.4rem 0;
+}
+
+.llm-msg-system { border-left-color: #565f89; }
+.llm-msg-user { border-left-color: #7aa2f7; }
+.llm-msg-assistant { border-left-color: #9ece6a; }
+.llm-msg-tool { border-left-color: #e0af68; }
+
+.llm-msg-role {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.llm-text {
+  white-space: pre-wrap;
+  font-size: 0.85rem;
+  max-height: 24rem;
+  overflow-y: auto;
+  word-break: break-word;
+}
+
+.llm-json {
+  font-size: 0.78rem;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 24rem;
+  overflow-y: auto;
+}
