@@ -9,4 +9,8 @@ COPY src ./src
 
 RUN pip install --no-cache-dir .
 
+# Headless Chromium for the QA stage's rendered-post screenshots (worker) and
+# future scraper adapters. install-deps pulls the required system libraries.
+RUN playwright install --with-deps chromium
+
 EXPOSE 8200

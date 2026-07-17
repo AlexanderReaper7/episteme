@@ -74,6 +74,15 @@ class Settings(BaseSettings):
     # picked "skip" on rich material — so this is a code-level content-volume check.
     min_write_chars: int = 1200
 
+    # --- QA stage (main model reviews the rendered post; spec §7 stage 5) ---
+    # Requires vision on the main model (--mmproj in models-preset.ini) and headless
+    # Chromium in the worker image. Failures are per-post and non-fatal.
+    qa_enabled: bool = True
+    qa_max_rounds: int = 2  # review->revise->re-review cycles per post
+    qa_viewport_width: int = 1100
+    # Where the worker reaches the web app to render posts (compose service DNS).
+    web_internal_url: str = "http://web:8200"
+
     @property
     def sqlalchemy_url(self) -> str:
         """DATABASE_URL is plain libpq form (used by procrastinate/psycopg);

@@ -57,6 +57,29 @@ def _hash_messages(messages: list) -> str:
     ).hexdigest()
 
 
+def _strip_images(messages: list) -> list:
+    """Replace inline base64 image payloads (QA screenshots) with a small
+    placeholder before persisting: a screenshot is derivable by re-rendering and
+    would bloat llm_calls by megabytes per row. Deterministic, so chain prefix
+    hashes stay consistent across calls that resend the same history."""
+    out = []
+    for message in messages:
+        content = message.get("content") if isinstance(message, dict) else None
+        if isinstance(content, list):
+            parts = []
+            for part in content:
+                url = ""
+                if isinstance(part, dict) and part.get("type") == "image_url":
+                    url = (part.get("image_url") or {}).get("url", "")
+                if url.startswith("data:"):
+                    placeholder = f"data:<inline image stripped, {len(url)} chars>"
+                    part = {"type": "image_url", "image_url": {"url": placeholder}}
+                parts.append(part)
+            message = {**message, "content": parts}
+        out.append(message)
+    return out
+
+
 def _chain_info(messages: list, response: dict | None) -> tuple[str | None, int | None, list]:
     """Return (chain_id, seq, delta_messages) for the current call and advance the
     conversation state. Outside a conversation: (None, None, messages) — store full.
@@ -118,9 +141,9 @@ async def record_llm_call(
         chain_id: str | None = None
         seq: int | None = None
         if request and isinstance(request.get("messages"), list):
-            chain_id, seq, delta = _chain_info(request["messages"], response)
-            if chain_id is not None:
-                request = {**request, "messages": delta}
+            messages = _strip_images(request["messages"])
+            chain_id, seq, delta = _chain_info(messages, response)
+            request = {**request, "messages": delta if chain_id is not None else messages}
 
         # Imported lazily so the gateway stays usable without a database.
         from ..db import SessionLocal

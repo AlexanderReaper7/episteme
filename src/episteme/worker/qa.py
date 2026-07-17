@@ -1,0 +1,168 @@
+"""QA stage (spec §7 stage 5): the main model reviews the rendered post.
+
+Each unscored post is rendered by the real web app, screenshotted with headless
+Chromium, and critiqued by the vision-capable main model against the trusted
+source material — factual grounding, layout-breaking content, verbatim-summary
+repetition, boilerplate. The model may revise the body in bounded rounds (the
+post is re-rendered between rounds), always sets `quality_score`, and can demote
+the story back to the aggregation stream. All rounds for one post share a
+provenance chain; screenshots are stripped before logging (observe._strip_images).
+
+Failures are contained: a post that can't be reviewed keeps quality_score NULL,
+and if Chromium or vision is unavailable the stage logs and skips.
+"""
+
+from __future__ import annotations
+
+import base64
+import logging
+from contextlib import asynccontextmanager
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from ..config import settings
+from ..llm.agent import request_validated
+from ..llm.observe import llm_context, llm_conversation
+from ..llm.prompts import QA_SYSTEM
+from ..llm.schemas import QAReview
+from ..models import Post, SourceItem, Story
+
+log = logging.getLogger("episteme.qa")
+
+
+@asynccontextmanager
+async def _chromium():
+    from playwright.async_api import async_playwright  # container-only dependency
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch()
+        try:
+            yield browser
+        finally:
+            await browser.close()
+
+
+async def _screenshot(browser, post_id: int) -> bytes:
+    page = await browser.new_page(
+        viewport={"width": settings.qa_viewport_width, "height": 1400}
+    )
+    try:
+        await page.goto(f"{settings.web_internal_url}/post/{post_id}", wait_until="load")
+        await page.wait_for_timeout(500)  # let hotlinked media settle or fail out
+        return await page.screenshot(full_page=True, type="png")
+    finally:
+        await page.close()
+
+
+def _vision_message(text: str, png: bytes) -> dict:
+    b64 = base64.b64encode(png).decode()
+    return {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": text},
+            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
+        ],
+    }
+
+
+def _grounding_digest(items: list[SourceItem], story: Story) -> str:
+    from .pipeline import _plain_text
+
+    parts = [
+        f"[{item.source.name}] {item.title}\nURL: {item.url}\n{_plain_text(item)[:2000]}"
+        for item in items
+    ]
+    fetched = (story.research_notes or {}).get("fetched") or []
+    if fetched:
+        lines = "\n".join(
+            f"- {entry.get('title') or entry.get('url')} — {entry.get('url')}"
+            for entry in fetched
+        )
+        parts.append("PAGES THE WRITER FETCHED DURING RESEARCH:\n" + lines)
+    return "\n\n---\n\n".join(parts)
+
+
+def apply_revision(sections: list[dict], review: QAReview) -> list[dict]:
+    """Replace the model-authored body with the revision, preserving the DB-built
+    tail (sources / further_reading) — the model never rewrites citations."""
+    tail = [s for s in sections if s.get("type") in ("sources", "further_reading")]
+    if review.revised_sections:
+        body = [s.model_dump() for s in review.revised_sections]
+    else:
+        body = [s for s in sections if s.get("type") not in ("sources", "further_reading")]
+    return body + tail
+
+
+async def _qa_post(session: AsyncSession, browser, post: Post) -> None:
+    from .pipeline import _reading_time, _story_items
+
+    story = await session.get(Story, post.story_id)
+    items = await _story_items(session, story)
+    with llm_conversation():  # all rounds render as one provenance chain
+        messages: list[dict] = [{"role": "system", "content": QA_SYSTEM}]
+        prompt = (
+            "TRUSTED SOURCE MATERIAL the post was written from:\n\n"
+            f"{_grounding_digest(items, story)}\n\n"
+            "Review the rendered post in the screenshot."
+        )
+        for _ in range(settings.qa_max_rounds):
+            png = await _screenshot(browser, post.id)
+            messages.append(_vision_message(prompt, png))
+            review = await request_validated("main", messages, QAReview)
+            if review is None:
+                log.warning("QA review failed validation for post %d", post.id)
+                return
+            post.quality_score = review.quality_score
+            if review.verdict == "approve":
+                return
+            if review.verdict == "demote":
+                post.status = "archived"
+                story.status = "aggregated"
+                story.triage_decision = "aggregate"
+                story.triage_reason = f"QA demoted: {review.critique}"[:500]
+                log.info("QA demoted post %d: %s", post.id, review.critique)
+                return
+            post.sections = apply_revision(post.sections, review)
+            if review.revised_title:
+                post.title = review.revised_title
+            if review.revised_summary:
+                post.summary = review.revised_summary
+            post.reading_time_minutes = _reading_time(post.sections)
+            await session.commit()  # persist so the re-render shows the revision
+            prompt = "The post has been re-rendered with your revision. Review again."
+        log.info("QA rounds exhausted for post %d (last verdict: revise)", post.id)
+
+
+async def qa_posts(session: AsyncSession) -> int:
+    """Review every published-but-unscored post. Returns posts reviewed."""
+    if not settings.qa_enabled:
+        return 0
+    posts = (
+        (
+            await session.execute(
+                select(Post)
+                .where(Post.quality_score.is_(None), Post.status == "published")
+                .order_by(Post.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not posts:
+        return 0
+    reviewed = 0
+    try:
+        async with _chromium() as browser:
+            for post in posts:
+                try:
+                    with llm_context(stage="qa", story_id=post.story_id):
+                        await _qa_post(session, browser, post)
+                    reviewed += 1
+                except Exception as exc:  # per-post; the next post still gets reviewed
+                    log.warning("QA failed for post %d: %s", post.id, exc)
+                    await session.rollback()
+                await session.commit()
+    except Exception as exc:  # Chromium missing / crashed — skip the stage, not the run
+        log.warning("QA stage unavailable: %s", exc)
+    return reviewed

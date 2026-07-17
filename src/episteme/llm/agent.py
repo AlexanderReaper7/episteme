@@ -18,16 +18,20 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
+from typing import TypeVar
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from ..config import settings
 from ..research import ResearchError, fetch_page, web_search
 from . import gateway
+from .gateway import Role
 from .observe import llm_conversation
 from .schemas import PostDraft
 
 log = logging.getLogger("episteme.agent")
+
+T = TypeVar("T", bound=BaseModel)
 
 TOOLS = [
     {
@@ -164,7 +168,8 @@ async def _run_writer_loop(system: str, seed: str) -> WriteOutcome:
                 {"role": "tool", "tool_call_id": call.get("id", ""), "content": content}
             )
 
-    draft = await _request_draft(messages)
+    messages.append({"role": "user", "content": _DRAFT_REQUEST})
+    draft = await request_validated("main", messages, PostDraft, temperature=0.4)
     if draft is None:
         return WriteOutcome(
             decision="aggregate",
@@ -182,22 +187,25 @@ async def _run_writer_loop(system: str, seed: str) -> WriteOutcome:
     )
 
 
-async def _request_draft(messages: list[dict]) -> PostDraft | None:
-    """Ask for the final grammar-constrained draft in the same conversation,
-    with repair retries on validation failure."""
-    schema = PostDraft.model_json_schema()
-    messages.append({"role": "user", "content": _DRAFT_REQUEST})
+async def request_validated(
+    role: Role, messages: list[dict], schema: type[T], temperature: float = 0.3
+) -> T | None:
+    """Ask for a grammar-constrained, pydantic-validated reply appended to the SAME
+    conversation, with repair-prompt retries kept in the transcript. Returns None
+    after exhausting retries (callers decide the fallback). Shared by the writer's
+    final draft turn and the QA stage's review turns."""
+    json_schema = schema.model_json_schema()
     last_error: ValidationError | None = None
     for attempt in range(1 + settings.llm_max_json_retries):
         message = await gateway.chat_messages(
-            "main", messages, response_schema=schema, temperature=0.4
+            role, messages, response_schema=json_schema, temperature=temperature
         )
         messages.append(message)
         try:
-            return PostDraft.model_validate_json(message.get("content") or "")
+            return schema.model_validate_json(message.get("content") or "")
         except ValidationError as exc:
             last_error = exc
-            log.warning("Invalid PostDraft (attempt %d): %s", attempt + 1, exc)
+            log.warning("Invalid %s (attempt %d): %s", schema.__name__, attempt + 1, exc)
             messages.append(
                 {
                     "role": "user",
@@ -205,7 +213,7 @@ async def _request_draft(messages: list[dict]) -> PostDraft | None:
                     "Respond again with ONLY valid JSON matching the schema.",
                 }
             )
-    log.warning("PostDraft failed validation after retries: %s", last_error)
+    log.warning("%s failed validation after retries: %s", schema.__name__, last_error)
     return None
 
 

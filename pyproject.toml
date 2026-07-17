@@ -25,6 +25,7 @@ dependencies = [
     "pydantic-settings>=2.3",
     "markdown>=3.6",
     "nh3>=0.2",
+    "playwright>=1.45",
 ]
 
 [project.optional-dependencies]

@@ -45,3 +45,17 @@ class PostDraft(BaseModel):
     difficulty: Literal["introductory", "intermediate", "technical"]
     topics: list[str] = Field(min_length=1, max_length=4)
     sections: list[Section] = Field(min_length=1, max_length=12)
+
+
+class QAReview(BaseModel):
+    """The qa stage's verdict on a rendered post (spec §7 stage 5)."""
+
+    verdict: Literal["approve", "revise", "demote"]
+    # Same open-ended scale as TriageResult.quality_score: ~0-10, honest ranking signal.
+    quality_score: float = Field(ge=0, description="~0-10, higher is better")
+    critique: str = Field(max_length=2000)
+    # Set only for verdict="revise": complete replacement body (sources /
+    # further_reading are rebuilt from the database, never revised by the model).
+    revised_title: str | None = None
+    revised_summary: str | None = None
+    revised_sections: list[Section] | None = None

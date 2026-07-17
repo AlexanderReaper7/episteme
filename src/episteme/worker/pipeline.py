@@ -1,4 +1,4 @@
-"""LLM processing pipeline (spec §7): embed -> cluster -> triage -> write.
+"""LLM processing pipeline (spec §7): embed -> cluster -> triage -> write -> qa.
 
 Stages are plain async functions wrapped in procrastinate tasks, so the nightly
 orchestrator calls them in role-batched order (all fast-model work, then all
@@ -23,6 +23,7 @@ from ..llm.prompts import SUMMARIZE_SYSTEM, TRIAGE_SYSTEM, WRITER_AGENT_SYSTEM
 from ..llm.schemas import SourceSummary, TriageResult
 from ..models import LlmCall, PipelineRun, Post, SourceItem, Story
 from .app import app
+from .qa import qa_posts
 
 log = logging.getLogger("episteme.pipeline")
 
@@ -394,6 +395,7 @@ async def run_pipeline() -> None:
                 ("cluster", cluster_items),
                 ("triage", triage_stories),
                 ("write", write_posts),
+                ("qa", qa_posts),  # stays on `main`, so no model swap after write
             ):
                 try:
                     count = await stage(session)
