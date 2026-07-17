@@ -97,9 +97,15 @@ def escalate_mode(mode: str | None) -> HttpMode | None:
 
 
 async def polite_get(
-    url: str, *, mode: HttpMode = DEFAULT_MODE, extra_headers: dict[str, str] | None = None
+    url: str,
+    *,
+    mode: HttpMode = DEFAULT_MODE,
+    extra_headers: dict[str, str] | None = None,
+    follow_redirects: bool = True,
 ) -> FetchResponse:
-    """Throttled GET in the given transport mode. Redirects are followed."""
+    """Throttled GET in the given transport mode. Redirects are followed unless
+    `follow_redirects=False` (the research fetcher disables auto-follow so it can
+    re-run its SSRF check on each hop — see research.tools)."""
     await polite_wait()
     if mode == "impersonate":
         # curl_cffi supplies a full browser header set (UA, sec-ch-ua, Accept, ...)
@@ -116,7 +122,7 @@ async def polite_get(
                 impersonate=profile,
                 headers=extra_headers or None,
                 timeout=settings.http_timeout_seconds,
-                allow_redirects=True,
+                allow_redirects=follow_redirects,
             )
 
         response = await asyncio.to_thread(_blocking_get)
@@ -132,7 +138,7 @@ async def polite_get(
     if extra_headers:
         headers.update(extra_headers)
     async with httpx.AsyncClient(
-        timeout=settings.http_timeout_seconds, follow_redirects=True, headers=headers
+        timeout=settings.http_timeout_seconds, follow_redirects=follow_redirects, headers=headers
     ) as client:
         response = await client.get(url)
     return FetchResponse(

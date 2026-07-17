@@ -92,7 +92,12 @@ class RssAdapter:
     async def extract(self, item: RawItem, source: Source) -> ExtractedItem:
         response = await polite_get(item.url, mode=_mode(source))
         response.raise_for_status()
-        text = trafilatura.extract(response.text, include_comments=False)
+        # favor_recall keeps more of the body ("prefer more text even when unsure")
+        # so short-but-real articles aren't reduced to a caption. Outbound links
+        # (e.g. a "Read more" to a richer source) live outside the main content and
+        # are NOT recoverable here — the research agent parses those from raw HTML
+        # via research.tools.fetch_page instead.
+        text = trafilatura.extract(response.text, include_comments=False, favor_recall=True)
         media_refs = []
         try:
             metadata = extract_metadata(response.text)

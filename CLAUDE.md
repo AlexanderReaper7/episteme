@@ -27,6 +27,13 @@ spec (data model, pipeline stages, feed-composition rules, roadmap phases, decid
      Consider gating `write` on extracted-text volume.
   2. 4/10 articles restate `summary` sentences verbatim as a `prose` section.
   3. Writer sometimes emits funding/DOI boilerplate as a prose section.
+- **Research agent verified live (2026-07-17)**: single-story acceptance run
+  (JWST/MACS J0553.4-3342, story 284) — fast-model tool loop did 2 SearXNG searches
+  and 5 page fetches (ESA Webb, arXiv, VENUS program site), persisted synthesized
+  `research_notes` on the story, and the writer produced grounded prose using
+  researched facts (no verbatim-summary restatement). `sources` section matched
+  the DB row exactly; `further_reading` built from research fetches with
+  already-cited URLs deduplicated. Zero errors, article page renders.
 - Embedding models: `Octen-Embedding-4B.Q8_0` (default `embed` role),
   `Octen-Embedding-0.6B.f16` (faster alternative). `EMBEDDING_DIM` is **1024**
   (0.6B native; 4B's 2560 truncated + re-normalized by the gateway). Octen is NOT

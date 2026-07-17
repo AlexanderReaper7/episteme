@@ -92,6 +92,38 @@ class LLMGateway:
         )
         return data["choices"][0]["message"]["content"]
 
+    async def chat_messages(
+        self,
+        role: Role,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        temperature: float = 0.3,
+    ) -> dict:
+        """Lower-level chat over a full message list, optionally with tools. Returns
+        the raw assistant message dict (may carry `tool_calls`). Used by the research
+        agent loop; `chat`/`complete_json` remain the path for single-shot calls."""
+        payload: dict = {
+            "model": self.model_for(role),
+            "messages": messages,
+            "temperature": temperature,
+        }
+        if settings.llm_disable_thinking:
+            payload["chat_template_kwargs"] = {"enable_thinking": False}
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
+        response = await self._client.post("/chat/completions", json=payload)
+        response.raise_for_status()
+        data = response.json()
+        usage = data.get("usage", {})
+        log.info(
+            "%s tool-chat: %s prompt + %s completion tokens",
+            role,
+            usage.get("prompt_tokens", "?"),
+            usage.get("completion_tokens", "?"),
+        )
+        return data["choices"][0]["message"]
+
     async def complete_json(
         self,
         role: Role,

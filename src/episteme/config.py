@@ -47,8 +47,26 @@ class Settings(BaseSettings):
     cluster_similarity_threshold: float = 0.82  # cosine similarity to join a story
     cluster_window_days: int = 5
     max_sources_per_story: int = 12
-    max_writes_per_run: int = 10
     summarize_above_chars: int = 2500
+    # Writer works the ranked candidate queue (best quality_score first) until this
+    # wall-clock budget is spent — the nightly window decides how many get written.
+    # max_writes_per_run is now a hard safety cap, not the primary limit.
+    write_budget_seconds: int = 3600
+    max_writes_per_run: int = 30
+
+    # --- Research agent (writer enrichment) ---
+    searxng_url: str = "http://host.docker.internal:8080"
+    enrich_enabled: bool = True
+    enrich_max_searches: int = 4  # web_search calls per story
+    enrich_max_fetches: int = 6  # fetch_page calls per story
+    enrich_max_steps: int = 12  # total tool-call turns before forcing a draft
+    enrich_fetch_char_limit: int = 6000  # per-page text handed to the model
+    enrich_wall_clock_seconds: int = 300  # hard cap on one story's research loop
+    # Deterministic demote gate: if source text + gathered dossier is thinner than
+    # this, the story is aggregated instead of written (a bare caption that even
+    # research couldn't expand). Model-driven demotion proved unreliable — the writer
+    # picked "skip" on rich material — so this is a code-level content-volume check.
+    min_write_chars: int = 1200
 
     @property
     def sqlalchemy_url(self) -> str:

@@ -78,6 +78,12 @@ class Story(Base):
     status: Mapped[str] = mapped_column(String(20), default="new")
     triage_decision: Mapped[str | None] = mapped_column(String(20))
     triage_reason: Mapped[str | None] = mapped_column(Text)
+    # Triage's ranking signal; the writer works candidates highest-first (nullable
+    # until triaged). Unbounded above — see schemas.TriageResult.quality_score.
+    rank_score: Mapped[float | None] = mapped_column()
+    # What the research agent gathered for this story: fetched URLs + notes, kept
+    # for observability and to build the article's "further reading" section.
+    research_notes: Mapped[Any | None] = mapped_column(JSONB)
     topics: Mapped[list[str]] = mapped_column(JSONB, default=list)
     centroid: Mapped[Any | None] = mapped_column(Vector(EMBEDDING_DIM))
     item_count: Mapped[int] = mapped_column(default=0)

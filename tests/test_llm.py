@@ -27,7 +27,7 @@ async def test_complete_json_valid():
         return httpx.Response(
             200,
             json=_completion(
-                '{"decision": "write", "topics": ["astronomy"], "reason": "solid research"}'
+                '{"decision": "write", "quality_score": 7.5, "topics": ["astronomy"], "reason": "solid research"}'
             ),
         )
 
@@ -49,7 +49,7 @@ async def test_complete_json_retries_on_invalid_then_succeeds():
         assert "failed validation" in body["messages"][1]["content"]
         return httpx.Response(
             200,
-            json=_completion('{"decision": "skip", "topics": ["noise"], "reason": "spam"}'),
+            json=_completion('{"decision": "skip", "quality_score": 0.5, "topics": ["noise"], "reason": "spam"}'),
         )
 
     result = await _gateway_with(handler).complete_json("fast", "sys", "user", TriageResult)
@@ -75,7 +75,7 @@ async def test_complete_json_falls_back_to_json_object_format():
             return httpx.Response(400, json={"error": "unknown response_format"})
         return httpx.Response(
             200,
-            json=_completion('{"decision": "aggregate", "topics": ["tech"], "reason": "ok"}'),
+            json=_completion('{"decision": "aggregate", "quality_score": 3, "topics": ["tech"], "reason": "ok"}'),
         )
 
     result = await _gateway_with(handler).complete_json("fast", "sys", "user", TriageResult)

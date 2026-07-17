@@ -39,6 +39,18 @@
           {% endfor %}
         </ul>
       </footer>
+    {% elif section.type == "further_reading" %}
+      <footer class="section-sources section-further-reading">
+        <h2>Further reading</h2>
+        <ul>
+          {% for src in section["items"] %}
+          <li>
+            <a href="{{ src.url }}" target="_blank" rel="noopener noreferrer">{{ src.title }}</a>
+            <span class="source-name">{{ src.outlet }}</span>
+          </li>
+          {% endfor %}
+        </ul>
+      </footer>
     {% endif %}
   {% endfor %}
 

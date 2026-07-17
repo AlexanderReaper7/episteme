@@ -1,6 +1,6 @@
 # Episteme
 
-Self-hosted, LLM-powered personalized science newsfeed. Ingests news from many
+Self-hosted, LLM-powered personalized newsfeed. Ingests news from many
 sources, processes it overnight with a local LLM, and produces a healthy, finite,
 learning-focused feed of newly written articles.
 
