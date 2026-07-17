@@ -47,6 +47,40 @@ ADDITIVE_MIGRATIONS = [
     "ALTER TABLE sources ADD COLUMN IF NOT EXISTS cooldown_until TIMESTAMPTZ",
     # Phase 2 (stories table itself comes from create_all, which runs first)
     "ALTER TABLE source_items ADD COLUMN IF NOT EXISTS story_id INT REFERENCES stories(id)",
+    # EMBEDDING_DIM bump 768 -> 1024 (2026-07, Octen embedders). Old-dim vectors
+    # cannot be cast, so they are nulled; the pipeline re-embeds NULLs anyway.
+    # Guarded on the current column type to stay idempotent (this list runs on
+    # every `up`, and an unconditional USING NULL would wipe embeddings).
+    """
+    DO $$
+    BEGIN
+        IF (SELECT format_type(a.atttypid, a.atttypmod) FROM pg_attribute a
+            WHERE a.attrelid = 'source_items'::regclass
+              AND a.attname = 'embedding') <> 'vector(1024)' THEN
+            ALTER TABLE source_items ALTER COLUMN embedding TYPE vector(1024) USING NULL;
+        END IF;
+    END $$;
+    """,
+    """
+    DO $$
+    BEGIN
+        IF (SELECT format_type(a.atttypid, a.atttypmod) FROM pg_attribute a
+            WHERE a.attrelid = 'stories'::regclass
+              AND a.attname = 'centroid') <> 'vector(1024)' THEN
+            ALTER TABLE stories ALTER COLUMN centroid TYPE vector(1024) USING NULL;
+        END IF;
+    END $$;
+    """,
+    # Phys.org needs TLS impersonation (seeds.py explains why); the seed only runs
+    # on an empty table, so flip the existing row, clear the superseded disguise_ua
+    # key, and drop the cooldown its 429s left.
+    """
+    UPDATE sources
+       SET config = (config - 'disguise_ua') || '{"http_mode": "impersonate"}'::jsonb,
+           cooldown_until = NULL
+     WHERE name = 'Phys.org'
+       AND config->>'http_mode' IS DISTINCT FROM 'impersonate'
+    """,
 ]
 
 

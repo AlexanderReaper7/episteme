@@ -5,8 +5,11 @@ sources, processes it overnight with a local LLM, and produces a healthy, finite
 learning-focused feed of newly written articles.
 
 Full design: [episteme-architecture.md](episteme-architecture.md).
-**Current state: Phase 1** — ingestion (RSS + full-article extraction) and a minimal
-feed UI over raw source items. No LLM processing yet.
+**Current state: Phases 1–2 built.** Phase 1 = ingestion (RSS + full-article
+extraction) and the feed UI; Phase 2 = the overnight LLM pipeline (embed → cluster →
+triage → write) producing generated articles above an aggregation stream, verified
+end-to-end against a local llama-server. Next: Phase 3 (personalization & feedback).
+See CLAUDE.md for the live operational state and how to run the pipeline.
 
 ## Quickstart
 
@@ -27,12 +30,13 @@ docker compose exec worker procrastinate --app=episteme.worker.app.app defer epi
 ```
 src/episteme/
 ├── config.py        settings (env / .env)
-├── models.py        SQLAlchemy models (Source, SourceItem)
+├── models.py        SQLAlchemy models (Source, SourceItem, Story, Article)
 ├── db.py            engine + init
 ├── seeds.py         initial source list
 ├── bootstrap.py     one-shot schema/seed (compose `migrate` service)
-├── ingest/          source adapters (base protocol, registry, rss)
-├── worker/          procrastinate app + ingestion tasks
+├── ingest/          source adapters (base protocol, registry, rss) + polite HTTP
+├── llm/             LLM gateway (role→model), structured-output schemas
+├── worker/          procrastinate app, ingestion + pipeline tasks
 └── web/             FastAPI app, Jinja2 templates, htmx feed UI
 ```
 

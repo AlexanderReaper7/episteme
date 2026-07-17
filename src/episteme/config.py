@@ -9,6 +9,19 @@ class Settings(BaseSettings):
     feed_page_size: int = 20
     http_timeout_seconds: float = 20.0
     http_user_agent: str = "Episteme/0.1 (personal news aggregator)"
+    # Some publishers put a bot-detector in front of feeds their robots.txt
+    # permits, and it fingerprints the TLS handshake — an honest httpx client is
+    # rejected no matter its User-Agent (Phys.org 429s every httpx request but
+    # serves curl_cffi with a browser TLS fingerprint). `http_mode="impersonate"`
+    # on a source (see ingest.http) presents this Chrome profile instead. It's
+    # opt-in per source, never the global default. Volume is unchanged — the
+    # throttle and cooldowns still apply; only the fingerprint differs.
+    impersonate_profile: str = "chrome"  # curl_cffi target; e.g. chrome / chrome131 / safari
+    # When a source's fetch is blocked (403/429), escalate its http_mode one tier
+    # (polite -> impersonate) and retry once, then persist the mode that worked.
+    # Encodes the standing policy: a source that fails politely gets stronger,
+    # still-non-destructive means before we give up on it.
+    http_escalate_on_block: bool = True
     # Global politeness throttle: gap between ANY two outbound source requests,
     # sampled from a normal distribution and clamped to the minimum.
     polite_delay_min_seconds: float = 2.0
@@ -21,7 +34,9 @@ class Settings(BaseSettings):
     llm_base_url: str = "http://host.docker.internal:5001/v1"
     llm_model_writer: str = "Qwopus3.6-35B-A3B-Coder-MTP-Q4_K_M"
     llm_model_fast: str = "empero-ai_Qwythos-9B-Claude-Mythos-5-1M-GGUF_Qwythos-9B-Claude-Mythos-5-1M-MTP-Q4_K_M"
-    llm_model_embed: str = ""  # set when a GGUF embedding model is available
+    # 4B (2560 dims, gateway truncates to EMBEDDING_DIM) preferred for quality;
+    # swap to "Octen-Embedding-0.6B.f16" (native 1024) if speed matters more.
+    llm_model_embed: str = "Octen-Embedding-4B.Q8_0"
     llm_timeout_seconds: float = 600.0
     llm_max_json_retries: int = 2
     llm_disable_thinking: bool = True

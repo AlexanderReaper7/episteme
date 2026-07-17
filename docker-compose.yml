@@ -1,6 +1,9 @@
 services:
   db:
     image: pgvector/pgvector:pg16
+    # zstd-compress full-page images in the WAL (PG16 has no zstd for table
+    # data; large text columns are TOAST/pglz-compressed automatically).
+    command: postgres -c wal_compression=zstd
     environment:
       POSTGRES_USER: episteme
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-episteme}

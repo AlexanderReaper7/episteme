@@ -15,15 +15,54 @@ spec (data model, pipeline stages, feed-composition rules, roadmap phases, decid
 ## Current state (update this section as phases land)
 
 - **Phase 1 (ingestion + raw feed UI) and Phase 2 (LLM writer pipeline) are built.**
-- Phase 2 has NOT had a live LLM end-to-end run yet: llama-server was offline during
-  development (gateway + pipeline are unit-tested against mocked transports).
-- **Blocker for the first live pipeline run:** no GGUF embedding model exists in
-  `C:\selfhosting\models` (the Qwen3-Embedding-4B there is safetensors, unusable by
-  llama-server). Set `LLM_MODEL_EMBED` in `.env` once one is present.
-- The user launches llama-server via `C:\selfhosting\llama-cpp\launch-llama.ps1 server`
-  (router mode, `--models-dir C:\selfhosting\models`, port 5001). Containers reach it at
-  `host.docker.internal:5001`. Hardware: RTX 3080 10GB, 96GB RAM.
-- Next up per roadmap: live Phase 2 verification, then Phase 3 (feedback + recommendation).
+- **Phase 2 verified live end-to-end (2026-07-17)**: full run on real models —
+  embed 323/323 → cluster 287 stories (25 multi-item) → triage 287 (178 aggregate /
+  90 write / 19 skip) → write 10 (`max_writes_per_run` cap). Zero errors and zero
+  JSON-repair retries; the DB-built `sources` sections matched DB rows exactly on
+  every article (incl. a 3-source cluster). Feed + article pages render all section
+  types. Known **content-quality** gaps found in that run (machinery is fine; these
+  are prompt/gating issues for Phase 4 `verify` / `quality_score`):
+  1. Triage approves `write` for stories with too little source text — a 518-char
+     photo blurb became an article whose writer looped 3 prose sections verbatim.
+     Consider gating `write` on extracted-text volume.
+  2. 4/10 articles restate `summary` sentences verbatim as a `prose` section.
+  3. Writer sometimes emits funding/DOI boilerplate as a prose section.
+- Embedding models: `Octen-Embedding-4B.Q8_0` (default `embed` role),
+  `Octen-Embedding-0.6B.f16` (faster alternative). `EMBEDDING_DIM` is **1024**
+  (0.6B native; 4B's 2560 truncated + re-normalized by the gateway). Octen is NOT
+  MRL-trained, but truncating the 4B to 1024 was measured to preserve the full-2560
+  similarity structure well (pearson 0.976, 88% top-5 neighbour overlap) and still
+  beats the 0.6B natively (0.900 / 72%) — so the truncated 4B is the better choice.
+  Truncation shifts cosines by ~±0.03 (max ~0.10), so `cluster_similarity_threshold`
+  (0.82) should be tuned against truncated embeddings.
+- The user launches llama-server via `C:\selfhosting\llama-cpp\launch-llama-v2.ps1 server`
+  (router mode, port 5001; per-model flags — MTP, KV quant, `--embeddings` — live in
+  `C:\selfhosting\llama-cpp\models-preset.ini`, sections keyed by GGUF file name minus
+  extension). Containers reach it at `host.docker.internal:5001`. Hardware: RTX 3080
+  10GB, 96GB RAM. `launch-llama.ps1` is the superseded v1.
+- **Source access policy (user, hard):** if a source fails or returns degraded
+  content to the polite client, use any *non-destructive* means to make it work —
+  non-destructive excludes spamming/high volume. TLS impersonation and (if needed)
+  a headless browser are in scope. Hard lines: never raise request volume
+  (throttle + cooldowns stay), and don't fetch robots.txt-disallowed paths — but
+  read robots.txt's literal bytes, not a WebFetch summary.
+- **Two HTTP transport modes** (`ingest/http.py:polite_get`), chosen per source via
+  the `http_mode` config key: `polite` (default; honest httpx, truthful UA) and
+  `impersonate` (curl_cffi presenting a real Chrome TLS/JA3 fingerprint;
+  `impersonate_profile` in config). Impersonate is for publishers whose bot-detector
+  fingerprints the TLS handshake and rejects honest clients regardless of UA. It
+  changes only *how we look*, never volume. `worker/tasks.py` auto-escalates a
+  source blocked (403/429) in `polite` to `impersonate`, retries once, and persists
+  the working mode. Adapters get HTTP via `polite_get` returning a transport-agnostic
+  `FetchResponse`/`FetchError` (not raw httpx) — `SourceAdapter.extract(item, source)`
+  takes the source so it can honor its mode.
+- **Phys.org** uses `http_mode=impersonate`: its own bot-detector (no cf-ray, not
+  Cloudflare) TLS-fingerprints, so honest httpx 429s regardless of UA while curl_cffi
+  gets HTTP 200 and the full feed; robots.txt (read literally) permits `/rss-feed/`.
+  Mullvad (WireGuard tunnel present) is the exit-IP lever in reserve if IP-based
+  blocking ever appears.
+- Next up per roadmap: Phase 3 (feedback + recommendation). Phase 2 quality tuning
+  (see gaps above) is worth folding in, since Phase 3's signal informs it.
 
 ## Commands
 
@@ -56,8 +95,8 @@ docker compose exec -T db psql -U episteme -d episteme
   (`writer`/`fast`/`embed`); config maps roles to model names (`LLM_MODEL_*` env).
   Structured output is double-enforced: JSON schema sent as `response_format`
   (llama.cpp grammar constraint) + pydantic validation with repair-prompt retries
-  (`llm/schemas.py` is the contract). Embeddings are truncated to `EMBEDDING_DIM` (768)
-  and re-normalized so any ≥768-dim embedding model works without schema changes.
+  (`llm/schemas.py` is the contract). Embeddings are truncated to `EMBEDDING_DIM` (1024)
+  and re-normalized so any ≥1024-dim embedding model works without schema changes.
 - **Pipeline** (`worker/pipeline.py`): embed → cluster (pgvector cosine, 5-day window,
   incremental centroids) → triage (fast model: write/aggregate/skip per story) → write
   (hierarchical: long sources condensed by fast model first). Stages are plain async
@@ -72,10 +111,12 @@ docker compose exec -T db psql -U episteme -d episteme
   tables — create_all only creates missing tables) + procrastinate schema (guarded;
   `procrastinate schema --apply` is NOT idempotent). Switch to Alembic when churn grows.
 - **Politeness toward sources is a hard requirement** (spec §5). All source HTTP goes
-  through `ingest/http.py`: one global throttle (min 2s gap, ~N(3s,1s)) enforced via an
-  httpx request event hook; conditional GETs (ETag/Last-Modified stored on `Source`);
-  429 → persisted per-source `cooldown_until` honoring Retry-After. New adapters MUST
-  use `polite_client()`. Never `docker compose down -v` casually — re-ingesting
+  through `ingest/http.py:polite_get`: one global throttle (min 2s gap, ~N(3s,1s))
+  applied before every request; conditional GETs (ETag/Last-Modified stored on
+  `Source`); 429 → persisted per-source `cooldown_until` honoring Retry-After. New
+  adapters MUST use `polite_get()` (returns a transport-agnostic `FetchResponse`;
+  raises `FetchError` on >=400). See the HTTP-transport-modes note above for
+  `http_mode`/impersonation. Never `docker compose down -v` casually — re-ingesting
   re-fetches every article from every source.
 - **Two-tier feed** (spec §8): generated articles first, "you're caught up" divider,
   then infinite-scroll aggregation stream (htmx `revealed` sentinels swap in
@@ -92,3 +133,5 @@ docker compose exec -T db psql -U episteme -d episteme
 - Fully standalone: no integration with the user's other stacks (e.g., Odysseus).
 - Jinja gotcha that already bit once: `dict.items` in a template resolves to the dict
   *method*; use `dict["items"]` subscript for the `items` key.
+- Persist Claude memories in-project under `.claude/memory/` (with its own `MEMORY.md`
+  index), not the global per-user memory store — user preference.

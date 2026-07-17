@@ -10,10 +10,15 @@ from trafilatura import extract_metadata
 
 from ..models import Source
 from .base import ExtractedItem, RawItem
-from .http import polite_client
+from .http import normalize_mode, polite_get
 from .registry import register
 
 log = logging.getLogger("episteme.ingest.rss")
+
+
+def _mode(source: Source):
+    """The source's HTTP transport mode (see ingest.http)."""
+    return normalize_mode(source.config.get("http_mode"))
 
 
 def _entry_published(entry: Any) -> datetime | None:
@@ -75,20 +80,18 @@ class RssAdapter:
             conditional_headers["If-None-Match"] = source.http_etag
         if source.http_last_modified:
             conditional_headers["If-Modified-Since"] = source.http_last_modified
-        async with polite_client(conditional_headers) as client:
-            response = await client.get(feed_url)
-            if response.status_code == 304:
-                log.info("Feed unchanged (304): %s", feed_url)
-                return []
-            response.raise_for_status()
+        response = await polite_get(feed_url, mode=_mode(source), extra_headers=conditional_headers)
+        if response.status_code == 304:
+            log.info("Feed unchanged (304): %s", feed_url)
+            return []
+        response.raise_for_status()
         source.http_etag = response.headers.get("ETag")
         source.http_last_modified = response.headers.get("Last-Modified")
         return parse_feed(response.content, since)
 
-    async def extract(self, item: RawItem) -> ExtractedItem:
-        async with polite_client() as client:
-            response = await client.get(item.url)
-            response.raise_for_status()
+    async def extract(self, item: RawItem, source: Source) -> ExtractedItem:
+        response = await polite_get(item.url, mode=_mode(source))
+        response.raise_for_status()
         text = trafilatura.extract(response.text, include_comments=False)
         media_refs = []
         try:

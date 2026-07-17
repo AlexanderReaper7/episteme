@@ -1,18 +1,41 @@
 import logging
 from datetime import UTC, datetime, timedelta
 
-import httpx
 from sqlalchemy import or_, select
 from sqlalchemy.dialects.postgresql import insert
 
 from ..config import settings
 from ..db import SessionLocal
 from ..ingest import content_hash, get_adapter
-from ..ingest.http import parse_retry_after
+from ..ingest.base import RawItem
+from ..ingest.http import FetchError, escalate_mode, parse_retry_after
 from ..models import Source, SourceItem
 from .app import app
 
 log = logging.getLogger("episteme.worker")
+
+BLOCKED_STATUSES = (403, 429)
+
+
+async def _fetch_with_escalation(adapter, source: Source) -> list[RawItem]:
+    """Fetch a source, escalating its HTTP mode past a block once (policy: a
+    source that fails politely gets stronger, still-non-destructive means before
+    we cool it down). Persists the working mode onto the source so the next run
+    starts there. Raises FetchError if even the escalated attempt is blocked."""
+    try:
+        return await adapter.fetch(source, source.last_fetched_at)
+    except FetchError as exc:
+        stronger = escalate_mode(source.config.get("http_mode"))
+        if exc.status_code not in BLOCKED_STATUSES or not settings.http_escalate_on_block:
+            raise
+        if stronger is None:
+            raise  # already at the strongest mode
+        log.warning(
+            "Source %r blocked (%d); escalating http_mode to %r and retrying",
+            source.name, exc.status_code, stronger,
+        )
+        source.config = {**source.config, "http_mode": stronger}
+        return await adapter.fetch(source, source.last_fetched_at)
 
 
 @app.task(name="episteme.ingest_source", retry=2)
@@ -31,13 +54,15 @@ async def ingest_source(source_id: int) -> None:
 
         adapter = get_adapter(source.type_name)
         try:
-            raw_items = await adapter.fetch(source, source.last_fetched_at)
-        except httpx.HTTPStatusError as exc:
-            if exc.response.status_code == 429:
+            raw_items = await _fetch_with_escalation(adapter, source)
+        except FetchError as exc:
+            if exc.status_code == 429:
                 # Rate-limited: retrying now makes it worse. Honor Retry-After
                 # (fall back to a long default) and let a later run pick it up.
+                # Any http_mode escalation is committed alongside the cooldown, so
+                # the next attempt starts in the stronger mode.
                 seconds = (
-                    parse_retry_after(exc.response.headers.get("Retry-After"))
+                    parse_retry_after(exc.headers.get("Retry-After"))
                     or settings.rate_limit_cooldown_seconds
                 )
                 source.cooldown_until = now + timedelta(seconds=seconds)
@@ -68,7 +93,7 @@ async def ingest_source(source_id: int) -> None:
             extracted_text = None
             media_refs = list(raw.media_refs)
             try:
-                extracted = await adapter.extract(raw)
+                extracted = await adapter.extract(raw, source)
                 extracted_text = extracted.text
                 seen_urls = {ref.get("url") for ref in media_refs}
                 media_refs.extend(

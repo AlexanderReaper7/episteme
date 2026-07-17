@@ -8,10 +8,11 @@ from sqlalchemy import DateTime, ForeignKey, Index, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
-# Dimension of the `embed` model role output. 768 fits nomic-style embedders;
-# revisit when the embed role is benchmarked in Phase 2 (column is nullable
-# and unused until then).
-EMBEDDING_DIM = 768
+# Dimension of the `embed` model role output. 1024 = native dim of
+# Octen-Embedding-0.6B; larger models (4B = 2560) are truncated + re-normalized
+# by the gateway (Matryoshka). Changing this requires a vector-column migration
+# (see bootstrap.ADDITIVE_MIGRATIONS) and re-embedding everything.
+EMBEDDING_DIM = 1024
 
 
 class Base(DeclarativeBase):

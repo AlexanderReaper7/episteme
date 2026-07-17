@@ -1,7 +1,16 @@
 from datetime import UTC, datetime, timedelta
 from email.utils import format_datetime
 
-from episteme.ingest.http import parse_retry_after
+import httpx
+import pytest
+
+from episteme.ingest.http import (
+    FetchError,
+    FetchResponse,
+    escalate_mode,
+    normalize_mode,
+    parse_retry_after,
+)
 
 
 def test_parse_retry_after_seconds():
@@ -23,3 +32,30 @@ def test_parse_retry_after_past_date_clamps_to_zero():
 def test_parse_retry_after_invalid():
     assert parse_retry_after(None) is None
     assert parse_retry_after("soonish") is None
+
+
+def test_normalize_mode_defaults_to_polite():
+    """Unknown/absent modes fall back to the honest transport, never impersonate."""
+    assert normalize_mode(None) == "polite"
+    assert normalize_mode("") == "polite"
+    assert normalize_mode("nonsense") == "polite"
+    assert normalize_mode("impersonate") == "impersonate"
+
+
+def test_escalate_mode_walks_the_ladder_then_stops():
+    assert escalate_mode("polite") == "impersonate"
+    assert escalate_mode(None) == "impersonate"  # unknown normalizes to polite first
+    assert escalate_mode("impersonate") is None  # already strongest
+
+
+def test_fetch_response_raises_only_on_error_status():
+    ok = FetchResponse(200, b"body", "body", httpx.Headers())
+    ok.raise_for_status()  # no raise
+
+    not_modified = FetchResponse(304, b"", "", httpx.Headers())
+    not_modified.raise_for_status()  # 304 is not an error
+
+    with pytest.raises(FetchError) as exc:
+        FetchResponse(429, b"", "", httpx.Headers({"Retry-After": "60"})).raise_for_status()
+    assert exc.value.status_code == 429
+    assert exc.value.headers["Retry-After"] == "60"

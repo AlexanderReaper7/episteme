@@ -148,8 +148,9 @@ the data model. This keeps every query and every table simpler.
 ```python
 class SourceAdapter(Protocol):
     type_name: str
-    def fetch(self, source: Source, since: datetime) -> list[RawItem]: ...
-    def extract(self, item: RawItem) -> ExtractedItem: ...   # full text + media refs
+    async def fetch(self, source: Source, since: datetime) -> list[RawItem]: ...
+    # `source` is passed so extraction honors the source's HTTP policy (`http_mode`)
+    async def extract(self, item: RawItem, source: Source) -> ExtractedItem: ...  # text + media
 ```
 
 Adapters are registered via entry points / a registry dict — adding a source type is
@@ -203,8 +204,13 @@ wait for idle time. Only LLM processing is deferred to idle/overnight windows.
   stored validators; an unchanged feed costs the server a 304 and no body.
 - **Rate-limit respect:** a 429 sets a per-source cooldown honoring `Retry-After`
   (1 h fallback); cooled-down sources are skipped, never retried immediately.
-- **Fetch-once:** deduplication guarantees an article URL is fetched at most once,
-  ever; honest identifying User-Agent on all requests.
+- **Fetch-once:** deduplication guarantees an article URL is fetched at most once, ever.
+- **Identification:** an honest identifying User-Agent by default. A source whose
+  bot-detector rejects honest clients (e.g. TLS-fingerprinting a feed its robots.txt
+  permits) may opt into a browser transport (`http_mode=impersonate`, curl_cffi). This
+  is non-destructive — it changes only *how we look*, never request volume: the global
+  throttle, conditional GETs and cooldowns all still apply, and robots.txt-disallowed
+  paths are never fetched. See §11 and CLAUDE.md for the mechanism and escalation policy.
 
 ---
 
