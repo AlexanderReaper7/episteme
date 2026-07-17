@@ -1,4 +1,4 @@
-"""Admin dashboard under /admin — status, job queue, and article provenance.
+"""Admin dashboard under /admin — status, job queue, and post provenance.
 
 Thin HTML layer over the same query functions the JSON API exposes; the API
 handlers are plain async functions, so the admin routes call them directly."""

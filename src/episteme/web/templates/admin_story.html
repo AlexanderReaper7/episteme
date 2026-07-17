@@ -16,8 +16,8 @@
         <div><a href="{{ item.url }}" target="_blank" rel="noopener noreferrer">{{ item.title }}</a> <span class="mono">[{{ item.source }}]</span></div>
         {% endfor %}
       </td></tr>
-      {% for article in story.articles %}
-      <tr><th>article</th><td><a href="/article/{{ article.id }}">{{ article.title }}</a> ({{ article.generated_at | dt }})</td></tr>
+      {% for post in story.posts %}
+      <tr><th>{{ post.kind }}</th><td><a href="/post/{{ post.id }}">{{ post.title }}</a> ({{ post.generated_at | dt }})</td></tr>
       {% endfor %}
     </table>
 

@@ -32,7 +32,7 @@ class Settings(BaseSettings):
 
     # --- LLM gateway (any OpenAI-compatible server; llama-server in router mode) ---
     llm_base_url: str = "http://host.docker.internal:5001/v1"
-    llm_model_writer: str = "Qwopus3.6-35B-A3B-Coder-MTP-Q4_K_M"
+    llm_model_main: str = "Qwopus3.6-35B-A3B-Coder-MTP-Q4_K_M"
     llm_model_fast: str = "empero-ai_Qwythos-9B-Claude-Mythos-5-1M-GGUF_Qwythos-9B-Claude-Mythos-5-1M-MTP-Q4_K_M"
     # 4B (2560 dims, gateway truncates to EMBEDDING_DIM) preferred for quality;
     # swap to "Octen-Embedding-0.6B.f16" (native 1024) if speed matters more.

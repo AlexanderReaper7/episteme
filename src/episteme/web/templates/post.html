@@ -1,23 +1,23 @@
 {% extends "base.html" %}
 
-{% block title %}{{ article.title }} — Episteme{% endblock %}
+{% block title %}{{ post.title }} — Episteme{% endblock %}
 
 {% block content %}
 <article class="article-page">
   <header class="article-header">
     <div class="card-meta">
       <span class="byline">Episteme</span>
-      <span>{{ article.reading_time_minutes }} min · {{ article.difficulty }}</span>
-      <time>{{ article.generated_at | dt }}</time>
+      <span>{{ post.reading_time_minutes }} min · {{ post.difficulty }}</span>
+      <time>{{ post.generated_at | dt }}</time>
     </div>
-    <h1>{{ article.title }}</h1>
-    <p class="article-summary">{{ article.summary }}</p>
+    <h1>{{ post.title }}</h1>
+    <p class="article-summary">{{ post.summary }}</p>
     <div class="topic-chips">
-      {% for topic in article.topics %}<span class="chip">{{ topic }}</span>{% endfor %}
+      {% for topic in post.topics %}<span class="chip">{{ topic }}</span>{% endfor %}
     </div>
   </header>
 
-  {% for section in article.sections %}
+  {% for section in post.sections %}
     {% if section.type == "prose" %}
       <div class="section-prose">{{ section.text | markdown }}</div>
     {% elif section.type == "key_points" %}
@@ -55,9 +55,9 @@
   {% endfor %}
 
   <p class="article-footnote">
-    Written by a local model ({{ article.model_used }}) from the sources above.
+    Written by a local model ({{ post.model_used }}) from the sources above.
     <a href="/">← back to feed</a>
-    · <a href="/admin/story/{{ article.story_id }}">provenance</a>
+    · <a href="/admin/story/{{ post.story_id }}">provenance</a>
   </p>
 </article>
 {% endblock %}

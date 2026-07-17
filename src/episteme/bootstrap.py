@@ -18,16 +18,11 @@ RETRY_DELAY_SECONDS = 2.0
 
 async def main() -> None:
     logging.basicConfig(level=logging.INFO)
-    for attempt in range(1, MAX_ATTEMPTS + 1):
-        try:
-            await init_db()
-            break
-        except Exception as exc:  # DB not up yet — retry
-            if attempt == MAX_ATTEMPTS:
-                raise
-            log.info("Database not ready (attempt %d/%d): %s", attempt, MAX_ATTEMPTS, exc)
-            await asyncio.sleep(RETRY_DELAY_SECONDS)
-
+    await wait_for_db()
+    # Renames must run BEFORE create_all: create_all would otherwise create an
+    # empty table under the new name and strand the data under the old one.
+    await apply_rename_migrations()
+    await init_db()
     await apply_additive_migrations()
     await apply_job_queue_schema()
 
@@ -36,6 +31,39 @@ async def main() -> None:
     if added:
         log.info("Seeded %d sources", added)
     log.info("Bootstrap complete")
+
+
+async def wait_for_db() -> None:
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        try:
+            async with engine.connect() as conn:
+                await conn.execute(text("SELECT 1"))
+            return
+        except Exception as exc:  # DB not up yet — retry
+            if attempt == MAX_ATTEMPTS:
+                raise
+            log.info("Database not ready (attempt %d/%d): %s", attempt, MAX_ATTEMPTS, exc)
+            await asyncio.sleep(RETRY_DELAY_SECONDS)
+
+
+# Idempotent renames, applied before create_all (see main()).
+RENAME_MIGRATIONS = [
+    # Phase 2.5: articles -> posts (+ `kind`, added in ADDITIVE_MIGRATIONS).
+    """
+    DO $$
+    BEGIN
+        IF to_regclass('articles') IS NOT NULL AND to_regclass('posts') IS NULL THEN
+            ALTER TABLE articles RENAME TO posts;
+        END IF;
+    END $$;
+    """,
+]
+
+
+async def apply_rename_migrations() -> None:
+    async with engine.begin() as conn:
+        for ddl in RENAME_MIGRATIONS:
+            await conn.execute(text(ddl))
 
 
 # Poor-man's migrations: create_all only creates missing TABLES, so columns added
@@ -77,6 +105,8 @@ ADDITIVE_MIGRATIONS = [
     # Observability: tool-loop calls store message deltas chained by chain_id/seq.
     "ALTER TABLE llm_calls ADD COLUMN IF NOT EXISTS chain_id VARCHAR(36)",
     "ALTER TABLE llm_calls ADD COLUMN IF NOT EXISTS seq INT",
+    # Phase 2.5: post kinds (feature = long-form article; more kinds in Phase 4).
+    "ALTER TABLE posts ADD COLUMN IF NOT EXISTS kind VARCHAR(20) NOT NULL DEFAULT 'feature'",
     # Phys.org needs TLS impersonation (seeds.py explains why); the seed only runs
     # on an empty table, so flip the existing row, clear the superseded disguise_ua
     # key, and drop the cooldown its 429s left.

@@ -1,6 +1,6 @@
 """LLM gateway — the single module through which all model access flows.
 
-Code asks for a *role* (`writer`, `fast`, `embed`); config maps each role to a
+Code asks for a *role* (`main`, `fast`, `embed`); config maps each role to a
 model name on an OpenAI-compatible endpoint (spec §7). Structured output is
 enforced twice: the JSON schema is sent as a `response_format` so llama.cpp
 constrains generation grammatically, and the response is validated with the
@@ -21,7 +21,7 @@ from .observe import record_llm_call
 
 log = logging.getLogger("episteme.llm")
 
-Role = Literal["writer", "fast", "embed"]
+Role = Literal["main", "fast", "embed"]
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -40,7 +40,7 @@ class LLMGateway:
 
     def model_for(self, role: Role) -> str:
         model = {
-            "writer": settings.llm_model_writer,
+            "main": settings.llm_model_main,
             "fast": settings.llm_model_fast,
             "embed": settings.llm_model_embed,
         }[role]

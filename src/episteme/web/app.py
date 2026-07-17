@@ -6,7 +6,7 @@ from sqlalchemy.orm import joinedload, selectinload
 
 from ..config import settings
 from ..db import SessionLocal
-from ..models import Article, SourceItem, Story
+from ..models import Post, SourceItem, Story
 from .admin import router as admin_router
 from .api import router as api_router
 from .templating import BASE_DIR, templates
@@ -59,13 +59,13 @@ async def _items_page(session, page: int) -> dict:
 @app.get("/", response_class=HTMLResponse)
 async def feed(request: Request):
     async with SessionLocal() as session:
-        articles = (
+        posts = (
             (
                 await session.execute(
-                    select(Article)
-                    .options(selectinload(Article.story).selectinload(Story.items))
-                    .where(Article.status == "published")
-                    .order_by(Article.generated_at.desc())
+                    select(Post)
+                    .options(selectinload(Post.story).selectinload(Story.items))
+                    .where(Post.status == "published")
+                    .order_by(Post.generated_at.desc())
                     .limit(50)
                 )
             )
@@ -76,28 +76,28 @@ async def feed(request: Request):
         # Before the pipeline has produced anything, fall back to raw items so
         # the feed is useful from day one.
         fallback = None
-        if not articles and not stream["stories"]:
+        if not posts and not stream["stories"]:
             fallback = await _items_page(session, page=1)
     return templates.TemplateResponse(
         request,
         "feed.html",
-        {"articles": articles, "stream": stream, "fallback": fallback},
+        {"posts": posts, "stream": stream, "fallback": fallback},
     )
 
 
-@app.get("/article/{article_id}", response_class=HTMLResponse)
-async def article_view(request: Request, article_id: int):
+@app.get("/post/{post_id}", response_class=HTMLResponse)
+async def post_view(request: Request, post_id: int):
     async with SessionLocal() as session:
-        article = (
+        post = (
             await session.execute(
-                select(Article)
-                .options(selectinload(Article.story).selectinload(Story.items))
-                .where(Article.id == article_id)
+                select(Post)
+                .options(selectinload(Post.story).selectinload(Story.items))
+                .where(Post.id == post_id)
             )
         ).scalar_one_or_none()
-    if article is None:
+    if post is None:
         raise HTTPException(status_code=404)
-    return templates.TemplateResponse(request, "article.html", {"article": article})
+    return templates.TemplateResponse(request, "post.html", {"post": post})
 
 
 @app.get("/partials/stream", response_class=HTMLResponse)

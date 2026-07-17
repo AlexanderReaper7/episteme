@@ -2,7 +2,7 @@
 
 Stages are plain async functions wrapped in procrastinate tasks, so the nightly
 orchestrator calls them in role-batched order (all fast-model work, then all
-writer work — one model load each), while individual stages stay manually
+main-model work — one model load each), while individual stages stay manually
 deferrable for testing.
 """
 
@@ -25,8 +25,8 @@ from ..llm.prompts import (
     SUMMARIZE_SYSTEM,
     TRIAGE_SYSTEM,
 )
-from ..llm.schemas import ArticleDraft, SourceSummary, TriageResult
-from ..models import Article, LlmCall, PipelineRun, SourceItem, Story
+from ..llm.schemas import PostDraft, SourceSummary, TriageResult
+from ..models import LlmCall, PipelineRun, Post, SourceItem, Story
 from .app import app
 
 log = logging.getLogger("episteme.pipeline")
@@ -293,11 +293,11 @@ def _writer_input(items: list[SourceItem], research: ResearchResult, condensed: 
     return "\n\n======\n\n".join(parts)
 
 
-async def write_articles(session: AsyncSession) -> int:
+async def write_posts(session: AsyncSession) -> int:
     """Research-and-write the highest-ranked candidates, best-first, until the wall-clock
     write budget is spent (max_writes_per_run is a hard safety cap). Each story gets one
-    bounded research pass, then the writer makes the real write/aggregate call with full
-    context."""
+    bounded research pass, then the main model makes the real write/aggregate call with
+    full context."""
     stories = (
         (
             await session.execute(
@@ -342,10 +342,10 @@ async def write_articles(session: AsyncSession) -> int:
                     for item in items
                 ]
                 draft = await gateway.complete_json(
-                    "writer",
+                    "main",
                     RESEARCH_WRITER_SYSTEM,
                     _writer_input(items, research, condensed),
-                    ArticleDraft,
+                    PostDraft,
                     temperature=0.4,
                 )
         except LLMError as exc:
@@ -359,21 +359,22 @@ async def write_articles(session: AsyncSession) -> int:
         if further:
             sections.append(further)
         session.add(
-            Article(
+            Post(
                 story_id=story.id,
+                kind="feature",
                 title=draft.title,
                 summary=draft.summary,
                 difficulty=draft.difficulty,
                 topics=draft.topics,
                 sections=sections,
                 reading_time_minutes=_reading_time(sections),
-                model_used=gateway.model_for("writer"),
+                model_used=gateway.model_for("main"),
             )
         )
         story.status = "written"
         await session.commit()
         written += 1
-        log.info("Wrote article for story %d: %s", story.id, draft.title)
+        log.info("Wrote feature for story %d: %s", story.id, draft.title)
     return written
 
 
@@ -411,7 +412,7 @@ async def run_pipeline() -> None:
                 ("embed", embed_new_items),
                 ("cluster", cluster_items),
                 ("triage", triage_stories),
-                ("write", write_articles),
+                ("write", write_posts),
             ):
                 try:
                     count = await stage(session)

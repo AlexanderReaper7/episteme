@@ -12,7 +12,7 @@ from sqlalchemy import func, select, text
 from ..config import settings
 from ..db import SessionLocal
 from ..llm import gateway
-from ..models import Article, LlmCall, PipelineRun, Source, SourceItem, Story
+from ..models import LlmCall, PipelineRun, Post, Source, SourceItem, Story
 
 router = APIRouter(prefix="/api")
 
@@ -63,21 +63,23 @@ def _item_dict(item: SourceItem) -> dict:
     }
 
 
-def _article_dict(article: Article, with_sections: bool = False) -> dict:
+def _post_dict(post: Post, with_sections: bool = False) -> dict:
     data = {
-        "id": article.id,
-        "story_id": article.story_id,
-        "title": article.title,
-        "summary": article.summary,
-        "difficulty": article.difficulty,
-        "topics": article.topics,
-        "reading_time_minutes": article.reading_time_minutes,
-        "model_used": article.model_used,
-        "status": article.status,
-        "generated_at": article.generated_at,
+        "id": post.id,
+        "story_id": post.story_id,
+        "kind": post.kind,
+        "title": post.title,
+        "summary": post.summary,
+        "difficulty": post.difficulty,
+        "topics": post.topics,
+        "reading_time_minutes": post.reading_time_minutes,
+        "model_used": post.model_used,
+        "quality_score": post.quality_score,
+        "status": post.status,
+        "generated_at": post.generated_at,
     }
     if with_sections:
-        data["sections"] = article.sections
+        data["sections"] = post.sections
     return data
 
 
@@ -129,7 +131,7 @@ async def api_status():
                 select(func.count()).select_from(SourceItem).where(SourceItem.embedding.is_(None))
             )
         ).scalar_one()
-        article_total = (await session.execute(select(func.count()).select_from(Article))).scalar_one()
+        post_total = (await session.execute(select(func.count()).select_from(Post))).scalar_one()
         last_run = (
             await session.execute(select(PipelineRun).order_by(PipelineRun.id.desc()).limit(1))
         ).scalar_one_or_none()
@@ -150,14 +152,14 @@ async def api_status():
             "available": llm_available,
             "models": llm_models,
             "roles": {
-                "writer": settings.llm_model_writer,
+                "main": settings.llm_model_main,
                 "fast": settings.llm_model_fast,
                 "embed": settings.llm_model_embed,
             },
         },
         "stories": story_counts,
         "source_items": {"total": item_total, "unembedded": unembedded},
-        "articles": article_total,
+        "posts": post_total,
         "last_run": _run_dict(last_run) if last_run else None,
     }
 
@@ -252,15 +254,15 @@ async def api_story(story_id: int):
         ).scalar_one_or_none()
         if story is None:
             raise HTTPException(404)
-        articles = (
-            (await session.execute(select(Article).where(Article.story_id == story_id)))
+        posts = (
+            (await session.execute(select(Post).where(Post.story_id == story_id)))
             .scalars()
             .all()
         )
     return {
         **_story_dict(story),
         "items": [_item_dict(i) for i in story.items],
-        "articles": [_article_dict(a) for a in articles],
+        "posts": [_post_dict(p) for p in posts],
     }
 
 
@@ -279,33 +281,33 @@ async def api_story_llm_calls(story_id: int, full: bool = False):
     return [_llm_call_dict(c, full=full) for c in calls]
 
 
-# --- Articles ---------------------------------------------------------------------
+# --- Posts ------------------------------------------------------------------------
 
 
-@router.get("/articles")
-async def api_articles(limit: int = Query(50, ge=1, le=500), offset: int = Query(0, ge=0)):
+@router.get("/posts")
+async def api_posts(limit: int = Query(50, ge=1, le=500), offset: int = Query(0, ge=0)):
     async with SessionLocal() as session:
-        articles = (
+        posts = (
             (
                 await session.execute(
-                    select(Article).order_by(Article.id.desc()).offset(offset).limit(limit)
+                    select(Post).order_by(Post.id.desc()).offset(offset).limit(limit)
                 )
             )
             .scalars()
             .all()
         )
-    return [_article_dict(a) for a in articles]
+    return [_post_dict(p) for p in posts]
 
 
-@router.get("/articles/{article_id}")
-async def api_article(article_id: int):
+@router.get("/posts/{post_id}")
+async def api_post(post_id: int):
     async with SessionLocal() as session:
-        article = (
-            await session.execute(select(Article).where(Article.id == article_id))
+        post = (
+            await session.execute(select(Post).where(Post.id == post_id))
         ).scalar_one_or_none()
-    if article is None:
+    if post is None:
         raise HTTPException(404)
-    return _article_dict(article, with_sections=True)
+    return _post_dict(post, with_sections=True)
 
 
 # --- LLM calls --------------------------------------------------------------------

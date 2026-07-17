@@ -39,7 +39,7 @@ class KeyPointsSection(BaseModel):
 Section = Annotated[Union[ProseSection, KeyPointsSection], Field(discriminator="type")]
 
 
-class ArticleDraft(BaseModel):
+class PostDraft(BaseModel):
     title: str = Field(max_length=300)
     summary: str = Field(description="One-paragraph hook", max_length=1000)
     difficulty: Literal["introductory", "intermediate", "technical"]

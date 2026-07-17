@@ -94,16 +94,19 @@ class Story(Base):
     )
 
     items: Mapped[list[SourceItem]] = relationship(back_populates="story")
-    articles: Mapped[list[Article]] = relationship(back_populates="story")
+    posts: Mapped[list[Post]] = relationship(back_populates="story")
 
 
-class Article(Base):
-    """A generated article; `sections` is the typed-section data of spec §6."""
+class Post(Base):
+    """A generated feed unit; `sections` is the typed-section data of spec §6.
+    `kind` distinguishes content types: `feature` = long-form article (the only
+    kind so far); micro-posts, minigames etc. come with Phase 4."""
 
-    __tablename__ = "articles"
+    __tablename__ = "posts"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     story_id: Mapped[int] = mapped_column(ForeignKey("stories.id"))
+    kind: Mapped[str] = mapped_column(String(20), default="feature")
     title: Mapped[str] = mapped_column(Text)
     summary: Mapped[str] = mapped_column(Text)
     difficulty: Mapped[str] = mapped_column(String(20))
@@ -111,13 +114,13 @@ class Article(Base):
     sections: Mapped[list[Any]] = mapped_column(JSONB, default=list)
     reading_time_minutes: Mapped[int] = mapped_column(default=1)
     model_used: Mapped[str | None] = mapped_column(Text)
-    quality_score: Mapped[float | None] = mapped_column()  # populated by verify (Phase 4)
+    quality_score: Mapped[float | None] = mapped_column()  # set by the qa stage
     status: Mapped[str] = mapped_column(String(20), default="published")
     generated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
 
-    story: Mapped[Story] = relationship(back_populates="articles")
+    story: Mapped[Story] = relationship(back_populates="posts")
 
 
 class LlmCall(Base):
@@ -131,10 +134,10 @@ class LlmCall(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
-    role: Mapped[str] = mapped_column(String(10))  # writer | fast | embed
+    role: Mapped[str] = mapped_column(String(10))  # main | fast | embed
     model: Mapped[str] = mapped_column(Text)
     kind: Mapped[str] = mapped_column(String(20))  # chat | tool-chat | embed
-    stage: Mapped[str | None] = mapped_column(String(20))  # embed|triage|research|condense|write
+    stage: Mapped[str | None] = mapped_column(String(20))  # embed|triage|condense|write|qa
     story_id: Mapped[int | None] = mapped_column(index=True)
     # Tool loops store per-row message DELTAS: rows sharing a chain_id are one
     # conversation; full transcript = concat(request.messages + response) by seq.

@@ -5,7 +5,7 @@ import httpx
 import pytest
 
 from episteme.llm.gateway import LLMError, LLMGateway, _truncate_normalize
-from episteme.llm.schemas import ArticleDraft, TriageResult
+from episteme.llm.schemas import PostDraft, TriageResult
 from episteme.models import EMBEDDING_DIM
 
 
@@ -111,8 +111,8 @@ def test_truncate_normalize_rejects_short_vectors():
         _truncate_normalize([1.0] * (EMBEDDING_DIM - 1))
 
 
-def test_article_draft_schema_discriminated_union():
-    draft = ArticleDraft.model_validate(
+def test_post_draft_schema_discriminated_union():
+    draft = PostDraft.model_validate(
         {
             "title": "T",
             "summary": "S",
@@ -126,7 +126,7 @@ def test_article_draft_schema_discriminated_union():
     )
     assert draft.sections[0].type == "prose"
     with pytest.raises(Exception):
-        ArticleDraft.model_validate(
+        PostDraft.model_validate(
             {
                 "title": "T",
                 "summary": "S",

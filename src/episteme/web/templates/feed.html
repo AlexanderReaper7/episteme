@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 
 {% block content %}
-{% if articles %}
-<section class="feed" id="articles">
-  {% for article in articles %}
-  {% set banner = article.story | story_banner %}
+{% if posts %}
+<section class="feed" id="posts">
+  {% for post in posts %}
+  {% set banner = post.story | story_banner %}
   <article class="card article-card">
     {% if banner %}
-    <a class="card-banner" href="/article/{{ article.id }}">
+    <a class="card-banner" href="/post/{{ post.id }}">
       <img src="{{ banner }}" alt="" loading="lazy"
            onerror="this.closest('.card-banner').remove()">
     </a>
@@ -15,13 +15,13 @@
     <div class="card-body">
       <div class="card-meta">
         <span class="byline">Episteme</span>
-        <span>{{ article.reading_time_minutes }} min · {{ article.difficulty }}</span>
-        <time>{{ article.generated_at | dt }}</time>
+        <span>{{ post.reading_time_minutes }} min · {{ post.difficulty }}</span>
+        <time>{{ post.generated_at | dt }}</time>
       </div>
-      <h2 class="card-title"><a href="/article/{{ article.id }}">{{ article.title }}</a></h2>
-      <p class="card-snippet">{{ article.summary | truncate(300) }}</p>
+      <h2 class="card-title"><a href="/post/{{ post.id }}">{{ post.title }}</a></h2>
+      <p class="card-snippet">{{ post.summary | truncate(300) }}</p>
       <div class="topic-chips">
-        {% for topic in article.topics %}<span class="chip">{{ topic }}</span>{% endfor %}
+        {% for topic in post.topics %}<span class="chip">{{ topic }}</span>{% endfor %}
       </div>
     </div>
   </article>
@@ -32,7 +32,7 @@
 {% endif %}
 
 {% if fallback %}
-<p class="note">The pipeline hasn't produced articles or story clusters yet — showing raw
+<p class="note">The pipeline hasn't produced posts or story clusters yet — showing raw
 source items. Trigger a run with:
 <code>docker compose exec worker procrastinate --app=episteme.worker.app.app defer episteme.run_pipeline '{}'</code></p>
 <section id="feed" class="feed">
