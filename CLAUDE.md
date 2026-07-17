@@ -14,14 +14,17 @@ spec (data model, pipeline stages, feed-composition rules, roadmap phases, decid
 
 ## Current state (update this section as phases land)
 
-- **Phase 1 (ingestion + raw feed UI) and Phase 2 (LLM writer pipeline) are built.**
+- **Phases 1, 2, and 2.5 are built** (1: ingestion + raw feed UI; 2: LLM writer
+  pipeline; 2.5: agentic writer + vision QA + renames — see the Phase 2.5 bullet
+  below for what still needs live verification).
 - **Phase 2 verified live end-to-end (2026-07-17)**: full run on real models —
   embed 323/323 → cluster 287 stories (25 multi-item) → triage 287 (178 aggregate /
   90 write / 19 skip) → write 10 (`max_writes_per_run` cap). Zero errors and zero
   JSON-repair retries; the DB-built `sources` sections matched DB rows exactly on
   every article (incl. a 3-source cluster). Feed + article pages render all section
-  types. Known **content-quality** gaps found in that run (machinery is fine; these
-  are prompt/gating issues for Phase 4 `verify` / `quality_score`):
+  types. Known **content-quality** gaps found in that run (machinery is fine; the
+  Phase 2.5 thin-gate, writer prompts, and qa stage now target exactly these —
+  confirm on the next live run):
   1. Triage approves `write` for stories with too little source text — a 518-char
      photo blurb became an article whose writer looped 3 prose sections verbatim.
      Consider gating `write` on extracted-text volume.
@@ -75,19 +78,27 @@ spec (data model, pipeline stages, feed-composition rules, roadmap phases, decid
   gets HTTP 200 and the full feed; robots.txt (read literally) permits `/rss-feed/`.
   Mullvad (WireGuard tunnel present) is the exit-IP lever in reserve if IP-based
   blocking ever appears.
-- **Decided with the user (2026-07-17), spec updated — next up is Phase 2.5**
-  (before Phase 3): (a) *writer-led agentic write* — research + editorial authority
-  move onto the large model in one tool loop per story; fast keeps triage only;
-  (b) *qa stage with vision* — render the post, screenshot (headless Chromium),
-  the main model critiques and revises in bounded rounds (stock Qwen3.6 mmproj on
-  disk IS compatible with Qwopus — user-confirmed; enable via `--mmproj` in
-  models-preset.ini); (c) *renames*: role `writer`→`main`; content units are
-  **post** (any feed item) / **feature** (long-form kind), `articles` table →
-  `posts` + `kind`; (d) prompts carry guidance, not quotas (drop "2–4 sources"
-  phrasing); (e) *model residency*: ≤1 decode model in VRAM at a time, embed
+- **Phase 2.5 built (2026-07-17), not yet live-verified** (commits c9b52ff /
+  d7ba9a2 / a296559): (a) *writer-led agentic write* — `llm/agent.py` is now a
+  main-model tool loop per story (web_search / fetch_page / demote_story =
+  editorial authority) that ends with the grammar-constrained `PostDraft` turn in
+  the SAME conversation; fast keeps triage + a condense pass batched before any
+  main-model work (no mid-story model swap, sources condensed exactly once);
+  deterministic `min_write_chars` thin-gate kept as backstop. (b) *qa stage with
+  vision* (`worker/qa.py`) — renders each unscored post via the real web app
+  (`web_internal_url`), screenshots with headless Chromium (Playwright in the
+  image), main model critiques against trusted sources with bounded revise rounds;
+  sets `quality_score`, can demote; screenshots are stripped before `llm_calls`
+  persistence. **Vision needs the user to enable `--mmproj` on Qwopus in
+  models-preset.ini (stock Qwen3.6 mmproj, user-confirmed compatible) — until
+  then qa fails per-post, non-fatally.** (c) *renames landed*: role
+  `writer`→`main` (`LLM_MODEL_MAIN`), `articles`→`posts` + `kind`
+  (**post**/**feature** nomenclature), `/post/{id}`, `/api/posts` —
+  `bootstrap.RENAME_MIGRATIONS` runs before create_all. (d) prompts carry
+  guidance, not quotas. (e) *model residency*: ≤1 decode model in VRAM, embed
   pinned to system RAM (`--n-gpu-layers 0`) — enforced host-side in the router
-  config. Mission framing: entertainment + education blended, zero manipulative
-  mechanics ("a good Reddit"). See spec §1/§7/§12.
+  config, not in this repo. Mission framing: entertainment + education blended,
+  zero manipulative mechanics ("a good Reddit"). See spec §1/§7/§12.
 
 ## Commands
 
@@ -101,8 +112,8 @@ curl -X POST http://127.0.0.1:8200/api/jobs/defer/ingest_all      # or run_pipel
 
 # Admin dashboard + JSON API (single-user, no auth — decided constraint)
 # http://127.0.0.1:8200/admin            status, sources, pipeline runs, job queue, defer buttons
-# http://127.0.0.1:8200/admin/story/{id} provenance: every LLM call behind a story's article
-curl http://127.0.0.1:8200/api/status    # /api/{status,sources,runs,jobs,stories,articles,llm-calls}
+# http://127.0.0.1:8200/admin/story/{id} provenance: every LLM call behind a story's post
+curl http://127.0.0.1:8200/api/status    # /api/{status,sources,runs,jobs,stories,posts,llm-calls}
 curl "http://127.0.0.1:8200/api/llm-calls?story_id=284&full=true"  # full prompts/responses
 
 # Database
@@ -123,17 +134,22 @@ docker compose exec -T db psql -U episteme -d episteme
   `type_name`. New pipeline stages/section types follow the same pattern of small
   interfaces + registration.
 - **LLM access goes only through `llm/gateway.py`.** Code asks for a *role*
-  (`writer`/`fast`/`embed`); config maps roles to model names (`LLM_MODEL_*` env).
+  (`main`/`fast`/`embed`); config maps roles to model names (`LLM_MODEL_*` env).
   Structured output is double-enforced: JSON schema sent as `response_format`
   (llama.cpp grammar constraint) + pydantic validation with repair-prompt retries
-  (`llm/schemas.py` is the contract). Embeddings are truncated to `EMBEDDING_DIM` (1024)
+  (`llm/schemas.py` is the contract; `agent.request_validated` is the in-conversation
+  variant). Embeddings are truncated to `EMBEDDING_DIM` (1024)
   and re-normalized so any ≥1024-dim embedding model works without schema changes.
 - **Pipeline** (`worker/pipeline.py`): embed → cluster (pgvector cosine, 5-day window,
   incremental centroids) → triage (fast model: write/aggregate/skip per story) → write
-  (hierarchical: long sources condensed by fast model first). Stages are plain async
+  (main-model agentic loop per story — research tools + demote authority + final
+  constrained draft in one conversation; fast condenses long sources in a batch
+  beforehand) → qa (`worker/qa.py`: screenshot the rendered post, vision critique,
+  bounded revise rounds, sets `quality_score`). Stages are plain async
   functions wrapped in procrastinate tasks; the orchestrator runs them role-batched so
-  each model loads once per run. **The article `sources` section is always built from
-  the DB, never by the LLM** — citations must not be able to hallucinate.
+  each model loads once per run. **The post `sources` / `further_reading` sections are
+  always built from the DB / fetch log, never by the LLM** — citations must not be
+  able to hallucinate, and QA revisions can only replace body sections.
 - **Observability** (`llm/observe.py`): every gateway call is persisted to `llm_calls`
   (request/response, tokens, timing; embeds log batch size only) — the gateway is
   the single choke point, so instrumentation there covers everything including
@@ -152,9 +168,11 @@ docker compose exec -T db psql -U episteme -d episteme
   same image with different entrypoints. Periodic tasks via `@app.periodic(cron=...)`,
   crons configurable through settings (`config.py` reads env / `.env`).
 - **Schema management**: `bootstrap.py` (compose `migrate` one-shot service) does
-  create_all + `ADDITIVE_MIGRATIONS` (idempotent DDL list for columns added to existing
-  tables — create_all only creates missing tables) + procrastinate schema (guarded;
-  `procrastinate schema --apply` is NOT idempotent). Switch to Alembic when churn grows.
+  `RENAME_MIGRATIONS` (guarded table renames, BEFORE create_all so data isn't
+  stranded under the old name) + create_all + `ADDITIVE_MIGRATIONS` (idempotent DDL
+  list for columns added to existing tables — create_all only creates missing
+  tables) + procrastinate schema (guarded; `procrastinate schema --apply` is NOT
+  idempotent). Switch to Alembic when churn grows.
 - **Politeness toward sources is a hard requirement** (spec §5). All source HTTP goes
   through `ingest/http.py:polite_get`: one global throttle (min 2s gap, ~N(3s,1s))
   applied before every request; conditional GETs (ETag/Last-Modified stored on

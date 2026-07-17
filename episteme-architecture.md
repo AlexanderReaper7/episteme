@@ -140,8 +140,6 @@ Post            — id, story_id?, kind (feature|micro|game|...), title, slug, s
                   sections JSON (see §6), topics[], reading_time, difficulty,
                   generated_at, model_used, quality_score,
                   status (draft|published|archived)
-                  (current code: the `articles` table is the `feature` kind; the
-                  rename to `posts` + `kind` lands with the post-kinds refactor)
 MediaAsset      — id, article_id?, source_item_id?, kind (image|video-embed|chart-spec),
                   remote_url, attribution, last_verified_at,
                   cached_path (nullable — unused for now; enables opt-in caching later)
@@ -469,7 +467,8 @@ with infinite scroll, article writing with `prose`/`key_points`/`sources` sectio
 schema validation, article view. *First generated morning feed — with the
 aggregation tier as fallback so the feed is useful even on light processing nights.*
 
-**Phase 2.5 — Agentic writer, QA & nomenclature (next)**
+**Phase 2.5 — Agentic writer, QA & nomenclature** *(built 2026-07; live
+verification pending)*
 Move research + editorial authority onto the `main` model (one agentic tool loop
 per story, §7); `qa` stage with rendered-screenshot review and bounded revise
 rounds (vision via the Qwen3.6 mmproj); generalize prompts from quotas to
