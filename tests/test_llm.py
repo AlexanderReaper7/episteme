@@ -4,8 +4,8 @@ import math
 import httpx
 import pytest
 
-from episteme.llm.gateway import LLMError, LLMGateway, _truncate_normalize
-from episteme.llm.schemas import PostDraft, TriageResult
+from episteme.llm.gateway import LLMError, LLMGateway, _truncate_normalize, grammar_safe
+from episteme.llm.schemas import PostDraft, QAReview, TriageResult
 from episteme.models import EMBEDDING_DIM
 
 
@@ -135,3 +135,26 @@ def test_post_draft_schema_discriminated_union():
                 "sections": [{"type": "prose", "text": "Body"}],
             }
         )
+
+
+def test_grammar_safe_drops_oversized_max_length():
+    schema = QAReview.model_json_schema()
+    safe = grammar_safe(schema)
+    assert "maxLength" not in safe["properties"]["critique"]  # 2000 > grammar limit
+    # Small caps and everything else survive untouched.
+    assert TriageResult.model_json_schema() == grammar_safe(TriageResult.model_json_schema())
+    assert schema["properties"]["critique"]["maxLength"] == 2000  # input not mutated
+
+
+async def test_chat_sends_grammar_safe_schema():
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        sent = body["response_format"]["json_schema"]["schema"]
+        assert "maxLength" not in sent["properties"]["critique"]
+        return httpx.Response(
+            200,
+            json=_completion('{"verdict": "approve", "quality_score": 8.0, "critique": "fine"}'),
+        )
+
+    result = await _gateway_with(handler).complete_json("main", "sys", "user", QAReview)
+    assert result.verdict == "approve"

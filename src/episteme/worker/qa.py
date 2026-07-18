@@ -27,6 +27,7 @@ from ..llm.observe import llm_context, llm_conversation
 from ..llm.prompts import QA_SYSTEM
 from ..llm.schemas import QAReview
 from ..models import Post, SourceItem, Story
+from .control import pause_requested
 
 log = logging.getLogger("episteme.qa")
 
@@ -134,33 +135,44 @@ async def _qa_post(session: AsyncSession, browser, post: Post) -> None:
         log.info("QA rounds exhausted for post %d (last verdict: revise)", post.id)
 
 
-async def qa_posts(session: AsyncSession) -> int:
-    """Review every published-but-unscored post. Returns posts reviewed."""
-    if not settings.qa_enabled:
+async def qa_posts(
+    session: AsyncSession, limit: int | None = None, post_id: int | None = None
+) -> int:
+    """Review every published-but-unscored post (at most `limit` when given).
+    Returns posts reviewed. An explicit `post_id` re-reviews that post even if it
+    already has a score — and bypasses `qa_enabled`, since it was asked for."""
+    if post_id is None and not settings.qa_enabled:
         return 0
-    posts = (
-        (
-            await session.execute(
-                select(Post)
-                .where(Post.quality_score.is_(None), Post.status == "published")
-                .order_by(Post.id)
-            )
+    if post_id is not None:
+        query = select(Post.id).where(Post.id == post_id)
+    else:
+        query = (
+            select(Post.id)
+            .where(Post.quality_score.is_(None), Post.status == "published")
+            .order_by(Post.id)
         )
-        .scalars()
-        .all()
-    )
-    if not posts:
+        if limit is not None:
+            query = query.limit(limit)
+    # Ids, not instances: a failed post's rollback() expires every object in the
+    # session, and touching an expired instance afterwards raises MissingGreenlet.
+    # session.get() inside the loop re-loads cleanly after any rollback.
+    post_ids = (await session.execute(query)).scalars().all()
+    if not post_ids:
         return 0
     reviewed = 0
     try:
         async with _chromium() as browser:
-            for post in posts:
+            for post_id in post_ids:
+                if await pause_requested(session):
+                    log.info("qa stage pausing after %d posts", reviewed)
+                    break
                 try:
+                    post = await session.get(Post, post_id)
                     with llm_context(stage="qa", story_id=post.story_id):
                         await _qa_post(session, browser, post)
                     reviewed += 1
                 except Exception as exc:  # per-post; the next post still gets reviewed
-                    log.warning("QA failed for post %d: %s", post.id, exc)
+                    log.warning("QA failed for post %d: %s", post_id, exc)
                     await session.rollback()
                 await session.commit()
     except Exception as exc:  # Chromium missing / crashed — skip the stage, not the run

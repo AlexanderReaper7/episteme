@@ -341,6 +341,16 @@ main {
 
 .admin-card button:hover { border-color: var(--accent); color: var(--accent); }
 
+.stage-controls input {
+  background: var(--card-hover);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.85rem;
+  width: 6.5rem;
+}
+
 /* Provenance timeline */
 .llm-call {
   border: 1px solid var(--border);

@@ -32,8 +32,14 @@ class Settings(BaseSettings):
 
     # --- LLM gateway (any OpenAI-compatible server; llama-server in router mode) ---
     llm_base_url: str = "http://host.docker.internal:5001/v1"
+    # Embeddings use a dedicated always-resident llama-server (CPU-only model,
+    # spawned by launch-llama-v2.ps1 on :5002). The router's --models-max counts
+    # models globally with no per-model exemption, so capping it at 1 — required
+    # so the fast and main models never share VRAM — would otherwise evict the
+    # embedder. Point this at llm_base_url to serve embeds from the router again.
+    llm_embed_base_url: str = "http://host.docker.internal:5002/v1"
     llm_model_main: str = "Qwopus3.6-35B-A3B-Coder-MTP-Q4_K_M"
-    llm_model_fast: str = "empero-ai_Qwythos-9B-Claude-Mythos-5-1M-GGUF_Qwythos-9B-Claude-Mythos-5-1M-MTP-Q4_K_M"
+    llm_model_fast: str = "Qwythos-9B-Claude-Mythos-5-1M-MTP-Q4_K_M"
     # 4B (2560 dims, gateway truncates to EMBEDDING_DIM) preferred for quality;
     # swap to "Octen-Embedding-0.6B.f16" (native 1024) if speed matters more.
     llm_model_embed: str = "Octen-Embedding-4B.Q8_0"

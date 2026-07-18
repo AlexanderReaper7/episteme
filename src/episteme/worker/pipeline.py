@@ -11,7 +11,7 @@ import re
 import time
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
@@ -23,6 +23,7 @@ from ..llm.prompts import SUMMARIZE_SYSTEM, TRIAGE_SYSTEM, WRITER_AGENT_SYSTEM
 from ..llm.schemas import SourceSummary, TriageResult
 from ..models import LlmCall, PipelineRun, Post, SourceItem, Story
 from .app import app
+from .control import pause_requested
 from .qa import qa_posts
 
 log = logging.getLogger("episteme.pipeline")
@@ -52,20 +53,18 @@ def update_centroid(centroid: list[float], count: int, embedding: list[float]) -
 # --- Stage 1: embed -------------------------------------------------------------
 
 
-async def embed_new_items(session: AsyncSession) -> int:
-    items = (
-        (
-            await session.execute(
-                select(SourceItem)
-                .where(SourceItem.embedding.is_(None))
-                .order_by(SourceItem.id)
-            )
-        )
-        .scalars()
-        .all()
+async def embed_new_items(session: AsyncSession, limit: int | None = None) -> int:
+    query = (
+        select(SourceItem).where(SourceItem.embedding.is_(None)).order_by(SourceItem.id)
     )
+    if limit is not None:
+        query = query.limit(limit)
+    items = (await session.execute(query)).scalars().all()
     embedded = 0
     for start in range(0, len(items), settings.embed_batch_size):
+        if await pause_requested(session):
+            log.info("embed stage pausing after %d items", embedded)
+            break
         batch = items[start : start + settings.embed_batch_size]
         texts = [f"{item.title or ''}\n{_plain_text(item)[:1500]}" for item in batch]
         with llm_context(stage="embed"):
@@ -80,18 +79,16 @@ async def embed_new_items(session: AsyncSession) -> int:
 # --- Stage 2: cluster ------------------------------------------------------------
 
 
-async def cluster_items(session: AsyncSession) -> int:
-    items = (
-        (
-            await session.execute(
-                select(SourceItem)
-                .where(SourceItem.embedding.is_not(None), SourceItem.story_id.is_(None))
-                .order_by(SourceItem.published_at.asc().nulls_last(), SourceItem.id)
-            )
-        )
-        .scalars()
-        .all()
+async def cluster_items(session: AsyncSession, limit: int | None = None) -> int:
+    # No pause check: pure DB work, done in seconds — nothing worth interrupting.
+    query = (
+        select(SourceItem)
+        .where(SourceItem.embedding.is_not(None), SourceItem.story_id.is_(None))
+        .order_by(SourceItem.published_at.asc().nulls_last(), SourceItem.id)
     )
+    if limit is not None:
+        query = query.limit(limit)
+    items = (await session.execute(query)).scalars().all()
     max_distance = 1.0 - settings.cluster_similarity_threshold
     clustered = 0
     for item in items:
@@ -140,18 +137,22 @@ def _story_digest(items: list[SourceItem], snippet_chars: int = 300) -> str:
     return "\n".join(lines)
 
 
-async def triage_stories(session: AsyncSession) -> int:
-    stories = (
-        (
-            await session.execute(
-                select(Story).where(Story.status == "new", Story.item_count > 0)
-            )
-        )
-        .scalars()
-        .all()
-    )
+async def triage_stories(
+    session: AsyncSession, limit: int | None = None, story_id: int | None = None
+) -> int:
+    if story_id is not None:
+        # Explicit target: re-triage regardless of current status (testing lever).
+        query = select(Story).where(Story.id == story_id)
+    else:
+        query = select(Story).where(Story.status == "new", Story.item_count > 0)
+        if limit is not None:
+            query = query.limit(limit)
+    stories = (await session.execute(query)).scalars().all()
     triaged = 0
     for story in stories:
+        if await pause_requested(session):
+            log.info("triage stage pausing after %d stories", triaged)
+            break
         items = await _story_items(session, story)
         digest = _story_digest(items)
         try:
@@ -269,30 +270,39 @@ def _demote(story: Story, reason: str) -> None:
     story.triage_reason = reason
 
 
-async def write_posts(session: AsyncSession) -> int:
+async def write_posts(
+    session: AsyncSession, limit: int | None = None, story_id: int | None = None
+) -> int:
     """The main model's agentic write (spec §7): work the ranked candidates best-first
-    until the wall-clock budget is spent (max_writes_per_run is a hard safety cap).
+    until the wall-clock budget is spent (max_writes_per_run is a hard safety cap;
+    `limit` overrides it for partial/test runs).
+
+    An explicit `story_id` rewrites that story regardless of its status — existing
+    published posts for it are archived when the new draft lands.
 
     Two passes, batched by model role so the GPU never swaps mid-story: first the fast
     model condenses every candidate's long sources (once — the same text seeds the
     writer's research and its draft), then each story gets one main-model tool loop
     with research tools and editorial authority (write or demote)."""
-    stories = (
-        (
-            await session.execute(
-                select(Story)
-                .where(Story.status == "triaged", Story.triage_decision == "write")
-                .order_by(Story.rank_score.desc().nulls_last(), Story.last_item_at.desc())
-                .limit(settings.max_writes_per_run)
-            )
+    if story_id is not None:
+        query = select(Story).where(Story.id == story_id)
+    else:
+        query = (
+            select(Story)
+            .where(Story.status == "triaged", Story.triage_decision == "write")
+            .order_by(Story.rank_score.desc().nulls_last(), Story.last_item_at.desc())
+            .limit(limit if limit is not None else settings.max_writes_per_run)
         )
-        .scalars()
-        .all()
-    )
+    stories = (await session.execute(query)).scalars().all()
 
     # Pass 1 (fast, batched): condense long sources once per story.
     prepared: dict[int, tuple[list[SourceItem], str, int]] = {}
     for story in stories:
+        if await pause_requested(session):
+            # Don't start main-model work on a pause: condense output is cheap to
+            # redo next run, the write pass is minutes of GPU per story.
+            log.info("write stage pausing before main-model pass (%d condensed)", len(prepared))
+            return 0
         items = await _story_items(session, story)
         with llm_context(story_id=story.id):
             condensed = [
@@ -309,6 +319,9 @@ async def write_posts(session: AsyncSession) -> int:
     for story in stories:
         if time.monotonic() > deadline:
             log.info("write stage hit wall-clock budget (%ds)", settings.write_budget_seconds)
+            break
+        if await pause_requested(session):
+            log.info("write stage pausing after %d posts", written)
             break
         items, seed, source_chars = prepared[story.id]
         try:
@@ -340,6 +353,12 @@ async def write_posts(session: AsyncSession) -> int:
         further = _further_reading_section(outcome.fetch_log, item_urls)
         if further:
             sections.append(further)
+        if story_id is not None:  # rewrite: the new post supersedes the old
+            await session.execute(
+                update(Post)
+                .where(Post.story_id == story.id, Post.status == "published")
+                .values(status="archived")
+            )
         session.add(
             Post(
                 story_id=story.id,
@@ -380,6 +399,14 @@ async def run_pipeline() -> None:
         session.add(run)
         await session.commit()
 
+        if await pause_requested(session):
+            log.info("Pipeline paused; run recorded and skipped (resume via /api/pipeline/resume)")
+            run.status = "paused"
+            run.finished_at = datetime.now(UTC)
+            await session.commit()
+            await gateway.unload_models()
+            return
+
         if not await gateway.is_available():
             log.warning("LLM endpoint %s unavailable; skipping pipeline run", settings.llm_base_url)
             run.status = "skipped"
@@ -388,7 +415,12 @@ async def run_pipeline() -> None:
             await session.commit()
             return
 
+        paused = False
         errors: list[str] = []
+        # Track counters locally and only ever *assign* run.stages: a stage's
+        # rollback() expires every object in the shared session, and reading an
+        # expired attribute on an AsyncSession object raises MissingGreenlet.
+        stages: dict[str, int] = {}
         try:
             for name, stage in (
                 ("embed", embed_new_items),
@@ -400,11 +432,17 @@ async def run_pipeline() -> None:
                 try:
                     count = await stage(session)
                     log.info("Pipeline stage %s: %d processed", name, count)
-                    run.stages = {**run.stages, name: count}
+                    stages[name] = count
+                    run.stages = dict(stages)
                 except LLMError as exc:
                     log.warning("Pipeline stage %s skipped: %s", name, exc)
                     errors.append(f"{name}: {exc}")
                 await session.commit()
+                if await pause_requested(session):
+                    # Stages stop at unit boundaries; leftover work is picked up by
+                    # the next run (data-driven selection), so just stop cleanly.
+                    paused = True
+                    break
         except Exception as exc:
             # Unexpected failure: don't leave the run row stuck at "running".
             await session.rollback()
@@ -414,11 +452,79 @@ async def run_pipeline() -> None:
             await session.commit()
             raise
 
-        run.status = "failed" if errors else "succeeded"
+        run.status = "paused" if paused else ("failed" if errors else "succeeded")
         run.error = "; ".join(errors) or None
         run.finished_at = datetime.now(UTC)
         await session.commit()
+        if paused:  # free VRAM for whatever prompted the pause
+            await gateway.unload_models()
         await _prune_llm_calls(session)
+
+
+"""Single-stage runs: stages are data-driven (each selects whatever rows are
+still unprocessed), so any stage can run standalone and it picks up from
+previous work — write without re-triaging, qa without writing. STAGE_PARAMS is
+the contract the API validates defer params against."""
+STAGE_RUNNERS = {
+    "embed": embed_new_items,
+    "cluster": cluster_items,
+    "triage": triage_stories,
+    "write": write_posts,
+    "qa": qa_posts,
+}
+STAGE_PARAMS: dict[str, frozenset[str]] = {
+    "embed": frozenset({"limit"}),
+    "cluster": frozenset({"limit"}),
+    "triage": frozenset({"limit", "story_id"}),
+    "write": frozenset({"limit", "story_id"}),
+    "qa": frozenset({"limit", "post_id"}),
+}
+
+
+@app.task(name="episteme.pipeline_stage")
+async def pipeline_stage(
+    stage: str,
+    limit: int | None = None,
+    story_id: int | None = None,
+    post_id: int | None = None,
+) -> None:
+    """One pipeline stage on its own, with optional caps/targeting — the testing
+    lever behind POST /api/jobs/defer/{stage}. Records a PipelineRun row like the
+    orchestrator so partial runs show up in the admin view."""
+    runner = STAGE_RUNNERS[stage]
+    kwargs = {
+        key: value
+        for key, value in {"limit": limit, "story_id": story_id, "post_id": post_id}.items()
+        if value is not None and key in STAGE_PARAMS[stage]
+    }
+    async with SessionLocal() as session:
+        run = PipelineRun()
+        session.add(run)
+        await session.commit()
+
+        if stage != "cluster" and not await gateway.is_available():
+            run.status = "skipped"
+            run.error = f"LLM endpoint {settings.llm_base_url} unavailable"
+            run.finished_at = datetime.now(UTC)
+            await session.commit()
+            return
+
+        try:
+            count = await runner(session, **kwargs)
+        except Exception as exc:
+            await session.rollback()
+            run.status = "failed"
+            run.error = f"{stage}: {type(exc).__name__}: {exc}"
+            run.finished_at = datetime.now(UTC)
+            await session.commit()
+            raise
+        run.stages = {stage: count}
+        paused = await pause_requested(session)
+        run.status = "paused" if paused else "succeeded"
+        run.finished_at = datetime.now(UTC)
+        await session.commit()
+        if paused:
+            await gateway.unload_models()
 
 
 @app.periodic(cron=settings.pipeline_cron)

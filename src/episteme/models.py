@@ -162,6 +162,22 @@ class PipelineRun(Base):
         DateTime(timezone=True), server_default=func.now()
     )
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    status: Mapped[str] = mapped_column(String(20), default="running")  # running|succeeded|failed|skipped
+    # running|succeeded|failed|skipped|paused — paused runs left work behind on
+    # purpose; deferring the pipeline again picks it up (stages are data-driven).
+    status: Mapped[str] = mapped_column(String(20), default="running")
     stages: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)  # {"embed": 323, ...}
     error: Mapped[str | None] = mapped_column(Text)
+
+
+class AppState(Base):
+    """Key/value control flags (e.g. the pipeline pause switch) — persistent so a
+    future resource governor can flip them via the API and worker restarts keep
+    honoring them."""
+
+    __tablename__ = "app_state"
+
+    key: Mapped[str] = mapped_column(String(50), primary_key=True)
+    value: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

@@ -5,7 +5,7 @@ handlers are plain async functions, so the admin routes call them directly."""
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
 from .api import (
@@ -45,7 +45,34 @@ async def queue_partial(request: Request):
 
 @router.post("/defer/{task}", response_class=HTMLResponse)
 async def admin_defer(request: Request, task: str):
-    await api_defer(task)
+    form = await request.form()
+
+    def _num(name: str) -> int | None:
+        value = (form.get(name) or "").strip()
+        return int(value) if value else None
+
+    await api_defer(
+        task,
+        limit=_num("limit"),
+        story_id=_num("story_id"),
+        post_id=_num("post_id"),
+        source_id=_num("source_id"),
+    )
+    return templates.TemplateResponse(
+        request, "_admin_queue.html", {"jobs": await api_jobs(limit=20)}
+    )
+
+
+@router.post("/pipeline/{action}", response_class=HTMLResponse)
+async def admin_pause_resume(request: Request, action: str):
+    from .api import api_pipeline_pause, api_pipeline_resume
+
+    if action == "pause":
+        await api_pipeline_pause()
+    elif action == "resume":
+        await api_pipeline_resume(run=False)  # explicit defer buttons exist next to it
+    else:
+        raise HTTPException(404, f"Unknown action {action!r}")
     return templates.TemplateResponse(
         request, "_admin_queue.html", {"jobs": await api_jobs(limit=20)}
     )

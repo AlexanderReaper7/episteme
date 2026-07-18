@@ -110,6 +110,21 @@ curl http://127.0.0.1:8200/health     # web app: http://127.0.0.1:8200
 curl -X POST http://127.0.0.1:8200/api/jobs/defer/ingest_all      # or run_pipeline
 # (equivalent: docker compose exec worker procrastinate --app=episteme.worker.app.app defer episteme.ingest_all '{}')
 
+# Single pipeline stages (data-driven: each picks up whatever rows are unprocessed,
+# so write runs without re-triaging, qa without writing). Optional caps/targets:
+curl -X POST "http://127.0.0.1:8200/api/jobs/defer/write?limit=2"        # embed|cluster|triage|write|qa
+curl -X POST "http://127.0.0.1:8200/api/jobs/defer/write?story_id=284"   # rewrite (archives old post)
+curl -X POST "http://127.0.0.1:8200/api/jobs/defer/qa?post_id=8"         # re-review even if scored
+curl -X POST "http://127.0.0.1:8200/api/jobs/defer/ingest_source?source_id=4"
+
+# Pause/resume (resource governor lever): pause persists a flag in app_state; the
+# worker stops at the next unit boundary (story/post/batch) and unloads the decode
+# models from VRAM. Resume clears the flag and (by default) defers a pipeline run,
+# which picks up exactly where the pause stopped.
+curl -X POST http://127.0.0.1:8200/api/pipeline/pause
+curl -X POST http://127.0.0.1:8200/api/pipeline/resume     # ?run=false to only clear
+curl -X POST http://127.0.0.1:8200/api/llm/unload          # free VRAM now, no pause
+
 # Admin dashboard + JSON API (single-user, no auth — decided constraint)
 # http://127.0.0.1:8200/admin            status, sources, pipeline runs, job queue, defer buttons
 # http://127.0.0.1:8200/admin/story/{id} provenance: every LLM call behind a story's post

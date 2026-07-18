@@ -16,11 +16,41 @@ from ..models import LlmCall, PipelineRun, Post, Source, SourceItem, Story
 
 router = APIRouter(prefix="/api")
 
-# Tasks the defer endpoint may enqueue — everything else is 404.
-DEFERRABLE_TASKS = {
-    "ingest_all": "episteme.ingest_all",
-    "run_pipeline": "episteme.run_pipeline",
+# Tasks the defer endpoint may enqueue (name → procrastinate task, allowed params)
+# — everything else is 404. The single-stage entries all map to
+# episteme.pipeline_stage; their allowed params mirror worker.pipeline.STAGE_PARAMS.
+DEFERRABLE_TASKS: dict[str, tuple[str, frozenset[str]]] = {
+    "ingest_all": ("episteme.ingest_all", frozenset()),
+    "ingest_source": ("episteme.ingest_source", frozenset({"source_id"})),
+    "run_pipeline": ("episteme.run_pipeline", frozenset()),
+    "embed": ("episteme.pipeline_stage", frozenset({"limit"})),
+    "cluster": ("episteme.pipeline_stage", frozenset({"limit"})),
+    "triage": ("episteme.pipeline_stage", frozenset({"limit", "story_id"})),
+    "write": ("episteme.pipeline_stage", frozenset({"limit", "story_id"})),
+    "qa": ("episteme.pipeline_stage", frozenset({"limit", "post_id"})),
 }
+
+
+def defer_args(task: str, **params: int | None) -> tuple[str, dict]:
+    """Validate a defer request; returns (procrastinate task name, job kwargs).
+    Raises KeyError for unknown tasks, ValueError for bad params — the endpoint
+    maps those to 404/422. Pure so it's unit-testable without a queue."""
+    try:
+        task_name, allowed = DEFERRABLE_TASKS[task]
+    except KeyError:
+        raise KeyError(
+            f"Unknown task {task!r}; deferrable: {sorted(DEFERRABLE_TASKS)}"
+        ) from None
+    provided = {key: value for key, value in params.items() if value is not None}
+    if stray := set(provided) - set(allowed):
+        raise ValueError(
+            f"{task} does not accept {sorted(stray)}; allowed: {sorted(allowed) or 'none'}"
+        )
+    if task == "ingest_source" and "source_id" not in provided:
+        raise ValueError("ingest_source requires source_id")
+    if task_name == "episteme.pipeline_stage":
+        provided["stage"] = task
+    return task_name, provided
 
 
 # --- Serializers ------------------------------------------------------------------
@@ -121,7 +151,10 @@ def _llm_call_dict(call: LlmCall, full: bool = False) -> dict:
 
 @router.get("/status")
 async def api_status():
+    from ..worker.control import pause_requested
+
     async with SessionLocal() as session:
+        paused = await pause_requested(session)
         story_counts = dict(
             (await session.execute(select(Story.status, func.count()).group_by(Story.status))).all()
         )
@@ -149,6 +182,7 @@ async def api_status():
     return {
         "llm": {
             "base_url": settings.llm_base_url,
+            "embed_base_url": settings.llm_embed_base_url,
             "available": llm_available,
             "models": llm_models,
             "roles": {
@@ -157,6 +191,7 @@ async def api_status():
                 "embed": settings.llm_model_embed,
             },
         },
+        "pipeline": {"paused": paused},
         "stories": story_counts,
         "source_items": {"total": item_total, "unembedded": unembedded},
         "posts": post_total,
@@ -212,15 +247,81 @@ async def api_jobs(status: str | None = None, limit: int = Query(50, ge=1, le=50
 
 
 @router.post("/jobs/defer/{task}")
-async def api_defer(task: str):
-    task_name = DEFERRABLE_TASKS.get(task)
-    if task_name is None:
-        raise HTTPException(404, f"Unknown task {task!r}; deferrable: {sorted(DEFERRABLE_TASKS)}")
+async def api_defer(
+    task: str,
+    limit: int | None = Query(None, ge=1),
+    story_id: int | None = Query(None, ge=1),
+    post_id: int | None = Query(None, ge=1),
+    source_id: int | None = Query(None, ge=1),
+):
+    """Enqueue a job. Single pipeline stages take caps/targets, e.g.
+    POST /api/jobs/defer/write?limit=2  or  /api/jobs/defer/qa?post_id=8."""
+    try:
+        task_name, kwargs = defer_args(
+            task, limit=limit, story_id=story_id, post_id=post_id, source_id=source_id
+        )
+    except KeyError as exc:
+        raise HTTPException(404, str(exc.args[0]))
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
     from ..worker.app import app as job_app
 
     async with job_app.open_async():
-        job = await job_app.configure_task(task_name).defer_async()
-    return {"deferred": task_name, "job_id": job.id}
+        job_id = await job_app.configure_task(task_name).defer_async(**kwargs)
+    return {"deferred": task_name, "job_id": job_id, "args": kwargs}
+
+
+# --- Pipeline pause / resume ------------------------------------------------------
+
+
+async def _pipeline_job_running() -> bool:
+    query = text(
+        "SELECT count(*) FROM procrastinate_jobs WHERE status = 'doing' "
+        "AND task_name IN ('episteme.run_pipeline', 'episteme.pipeline_stage')"
+    )
+    async with SessionLocal() as session:
+        return bool((await session.execute(query)).scalar())
+
+
+@router.post("/pipeline/pause")
+async def api_pipeline_pause():
+    """Pause LLM pipeline work (for a resource governor or manually). A running
+    worker stops at the next unit boundary — one story/post/batch — and unloads
+    the decode models itself; if nothing is running, models are unloaded now.
+    The flag persists until /pipeline/resume, so scheduled runs stay no-ops."""
+    from ..worker.control import set_paused
+
+    async with SessionLocal() as session:
+        await set_paused(session, True)
+    running = await _pipeline_job_running()
+    unloaded = [] if running else await gateway.unload_models()
+    return {"paused": True, "worker_running": running, "unloaded_models": unloaded}
+
+
+@router.post("/pipeline/resume")
+async def api_pipeline_resume(run: bool = Query(True)):
+    """Clear the pause flag; by default also defer a pipeline run to pick up
+    where the pause left off (run=false to just clear the flag). Models reload
+    lazily on first use."""
+    from ..worker.control import set_paused
+
+    async with SessionLocal() as session:
+        await set_paused(session, False)
+    job_id = None
+    if run:
+        from ..worker.app import app as job_app
+
+        async with job_app.open_async():
+            job_id = await job_app.configure_task("episteme.run_pipeline").defer_async()
+    return {"paused": False, "job_id": job_id}
+
+
+@router.post("/llm/unload")
+async def api_llm_unload():
+    """Unload all decode models immediately (frees VRAM). Standalone lever —
+    does NOT pause the pipeline; in-flight LLM calls will fail and a running
+    worker will reload models on its next call. Pair with /pipeline/pause."""
+    return {"unloaded_models": await gateway.unload_models()}
 
 
 # --- Stories ----------------------------------------------------------------------

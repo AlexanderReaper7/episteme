@@ -30,10 +30,37 @@ class LLMError(Exception):
     pass
 
 
+# llama.cpp's schema→grammar converter emits bounded repetitions its own GBNF
+# parser rejects once maxLength reaches 2000 ("failed to parse grammar", HTTP 400
+# — measured: 1999 compiles, 2000 doesn't). Constraints the grammar layer cannot
+# express are dropped from the server-sent schema only; pydantic still enforces
+# the real limit client-side, backed by the repair-prompt retries.
+GRAMMAR_MAX_STRING_LENGTH = 1000
+
+
+def grammar_safe(schema: object) -> object:
+    """Deep-copy `schema` with grammar-incompilable constraints removed."""
+    if isinstance(schema, dict):
+        return {
+            key: grammar_safe(value)
+            for key, value in schema.items()
+            if not (key == "maxLength" and isinstance(value, int) and value > GRAMMAR_MAX_STRING_LENGTH)
+        }
+    if isinstance(schema, list):
+        return [grammar_safe(item) for item in schema]
+    return schema
+
+
 class LLMGateway:
     def __init__(self, transport: httpx.AsyncBaseTransport | None = None) -> None:
         self._client = httpx.AsyncClient(
             base_url=settings.llm_base_url,
+            timeout=settings.llm_timeout_seconds,
+            transport=transport,
+        )
+        # Embeds may live on a separate always-resident server (see config).
+        self._embed_client = httpx.AsyncClient(
+            base_url=settings.llm_embed_base_url,
             timeout=settings.llm_timeout_seconds,
             transport=transport,
         )
@@ -49,9 +76,15 @@ class LLMGateway:
         return model
 
     async def is_available(self) -> bool:
+        """Both endpoints must answer — a run that can't embed is doomed anyway."""
         try:
             response = await self._client.get("/models", timeout=5.0)
-            return response.status_code == 200
+            if response.status_code != 200:
+                return False
+            if settings.llm_embed_base_url != settings.llm_base_url:
+                response = await self._embed_client.get("/models", timeout=5.0)
+                return response.status_code == 200
+            return True
         except httpx.HTTPError:
             return False
 
@@ -61,6 +94,31 @@ class LLMGateway:
         response.raise_for_status()
         return response.json().get("data", [])
 
+    async def unload_models(self) -> list[str]:
+        """Ask the router to unload every loaded decode model, freeing VRAM for
+        other applications (pause support). The router loads models lazily, so no
+        matching "load" is needed — the next completion request reloads. The
+        dedicated embed server is untouched: always-resident by design, and it
+        holds no VRAM (--device none). Best-effort: failures are logged, not raised.
+
+        Router-mode endpoint lives at the server root, not under /v1."""
+        root = settings.llm_base_url.removesuffix("/v1")
+        unloaded: list[str] = []
+        try:
+            for row in await self.list_models():
+                status = row.get("status") or {}
+                if status.get("value") not in (None, "unloaded"):
+                    response = await self._client.post(
+                        f"{root}/models/unload", json={"model": row["id"]}, timeout=30.0
+                    )
+                    if response.status_code == 200:
+                        unloaded.append(row["id"])
+                    else:
+                        log.warning("Unload of %s failed: %s", row["id"], response.text[:200])
+        except httpx.HTTPError as exc:
+            log.warning("Model unload failed: %s", exc)
+        return unloaded
+
     async def chat(
         self,
         role: Role,
@@ -69,6 +127,8 @@ class LLMGateway:
         response_schema: dict | None = None,
         temperature: float = 0.3,
     ) -> str:
+        if response_schema is not None:
+            response_schema = grammar_safe(response_schema)
         payload: dict = {
             "model": self.model_for(role),
             "messages": [
@@ -135,6 +195,8 @@ class LLMGateway:
         (may carry `tool_calls`). Used by the writer's agentic loop (the schema turn
         produces the final draft inside the same conversation); `chat`/`complete_json`
         remain the path for single-shot calls."""
+        if response_schema is not None:
+            response_schema = grammar_safe(response_schema)
         payload: dict = {
             "model": self.model_for(role),
             "messages": messages,
@@ -224,7 +286,7 @@ class LLMGateway:
             return []
         start = time.monotonic()
         try:
-            response = await self._client.post(
+            response = await self._embed_client.post(
                 "/embeddings", json={"model": self.model_for("embed"), "input": texts}
             )
             response.raise_for_status()
