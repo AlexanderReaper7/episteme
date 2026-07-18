@@ -56,8 +56,13 @@ Writing rules for the post you will produce:
 4. Structure, length, and emphasis are your editorial call. Use "prose" sections
    (markdown) and, where it genuinely helps, a "key_points" section. Do not restate
    the summary verbatim as a section, and do not emit funding/DOI boilerplate as prose.
-5. Do NOT include a sources/references or "further reading" section — those are built
-   automatically from the database and your fetch log.
+5. Do NOT include a sources/references or "further reading" section in the body —
+   those are built automatically. Instead, the draft's `further_reading_urls` field
+   is where you recommend follow-up reading: list the exact "Fetched:" URLs of pages
+   you fetched that a reader would genuinely benefit from. Leave out dead ends,
+   pages that turned out to be about something else, and the original source items.
+   An empty list is fine. Only URLs you actually fetched count — anything else is
+   dropped.
 """
 
 QA_SYSTEM = """\

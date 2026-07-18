@@ -98,18 +98,22 @@ class Story(Base):
 
 
 class Post(Base):
-    """A generated feed unit; `sections` is the typed-section data of spec §6.
-    `kind` distinguishes content types: `feature` = long-form article (the only
-    kind so far); micro-posts, minigames etc. come with Phase 4."""
+    """A feed content unit — ALL feed content is a post (decided 2026-07-18), so
+    every visible unit has one id from triage verdict to publication/archival.
+    `kind`: `feature` = long-form article (title/summary/sections filled);
+    `aggregate` = identity-only row for a cluster card — no stored content, the
+    card renders from the story's items at read time (canonical minimum).
+    Micro-posts, minigames etc. come with Phase 4. At most one published post
+    per story at any time. `sections` is the typed-section data of spec §6."""
 
     __tablename__ = "posts"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     story_id: Mapped[int] = mapped_column(ForeignKey("stories.id"))
     kind: Mapped[str] = mapped_column(String(20), default="feature")
-    title: Mapped[str] = mapped_column(Text)
-    summary: Mapped[str] = mapped_column(Text)
-    difficulty: Mapped[str] = mapped_column(String(20))
+    title: Mapped[str | None] = mapped_column(Text)
+    summary: Mapped[str | None] = mapped_column(Text)
+    difficulty: Mapped[str | None] = mapped_column(String(20))
     topics: Mapped[list[str]] = mapped_column(JSONB, default=list)
     sections: Mapped[list[Any]] = mapped_column(JSONB, default=list)
     reading_time_minutes: Mapped[int] = mapped_column(default=1)
@@ -119,6 +123,9 @@ class Post(Base):
     generated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    # Set when the post leaves "published" (rewrite supersession or QA demote);
+    # archived posts older than llm_log_retention_days are pruned with their calls.
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     story: Mapped[Story] = relationship(back_populates="posts")
 
@@ -139,6 +146,11 @@ class LlmCall(Base):
     kind: Mapped[str] = mapped_column(String(20))  # chat | tool-chat | embed
     stage: Mapped[str | None] = mapped_column(String(20))  # embed|triage|condense|write|qa
     story_id: Mapped[int | None] = mapped_column(index=True)
+    # The post generation this call belongs to. qa stamps it at call time; the
+    # write stage stamps condense/write calls right after the post row lands
+    # (the post doesn't exist yet while they run). NULL = story-level work
+    # (triage) that is shared provenance across every version of a post.
+    post_id: Mapped[int | None] = mapped_column(index=True)
     # Tool loops store per-row message DELTAS: rows sharing a chain_id are one
     # conversation; full transcript = concat(request.messages + response) by seq.
     chain_id: Mapped[str | None] = mapped_column(String(36))

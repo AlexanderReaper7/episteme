@@ -97,13 +97,27 @@ _DRAFT_REQUEST = (
     "only the shape."
 )
 
+# Budget-refusal tool replies (matched exactly by the stuck-loop breaker below).
+_SEARCH_EXHAUSTED = (
+    "Search budget exhausted; stop searching. Write from what you have, or call "
+    "demote_story if it isn't enough for a feature."
+)
+_FETCH_EXHAUSTED = (
+    "Fetch budget exhausted; stop fetching. Write from what you have, or call "
+    "demote_story if it isn't enough for a feature."
+)
+# A model that keeps re-issuing tool calls after its budgets ran dry (story 371
+# repeated the same two searches for six turns) gets this many all-refused turns
+# before the loop stops burning main-model time and forces the draft.
+_MAX_REFUSED_TURNS = 2
+
 
 @dataclass
 class WriteOutcome:
     decision: str  # "write" | "aggregate"
     reason: str = ""
     draft: PostDraft | None = None  # set when decision == "write"
-    fetch_log: list[dict] = field(default_factory=list)  # [{url,title}] actually fetched
+    fetch_log: list[dict] = field(default_factory=list)  # [{url,title}], final post-redirect URLs
     notes: str = ""  # the model's editorial note before drafting (may be "")
     gathered_chars: int = 0  # fetched text volume, for the deterministic thin-gate
 
@@ -152,6 +166,7 @@ async def _run_writer_loop(system: str, seed: str) -> WriteOutcome:
                 continue
             state.notes = message.get("content") or ""
             break
+        turn_all_refused = True
         for call in tool_calls:
             fn = call.get("function", {})
             name = fn.get("name")
@@ -164,9 +179,17 @@ async def _run_writer_loop(system: str, seed: str) -> WriteOutcome:
                     gathered_chars=state.gathered_chars,
                 )
             content = await _dispatch(name, args, state)
+            if content not in (_SEARCH_EXHAUSTED, _FETCH_EXHAUSTED):
+                turn_all_refused = False
             messages.append(
                 {"role": "tool", "tool_call_id": call.get("id", ""), "content": content}
             )
+        # Stuck-loop breaker: turns where EVERY tool call bounced off an exhausted
+        # budget gather nothing — after a couple of those, go straight to the draft.
+        state.refused_turns = state.refused_turns + 1 if turn_all_refused else 0
+        if state.refused_turns >= _MAX_REFUSED_TURNS:
+            log.info("writer loop stuck on exhausted budgets; forcing draft")
+            break
 
     messages.append({"role": "user", "content": _DRAFT_REQUEST})
     draft = await request_validated("main", messages, PostDraft, temperature=0.4)
@@ -225,6 +248,7 @@ class _LoopState:
     searches: int = 0
     fetches: int = 0
     nudges: int = 0
+    refused_turns: int = 0  # consecutive turns where every tool call was budget-refused
     notes: str = ""
 
 
@@ -234,7 +258,7 @@ async def _dispatch(name: str | None, args: dict, state: _LoopState) -> str:
     try:
         if name == "web_search":
             if state.searches >= settings.enrich_max_searches:
-                return "Search budget exhausted; stop searching and write from what you have."
+                return _SEARCH_EXHAUSTED
             state.searches += 1
             results = await web_search(str(args.get("query", "")))
             lines = [f"- {r['title']} — {r['url']}\n  {r['snippet']}" for r in results]
@@ -242,16 +266,22 @@ async def _dispatch(name: str | None, args: dict, state: _LoopState) -> str:
 
         if name == "fetch_page":
             if state.fetches >= settings.enrich_max_fetches:
-                return "Fetch budget exhausted; stop fetching and write from what you have."
+                return _FETCH_EXHAUSTED
             state.fetches += 1
-            url = str(args.get("url", ""))
-            page = await fetch_page(url)
+            page = await fetch_page(str(args.get("url", "")))
+            # Log the FINAL post-redirect URL — where the content actually lives.
+            # A requested URL can redirect somewhere else entirely (bad link IDs on
+            # source sites), and echoing it back lets the model spot the mismatch.
+            url = page["url"]
             if url not in state.seen_urls and page["text"]:
                 state.seen_urls.add(url)
                 state.fetch_log.append({"url": url, "title": page.get("title") or url})
                 state.gathered_chars += len(page["text"])
             link_lines = [f"  - {ln['text']} — {ln['url']}" for ln in page["links"][:20]]
-            body = f"Page text:\n{page['text']}\n\nOutbound links:\n" + "\n".join(link_lines)
+            body = (
+                f"Fetched: {url}\nTitle: {page.get('title') or '(none)'}\n\n"
+                f"Page text:\n{page['text']}\n\nOutbound links:\n" + "\n".join(link_lines)
+            )
             return _UNTRUSTED.format(body=body)
 
         return f"Unknown tool: {name}"

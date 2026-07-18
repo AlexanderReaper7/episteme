@@ -129,18 +129,33 @@ async def ingest_source(source_id: int) -> None:
         log.info("Source %r: %d fetched, %d new", source.name, len(raw_items), stored)
 
 
+def _due_for_scheduled_fetch(source: Source, now: datetime) -> bool:
+    """Per-source poll interval (`fetch_interval_minutes` config): a source with a
+    touchy rate limiter can be polled less often than the global ingest cron. Only
+    the scheduled path honors it — a manual defer of ingest_source still forces."""
+    try:
+        interval = float(source.config.get("fetch_interval_minutes", 0))
+    except (TypeError, ValueError):
+        return True
+    if interval <= 0 or source.last_fetched_at is None:
+        return True
+    return source.last_fetched_at + timedelta(minutes=interval) <= now
+
+
 @app.task(name="episteme.ingest_all")
 async def ingest_all() -> None:
-    """Defer an ingest_source job for every enabled, non-cooling-down source."""
+    """Defer an ingest_source job for every enabled, non-cooling-down source
+    that is due per its own fetch interval."""
+    now = datetime.now(UTC)
     async with SessionLocal() as session:
-        source_ids = (
+        sources = (
             (
                 await session.execute(
-                    select(Source.id).where(
+                    select(Source).where(
                         Source.enabled,
                         or_(
                             Source.cooldown_until.is_(None),
-                            Source.cooldown_until <= datetime.now(UTC),
+                            Source.cooldown_until <= now,
                         ),
                     )
                 )
@@ -148,6 +163,7 @@ async def ingest_all() -> None:
             .scalars()
             .all()
         )
+        source_ids = [s.id for s in sources if _due_for_scheduled_fetch(s, now)]
     for source_id in source_ids:
         await ingest_source.defer_async(source_id=source_id)
     log.info("Deferred ingestion for %d sources", len(source_ids))

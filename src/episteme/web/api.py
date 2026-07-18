@@ -7,7 +7,7 @@ plain dict builders — the ORM models are the schema."""
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query
-from sqlalchemy import func, select, text
+from sqlalchemy import and_, func, or_, select, text
 
 from ..config import settings
 from ..db import SessionLocal
@@ -107,6 +107,7 @@ def _post_dict(post: Post, with_sections: bool = False) -> dict:
         "quality_score": post.quality_score,
         "status": post.status,
         "generated_at": post.generated_at,
+        "archived_at": post.archived_at,
     }
     if with_sections:
         data["sections"] = post.sections
@@ -133,6 +134,7 @@ def _llm_call_dict(call: LlmCall, full: bool = False) -> dict:
         "kind": call.kind,
         "stage": call.stage,
         "story_id": call.story_id,
+        "post_id": call.post_id,
         "chain_id": call.chain_id,
         "seq": call.seq,
         "duration_ms": call.duration_ms,
@@ -164,7 +166,13 @@ async def api_status():
                 select(func.count()).select_from(SourceItem).where(SourceItem.embedding.is_(None))
             )
         ).scalar_one()
-        post_total = (await session.execute(select(func.count()).select_from(Post))).scalar_one()
+        # Generated content only — identity-only aggregate cards would drown the
+        # "what did the writer produce" signal this stat exists for.
+        post_total = (
+            await session.execute(
+                select(func.count()).select_from(Post).where(Post.kind != "aggregate")
+            )
+        ).scalar_one()
         last_run = (
             await session.execute(select(PipelineRun).order_by(PipelineRun.id.desc()).limit(1))
         ).scalar_one_or_none()
@@ -374,6 +382,44 @@ async def api_story_llm_calls(story_id: int, full: bool = False):
             (
                 await session.execute(
                     select(LlmCall).where(LlmCall.story_id == story_id).order_by(LlmCall.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    return [_llm_call_dict(c, full=full) for c in calls]
+
+
+# Stages whose calls belong to one post generation; anything else with a
+# story_id (triage) is story-level provenance shared by every version.
+POST_SCOPED_STAGES = ("condense", "research", "write", "qa")
+
+
+@router.get("/posts/{post_id}/llm-calls")
+async def api_post_llm_calls(post_id: int, full: bool = False):
+    """Provenance of ONE post generation: the calls stamped with this post_id
+    plus the story-level calls every version shares. Unstamped write-side rows
+    (an attempt that never produced a post) stay out —
+    /api/stories/{id}/llm-calls remains the unfiltered story history."""
+    async with SessionLocal() as session:
+        post = await session.get(Post, post_id)
+        if post is None:
+            raise HTTPException(404)
+        calls = (
+            (
+                await session.execute(
+                    select(LlmCall)
+                    .where(
+                        or_(
+                            LlmCall.post_id == post_id,
+                            and_(
+                                LlmCall.story_id == post.story_id,
+                                LlmCall.post_id.is_(None),
+                                LlmCall.stage.notin_(POST_SCOPED_STAGES),
+                            ),
+                        )
+                    )
+                    .order_by(LlmCall.id)
                 )
             )
             .scalars()

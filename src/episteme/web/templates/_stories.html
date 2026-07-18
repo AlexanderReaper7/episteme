@@ -1,4 +1,5 @@
-{% for story in stories %}
+{% for post in cards %}
+{% set story = post.story %}
 {% set primary = story.items | first %}
 {% set banner = story | story_banner %}
 <article class="card story-card">
@@ -12,6 +13,7 @@
     <div class="card-meta">
       {% for topic in story.topics %}<span class="chip">{{ topic }}</span>{% endfor %}
       {% if story.last_item_at %}<time>{{ story.last_item_at | dt }}</time>{% endif %}
+      <a class="card-provenance" href="/post/{{ post.id }}/provenance">provenance</a>
     </div>
     <h2 class="card-title">
       <a href="{{ primary.url }}" target="_blank" rel="noopener noreferrer">

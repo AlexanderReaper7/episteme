@@ -7,7 +7,9 @@ from sqlalchemy.orm import joinedload, selectinload
 from ..config import settings
 from ..db import SessionLocal
 from ..models import Post, SourceItem, Story
+from .admin import _group_calls
 from .admin import router as admin_router
+from .api import api_post_llm_calls, api_story
 from .api import router as api_router
 from .templating import BASE_DIR, templates
 
@@ -18,15 +20,22 @@ app.include_router(admin_router)
 
 
 async def _stream_page(session, page: int) -> dict:
-    """Aggregation stream: Google-News-style cluster cards (spec §8, tier 2)."""
+    """Aggregation stream: Google-News-style cluster cards (spec §8, tier 2).
+    Cards are identity-only aggregate posts; their content renders from the
+    story's items at read time."""
     size = settings.feed_page_size
-    stories = (
+    cards = (
         (
             await session.execute(
-                select(Story)
-                .options(selectinload(Story.items).joinedload(SourceItem.source))
-                .where(Story.status == "aggregated")
-                .order_by(Story.last_item_at.desc().nulls_last(), Story.id.desc())
+                select(Post)
+                .options(
+                    selectinload(Post.story)
+                    .selectinload(Story.items)
+                    .joinedload(SourceItem.source)
+                )
+                .join(Post.story)
+                .where(Post.kind == "aggregate", Post.status == "published")
+                .order_by(Story.last_item_at.desc().nulls_last(), Post.id.desc())
                 .offset((page - 1) * size)
                 .limit(size + 1)
             )
@@ -34,7 +43,7 @@ async def _stream_page(session, page: int) -> dict:
         .scalars()
         .all()
     )
-    return {"stories": stories[:size], "page": page, "has_more": len(stories) > size}
+    return {"cards": cards[:size], "page": page, "has_more": len(cards) > size}
 
 
 async def _items_page(session, page: int) -> dict:
@@ -64,7 +73,7 @@ async def feed(request: Request):
                 await session.execute(
                     select(Post)
                     .options(selectinload(Post.story).selectinload(Story.items))
-                    .where(Post.status == "published")
+                    .where(Post.status == "published", Post.kind != "aggregate")
                     .order_by(Post.generated_at.desc())
                     .limit(50)
                 )
@@ -76,7 +85,7 @@ async def feed(request: Request):
         # Before the pipeline has produced anything, fall back to raw items so
         # the feed is useful from day one.
         fallback = None
-        if not posts and not stream["stories"]:
+        if not posts and not stream["cards"]:
             fallback = await _items_page(session, page=1)
     return templates.TemplateResponse(
         request,
@@ -91,13 +100,47 @@ async def post_view(request: Request, post_id: int):
         post = (
             await session.execute(
                 select(Post)
-                .options(selectinload(Post.story).selectinload(Story.items))
+                .options(
+                    selectinload(Post.story)
+                    .selectinload(Story.items)
+                    .joinedload(SourceItem.source)
+                )
                 .where(Post.id == post_id)
             )
         ).scalar_one_or_none()
     if post is None:
         raise HTTPException(status_code=404)
     return templates.TemplateResponse(request, "post.html", {"post": post})
+
+
+@app.get("/post/{post_id}/provenance", response_class=HTMLResponse)
+async def post_provenance(request: Request, post_id: int):
+    """Provenance of THIS post version: its stamped LLM calls plus the shared
+    story-level ones. Other versions (archived or newer) link to their own page."""
+    async with SessionLocal() as session:
+        story_id = (
+            await session.execute(select(Post.story_id).where(Post.id == post_id))
+        ).scalar_one_or_none()
+    if story_id is None:
+        raise HTTPException(status_code=404)
+    story = await api_story(story_id)
+    post = next(p for p in story["posts"] if p["id"] == post_id)
+    calls = await api_post_llm_calls(post_id, full=True)
+    return templates.TemplateResponse(
+        request,
+        "post_provenance.html",
+        {
+            "post": post,
+            "story": story,
+            "groups": _group_calls(calls),
+            "totals": {
+                "calls": len(calls),
+                "prompt_tokens": sum(c["prompt_tokens"] or 0 for c in calls),
+                "completion_tokens": sum(c["completion_tokens"] or 0 for c in calls),
+                "duration_ms": sum(c["duration_ms"] or 0 for c in calls),
+            },
+        },
+    )
 
 
 @app.get("/partials/stream", response_class=HTMLResponse)

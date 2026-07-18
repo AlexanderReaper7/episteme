@@ -69,8 +69,8 @@ class Settings(BaseSettings):
     # --- Research agent (writer enrichment) ---
     searxng_url: str = "http://host.docker.internal:8080"
     enrich_enabled: bool = True
-    enrich_max_searches: int = 4  # web_search calls per story
-    enrich_max_fetches: int = 6  # fetch_page calls per story
+    enrich_max_searches: int = 8  # web_search calls per story
+    enrich_max_fetches: int = 8  # fetch_page calls per story
     enrich_max_steps: int = 12  # total tool-call turns before forcing a draft
     enrich_fetch_char_limit: int = 6000  # per-page text handed to the model
     enrich_wall_clock_seconds: int = 300  # hard cap on one story's research loop

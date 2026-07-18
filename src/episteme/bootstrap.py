@@ -117,6 +117,47 @@ ADDITIVE_MIGRATIONS = [
      WHERE name = 'Phys.org'
        AND config->>'http_mode' IS DISTINCT FROM 'impersonate'
     """,
+    # Post-scoped provenance: calls carry the post they produced; archived posts
+    # record when they were superseded so retention can age them out.
+    "ALTER TABLE llm_calls ADD COLUMN IF NOT EXISTS post_id INT",
+    "CREATE INDEX IF NOT EXISTS ix_llm_calls_post_id ON llm_calls (post_id)",
+    "ALTER TABLE posts ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ",
+    # Backfill pre-migration rows by timestamp (only ever touches NULL post_id, so
+    # rerunning is a no-op once stamped). Write-side calls precede their post ->
+    # earliest post generated after the call; qa reviews an existing post ->
+    # latest post generated before the call. 'research' is the pre-2.5 tool-loop
+    # stage name, retired but present in old rows.
+    """
+    UPDATE llm_calls c SET post_id = (
+        SELECT p.id FROM posts p
+        WHERE p.story_id = c.story_id AND p.generated_at >= c.created_at
+        ORDER BY p.generated_at LIMIT 1)
+     WHERE c.post_id IS NULL AND c.story_id IS NOT NULL
+       AND c.stage IN ('condense', 'research', 'write')
+    """,
+    """
+    UPDATE llm_calls c SET post_id = (
+        SELECT p.id FROM posts p
+        WHERE p.story_id = c.story_id AND p.generated_at <= c.created_at
+        ORDER BY p.generated_at DESC LIMIT 1)
+     WHERE c.post_id IS NULL AND c.story_id IS NOT NULL AND c.stage = 'qa'
+    """,
+    "UPDATE posts SET archived_at = now() WHERE status = 'archived' AND archived_at IS NULL",
+    # All content is a post (2026-07-18): aggregate cluster cards become
+    # identity-only post rows (kind='aggregate', no stored content — the card
+    # renders from the story's items). Content columns go nullable for them,
+    # and existing aggregated stories get their card minted here.
+    "ALTER TABLE posts ALTER COLUMN title DROP NOT NULL",
+    "ALTER TABLE posts ALTER COLUMN summary DROP NOT NULL",
+    "ALTER TABLE posts ALTER COLUMN difficulty DROP NOT NULL",
+    """
+    INSERT INTO posts (story_id, kind, status, topics, sections, reading_time_minutes)
+    SELECT s.id, 'aggregate', 'published', '[]'::jsonb, '[]'::jsonb, 1
+      FROM stories s
+     WHERE s.status = 'aggregated'
+       AND NOT EXISTS (SELECT 1 FROM posts p
+                       WHERE p.story_id = s.id AND p.status = 'published')
+    """,
 ]
 
 

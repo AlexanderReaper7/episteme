@@ -172,6 +172,13 @@ async def triage_stories(
             "aggregate": "aggregated",
             "skip": "skipped",
         }[result.decision]
+        # The verdict decides whether feed content exists: an aggregate verdict
+        # mints the story's card post; a (re-triage) skip retires it. A write
+        # verdict leaves any existing card up until the feature supersedes it.
+        if result.decision == "aggregate":
+            await ensure_aggregate_post(session, story)
+        elif result.decision == "skip":
+            await _retire_aggregate_post(session, story.id)
         await session.commit()
         triaged += 1
     return triaged
@@ -223,17 +230,22 @@ def _sources_section(items: list[SourceItem]) -> dict:
     }
 
 
-def _further_reading_section(fetch_log: list[dict], item_urls: set[str]) -> dict | None:
+def _further_reading_section(
+    fetch_log: list[dict], item_urls: set[str], selected: list[str]
+) -> dict | None:
     """Built by code from the research agent's fetch log — the URLs it actually
-    retrieved, never model free-text — so enrichment links can't be hallucinated
-    either. Excludes URLs already in the DB-built sources section."""
+    retrieved, never model free-text — so enrichment links can't be hallucinated.
+    The writer's `further_reading_urls` narrows the log to the pages it judged
+    relevant (dead-end fetches stay out), but only fetch-log membership puts a URL
+    on the page. Excludes URLs already in the DB-built sources section."""
     from urllib.parse import urlparse
 
+    wanted = {u.rstrip("/") for u in selected}
     seen: set[str] = set()
     items = []
     for entry in fetch_log:
         url = entry.get("url", "")
-        if not url or url in item_urls or url in seen:
+        if not url or url in item_urls or url in seen or url.rstrip("/") not in wanted:
             continue
         seen.add(url)
         items.append(
@@ -264,10 +276,55 @@ def _writer_seed(condensed: list[str]) -> str:
     )
 
 
-def _demote(story: Story, reason: str) -> None:
+async def _stamp_post_calls(session: AsyncSession, story_id: int, post_id: int) -> None:
+    """Attribute the write-side llm_calls that just produced a post to it. They
+    run before the post row exists, so they land with post_id NULL and are
+    stamped here right after the post commits. Scoops any unattributed
+    condense/write rows for the story — including a prior failed attempt's,
+    which is the same generation effort. Best-effort like all call logging."""
+    try:
+        await session.execute(
+            update(LlmCall)
+            .where(
+                LlmCall.story_id == story_id,
+                LlmCall.post_id.is_(None),
+                LlmCall.stage.in_(("condense", "write")),
+            )
+            .values(post_id=post_id)
+        )
+        await session.commit()
+    except Exception as exc:
+        log.debug("stamping llm_calls for post %d failed: %s", post_id, exc)
+
+
+async def ensure_aggregate_post(session: AsyncSession, story: Story) -> None:
+    """All feed content is a post: an aggregated story is represented by an
+    identity-only row (kind="aggregate" — no stored content, the card renders
+    from the story's items at read time). Created only when the story has no
+    published post, so a card never coexists with a live feature (at most one
+    published post per story)."""
+    published = (
+        await session.execute(
+            select(Post.id).where(Post.story_id == story.id, Post.status == "published").limit(1)
+        )
+    ).scalar_one_or_none()
+    if published is None:
+        session.add(Post(story_id=story.id, kind="aggregate"))
+
+
+async def _retire_aggregate_post(session: AsyncSession, story_id: int) -> None:
+    await session.execute(
+        update(Post)
+        .where(Post.story_id == story_id, Post.kind == "aggregate", Post.status == "published")
+        .values(status="archived", archived_at=datetime.now(UTC))
+    )
+
+
+async def _demote(session: AsyncSession, story: Story, reason: str) -> None:
     story.status = "aggregated"
     story.triage_decision = "aggregate"
     story.triage_reason = reason
+    await ensure_aggregate_post(session, story)
 
 
 async def write_posts(
@@ -333,7 +390,7 @@ async def write_posts(
         story.research_notes = {"fetched": outcome.fetch_log, "notes": outcome.notes}
 
         if outcome.decision != "write" or outcome.draft is None:
-            _demote(story, outcome.reason or "writer demoted")
+            await _demote(session, story, outcome.reason or "writer demoted")
             await session.commit()
             log.info("Story %d demoted by writer: %s", story.id, outcome.reason)
             continue
@@ -342,7 +399,7 @@ async def write_posts(
         # expand is aggregated, not written — reliable where model judgment wasn't.
         available_chars = source_chars + outcome.gathered_chars
         if available_chars < settings.min_write_chars:
-            _demote(story, f"Too thin to write ({available_chars} chars after research)")
+            await _demote(session, story, f"Too thin to write ({available_chars} chars after research)")
             await session.commit()
             log.info("Story %d aggregated: only %d chars after research", story.id, available_chars)
             continue
@@ -350,30 +407,35 @@ async def write_posts(
         item_urls = {item.url for item in items}
         sections = [s.model_dump() for s in outcome.draft.sections]
         sections.append(_sources_section(items))
-        further = _further_reading_section(outcome.fetch_log, item_urls)
+        further = _further_reading_section(
+            outcome.fetch_log, item_urls, outcome.draft.further_reading_urls
+        )
         if further:
             sections.append(further)
-        if story_id is not None:  # rewrite: the new post supersedes the old
-            await session.execute(
-                update(Post)
-                .where(Post.story_id == story.id, Post.status == "published")
-                .values(status="archived")
-            )
-        session.add(
-            Post(
-                story_id=story.id,
-                kind="feature",
-                title=outcome.draft.title,
-                summary=outcome.draft.summary,
-                difficulty=outcome.draft.difficulty,
-                topics=outcome.draft.topics,
-                sections=sections,
-                reading_time_minutes=_reading_time(sections),
-                model_used=gateway.model_for("main"),
-            )
+        # The new feature supersedes whatever the story published before — an
+        # older feature (rewrite) or its aggregate card. One published post per story.
+        await session.execute(
+            update(Post)
+            .where(Post.story_id == story.id, Post.status == "published")
+            .values(status="archived", archived_at=datetime.now(UTC))
         )
+        post = Post(
+            story_id=story.id,
+            kind="feature",
+            title=outcome.draft.title,
+            summary=outcome.draft.summary,
+            difficulty=outcome.draft.difficulty,
+            topics=outcome.draft.topics,
+            sections=sections,
+            reading_time_minutes=_reading_time(sections),
+            model_used=gateway.model_for("main"),
+        )
+        session.add(post)
+        await session.flush()
+        new_post_id = post.id
         story.status = "written"
         await session.commit()
+        await _stamp_post_calls(session, story.id, new_post_id)
         written += 1
         log.info("Wrote feature for story %d: %s", story.id, outcome.draft.title)
     return written
@@ -382,11 +444,17 @@ async def write_posts(
 # --- Orchestrator ----------------------------------------------------------------
 
 
-async def _prune_llm_calls(session: AsyncSession) -> None:
+async def _prune_expired(session: AsyncSession) -> None:
+    """Retention: drop llm_calls past the window, and archived posts whose
+    replacement is old enough that the before/after comparison is over —
+    a superseded version and its provenance age out together."""
     from sqlalchemy import delete
 
     cutoff = datetime.now(UTC) - timedelta(days=settings.llm_log_retention_days)
     await session.execute(delete(LlmCall).where(LlmCall.created_at < cutoff))
+    await session.execute(
+        delete(Post).where(Post.status == "archived", Post.archived_at < cutoff)
+    )
     await session.commit()
 
 
@@ -458,7 +526,7 @@ async def run_pipeline() -> None:
         await session.commit()
         if paused:  # free VRAM for whatever prompted the pause
             await gateway.unload_models()
-        await _prune_llm_calls(session)
+        await _prune_expired(session)
 
 
 """Single-stage runs: stages are data-driven (each selects whatever rows are

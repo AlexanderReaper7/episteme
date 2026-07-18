@@ -42,7 +42,7 @@ source items. Trigger a run with:
 </section>
 {% else %}
 <section id="stream" class="feed stream">
-  {% with stories = stream.stories, page = stream.page, has_more = stream.has_more %}
+  {% with cards = stream.cards, page = stream.page, has_more = stream.has_more %}
   {% include "_stories.html" %}
   {% endwith %}
 </section>

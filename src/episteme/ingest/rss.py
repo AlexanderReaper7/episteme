@@ -21,6 +21,14 @@ def _mode(source: Source):
     return normalize_mode(source.config.get("http_mode"))
 
 
+def _host_gap(source: Source) -> float:
+    """Extra per-host request spacing for touchy rate limiters (0 = global only)."""
+    try:
+        return float(source.config.get("min_request_gap_seconds", 0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _entry_published(entry: Any) -> datetime | None:
     for attr in ("published_parsed", "updated_parsed"):
         parsed = entry.get(attr)
@@ -80,7 +88,12 @@ class RssAdapter:
             conditional_headers["If-None-Match"] = source.http_etag
         if source.http_last_modified:
             conditional_headers["If-Modified-Since"] = source.http_last_modified
-        response = await polite_get(feed_url, mode=_mode(source), extra_headers=conditional_headers)
+        response = await polite_get(
+            feed_url,
+            mode=_mode(source),
+            extra_headers=conditional_headers,
+            host_gap_seconds=_host_gap(source),
+        )
         if response.status_code == 304:
             log.info("Feed unchanged (304): %s", feed_url)
             return []
@@ -90,7 +103,9 @@ class RssAdapter:
         return parse_feed(response.content, since)
 
     async def extract(self, item: RawItem, source: Source) -> ExtractedItem:
-        response = await polite_get(item.url, mode=_mode(source))
+        response = await polite_get(
+            item.url, mode=_mode(source), host_gap_seconds=_host_gap(source)
+        )
         response.raise_for_status()
         # favor_recall keeps more of the body ("prefer more text even when unsure")
         # so short-but-real articles aren't reduced to a caption. Outbound links

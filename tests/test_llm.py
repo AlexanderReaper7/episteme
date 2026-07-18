@@ -122,9 +122,22 @@ def test_post_draft_schema_discriminated_union():
                 {"type": "prose", "text": "Body"},
                 {"type": "key_points", "items": ["a", "b"]},
             ],
+            "further_reading_urls": ["https://cern.ch/hilumi"],
         }
     )
     assert draft.sections[0].type == "prose"
+    assert draft.further_reading_urls == ["https://cern.ch/hilumi"]
+    # Required: an omitted list would be indistinguishable from "none qualify".
+    with pytest.raises(Exception):
+        PostDraft.model_validate(
+            {
+                "title": "T",
+                "summary": "S",
+                "difficulty": "intermediate",
+                "topics": ["physics"],
+                "sections": [{"type": "prose", "text": "Body"}],
+            }
+        )
     with pytest.raises(Exception):
         PostDraft.model_validate(
             {

@@ -1,8 +1,19 @@
 {% extends "base.html" %}
 
-{% block title %}{{ post.title }} — Episteme{% endblock %}
+{% block title %}{{ post.title or "Story cluster" }} — Episteme{% endblock %}
 
 {% block content %}
+{% if post.kind == "aggregate" %}
+{# Identity-only card: nothing generated, the cluster renders from its items. #}
+<section class="feed stream">
+  {% with cards = [post] %}{% include "_stories.html" %}{% endwith %}
+</section>
+<p class="article-footnote">
+  Aggregated cluster card — the links above go straight to the sources.
+  <a href="/">← back to feed</a>
+  · <a href="/post/{{ post.id }}/provenance">provenance</a>
+</p>
+{% else %}
 <article class="article-page">
   <header class="article-header">
     <div class="card-meta">
@@ -57,7 +68,8 @@
   <p class="article-footnote">
     Written by a local model ({{ post.model_used }}) from the sources above.
     <a href="/">← back to feed</a>
-    · <a href="/admin/story/{{ post.story_id }}">provenance</a>
+    · <a href="/post/{{ post.id }}/provenance">provenance</a>
   </p>
 </article>
+{% endif %}
 {% endblock %}

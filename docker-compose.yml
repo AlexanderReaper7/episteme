@@ -1,8 +1,8 @@
 services:
   db:
-    image: pgvector/pgvector:pg16
-    # zstd-compress full-page images in the WAL (PG16 has no zstd for table
-    # data; large text columns are TOAST/pglz-compressed automatically).
+    image: pgvector/pgvector:pg18
+    # zstd-compress full-page images in the WAL (no zstd for table data;
+    # large text columns are TOAST/pglz-compressed automatically).
     command: postgres -c wal_compression=zstd
     environment:
       POSTGRES_USER: episteme
@@ -12,8 +12,10 @@ services:
     # host already has something on 5432.
     ports:
       - "127.0.0.1:5433:5432"
+    # PG18 images moved the volume mount from /var/lib/postgresql/data to
+    # /var/lib/postgresql (PGDATA lives at <mount>/18/docker).
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U episteme -d episteme"]
       interval: 5s
@@ -35,6 +37,7 @@ services:
   web:
     build: .
     command: uvicorn episteme.web.app:app --host 0.0.0.0 --port 8200
+    init: true
     environment: *env
     ports:
       - "127.0.0.1:8200:8200"
@@ -46,6 +49,9 @@ services:
   worker:
     build: .
     command: procrastinate --app=episteme.worker.app.app worker
+    # init reaps zombie processes left by crashed Chromium subprocesses
+    # (Playwright in the QA stage); the python worker as PID 1 won't.
+    init: true
     environment: *env
     depends_on:
       migrate:

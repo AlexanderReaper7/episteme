@@ -64,6 +64,33 @@ async def test_fetch_page_pins_connection_to_vetted_ip(monkeypatch):
     assert page["url"] == "https://example.com/article"
 
 
+async def test_fetch_page_reports_final_post_redirect_url(monkeypatch):
+    """A requested URL can redirect to a different page entirely (the post-29 case:
+    a bad article ID redirected an LHC-slugged URL to an unrelated article). The
+    result must attribute the content to the URL that actually served it."""
+    monkeypatch.setattr(
+        tools.socket,
+        "getaddrinfo",
+        lambda host, port, **kw: [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))
+        ],
+    )
+    html = "<html><title>Other Topic</title></html>"
+
+    async def fake_get(url, **kwargs):
+        if "/requested" in url:
+            return FetchResponse(
+                301, b"", "", httpx.Headers({"location": "https://example.com/actual"})
+            )
+        return FetchResponse(200, html.encode(), html, httpx.Headers())
+
+    monkeypatch.setattr(tools, "polite_get", fake_get)
+
+    page = await tools.fetch_page("https://example.com/requested")
+    assert page["url"] == "https://example.com/actual"
+    assert page["title"] == "Other Topic"
+
+
 async def test_fetch_page_transport_error_becomes_research_error(monkeypatch):
     """A dead host must surface as a tool error the model can react to, not an
     exception that aborts the whole research loop (httpx errors are not OSError)."""

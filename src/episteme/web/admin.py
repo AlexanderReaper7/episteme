@@ -1,7 +1,9 @@
-"""Admin dashboard under /admin — status, job queue, and post provenance.
+"""Admin dashboard under /admin — status, sources, runs, job queue.
 
 Thin HTML layer over the same query functions the JSON API exposes; the API
-handlers are plain async functions, so the admin routes call them directly."""
+handlers are plain async functions, so the admin routes call them directly.
+`_group_calls` (transcript reconstruction from delta rows) lives here and also
+serves the public /post/{id}/provenance page in web.app."""
 
 from __future__ import annotations
 
@@ -14,8 +16,6 @@ from .api import (
     api_runs,
     api_sources,
     api_status,
-    api_story,
-    api_story_llm_calls,
 )
 from .templating import templates
 
@@ -108,26 +108,3 @@ def _group_calls(calls: list[dict]) -> list[dict]:
         group["duration_ms"] = sum(c["duration_ms"] or 0 for c in group["calls"])
         group["errors"] = [c for c in group["calls"] if c["error"]]
     return groups
-
-
-@router.get("/story/{story_id}", response_class=HTMLResponse)
-async def story_provenance(request: Request, story_id: int):
-    story = await api_story(story_id)
-    calls = await api_story_llm_calls(story_id, full=True)
-    total_prompt = sum(c["prompt_tokens"] or 0 for c in calls)
-    total_completion = sum(c["completion_tokens"] or 0 for c in calls)
-    total_ms = sum(c["duration_ms"] or 0 for c in calls)
-    return templates.TemplateResponse(
-        request,
-        "admin_story.html",
-        {
-            "story": story,
-            "groups": _group_calls(calls),
-            "totals": {
-                "calls": len(calls),
-                "prompt_tokens": total_prompt,
-                "completion_tokens": total_completion,
-                "duration_ms": total_ms,
-            },
-        },
-    )

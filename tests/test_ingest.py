@@ -51,3 +51,25 @@ def test_content_hash_ignores_tracking_params():
     assert content_hash("https://example.org/a?utm_source=x") == content_hash(
         "https://example.org/a"
     )
+
+
+def test_fetch_interval_gates_scheduled_ingest_only():
+    """`fetch_interval_minutes` lets a touchy source (Phys.org) be polled less often
+    than the global ingest cron; absent/zero keeps every-cron behavior."""
+    from datetime import timedelta
+
+    from episteme.models import Source
+    from episteme.worker.tasks import _due_for_scheduled_fetch
+
+    now = datetime.now(UTC)
+    fresh = Source(config={"fetch_interval_minutes": 120},
+                   last_fetched_at=now - timedelta(minutes=30))
+    due = Source(config={"fetch_interval_minutes": 120},
+                 last_fetched_at=now - timedelta(minutes=121))
+    never_fetched = Source(config={"fetch_interval_minutes": 120}, last_fetched_at=None)
+    no_interval = Source(config={}, last_fetched_at=now)
+
+    assert not _due_for_scheduled_fetch(fresh, now)
+    assert _due_for_scheduled_fetch(due, now)
+    assert _due_for_scheduled_fetch(never_fetched, now)
+    assert _due_for_scheduled_fetch(no_interval, now)

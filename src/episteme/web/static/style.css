@@ -91,6 +91,11 @@ main {
   color: var(--muted);
 }
 
+.card-provenance {
+  margin-left: auto;
+  color: var(--muted);
+}
+
 .source-name { font-weight: 600; }
 
 .card-title {
@@ -397,8 +402,6 @@ main {
 .llm-text {
   white-space: pre-wrap;
   font-size: 0.85rem;
-  max-height: 24rem;
-  overflow-y: auto;
   word-break: break-word;
 }
 
@@ -406,6 +409,4 @@ main {
   font-size: 0.78rem;
   white-space: pre-wrap;
   word-break: break-all;
-  max-height: 24rem;
-  overflow-y: auto;
 }

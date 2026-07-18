@@ -28,6 +28,7 @@ import time
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import Any, Literal
+from urllib.parse import urlparse
 
 import httpx
 from curl_cffi import requests as cffi
@@ -41,22 +42,37 @@ MODE_LADDER: tuple[HttpMode, ...] = ("polite", "impersonate")
 
 _lock = asyncio.Lock()
 _last_request_at: float = 0.0
+_host_last_request_at: dict[str, float] = {}
 
 
-async def polite_wait() -> None:
-    """Block until the globally-throttled next request slot."""
+async def polite_wait(host: str | None = None, host_gap_seconds: float = 0.0) -> None:
+    """Block until the globally-throttled next request slot. When a host and a
+    per-host gap are given, additionally wait until that many seconds have passed
+    since the last request to the same host — the lever for sources whose rate
+    limiter trips at the global ~3s pacing (per-source `min_request_gap_seconds`).
+    The per-host wait sleeps outside the lock so it never stalls other hosts."""
     global _last_request_at
-    async with _lock:
-        gap = max(
-            settings.polite_delay_min_seconds,
-            random.gauss(
-                settings.polite_delay_mean_seconds, settings.polite_delay_stddev_seconds
-            ),
-        )
-        wait = _last_request_at + gap - time.monotonic()
-        if wait > 0:
-            await asyncio.sleep(wait)
-        _last_request_at = time.monotonic()
+    while True:
+        async with _lock:
+            gap = max(
+                settings.polite_delay_min_seconds,
+                random.gauss(
+                    settings.polite_delay_mean_seconds, settings.polite_delay_stddev_seconds
+                ),
+            )
+            now = time.monotonic()
+            ready = _last_request_at + gap
+            if host and host_gap_seconds > 0:
+                ready = max(
+                    ready, _host_last_request_at.get(host, float("-inf")) + host_gap_seconds
+                )
+            if ready <= now:
+                _last_request_at = now
+                if host:
+                    _host_last_request_at[host] = now
+                return
+            wait = ready - now
+        await asyncio.sleep(wait)
 
 
 class FetchError(Exception):
@@ -103,13 +119,16 @@ async def polite_get(
     extra_headers: dict[str, str] | None = None,
     follow_redirects: bool = True,
     extensions: dict | None = None,
+    host_gap_seconds: float = 0.0,
 ) -> FetchResponse:
     """Throttled GET in the given transport mode. Redirects are followed unless
     `follow_redirects=False` (the research fetcher disables auto-follow so it can
     re-run its SSRF check on each hop — see research.tools). `extensions` are httpx
     request extensions (e.g. `sni_hostname` for the research fetcher's DNS pinning);
-    honored only in ``polite`` mode — curl_cffi has no equivalent."""
-    await polite_wait()
+    honored only in ``polite`` mode — curl_cffi has no equivalent. A positive
+    `host_gap_seconds` adds per-host spacing on top of the global throttle (see
+    polite_wait) — adapters pass the source's `min_request_gap_seconds` config."""
+    await polite_wait(urlparse(url).hostname, host_gap_seconds)
     if mode == "impersonate":
         # curl_cffi supplies a full browser header set (UA, sec-ch-ua, Accept, ...)
         # matching the impersonated profile; we add only conditional-GET headers.

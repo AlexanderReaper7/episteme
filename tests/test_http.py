@@ -1,15 +1,19 @@
+import time
 from datetime import UTC, datetime, timedelta
 from email.utils import format_datetime
 
 import httpx
 import pytest
 
+import episteme.ingest.http as polite_http
+from episteme.config import settings
 from episteme.ingest.http import (
     FetchError,
     FetchResponse,
     escalate_mode,
     normalize_mode,
     parse_retry_after,
+    polite_wait,
 )
 
 
@@ -46,6 +50,27 @@ def test_escalate_mode_walks_the_ladder_then_stops():
     assert escalate_mode("polite") == "impersonate"
     assert escalate_mode(None) == "impersonate"  # unknown normalizes to polite first
     assert escalate_mode("impersonate") is None  # already strongest
+
+
+async def test_polite_wait_enforces_per_host_gap(monkeypatch):
+    """The Phys.org lever: a source with `min_request_gap_seconds` gets extra
+    spacing between requests to ITS host, without slowing other hosts."""
+    monkeypatch.setattr(settings, "polite_delay_min_seconds", 0.0)
+    monkeypatch.setattr(settings, "polite_delay_mean_seconds", 0.0)
+    monkeypatch.setattr(settings, "polite_delay_stddev_seconds", 0.0)
+    monkeypatch.setattr(polite_http, "_last_request_at", 0.0)
+    monkeypatch.setattr(polite_http, "_host_last_request_at", {})
+
+    start = time.monotonic()
+    await polite_wait("slow.example", 0.3)  # first request to the host: no wait
+    await polite_wait("other.example", 0.3)  # different host: unaffected
+    await polite_wait(None, 0.0)  # no host key (research/search): unaffected
+    elapsed_others = time.monotonic() - start
+    await polite_wait("slow.example", 0.3)  # same host again: waits out the gap
+    elapsed_same = time.monotonic() - start
+
+    assert elapsed_others < 0.15
+    assert elapsed_same >= 0.28
 
 
 def test_fetch_response_raises_only_on_error_status():

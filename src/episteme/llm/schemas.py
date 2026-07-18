@@ -45,6 +45,17 @@ class PostDraft(BaseModel):
     difficulty: Literal["introductory", "intermediate", "technical"]
     topics: list[str] = Field(min_length=1, max_length=4)
     sections: list[Section] = Field(min_length=1, max_length=12)
+    # Closed-set selection, not free text: code intersects these with the research
+    # loop's fetch log, so only pages the model actually fetched can appear in the
+    # post's further-reading section — the model contributes judgment (which fetched
+    # pages were relevant), never URLs. Required so an empty list is a deliberate
+    # "none were worth recommending", not an omission.
+    further_reading_urls: list[str] = Field(
+        max_length=8,
+        description="Exact 'Fetched:' URLs of pages you fetched this conversation that "
+        "a reader would genuinely benefit from — omit dead ends, irrelevant pages, and "
+        "the original source items. Empty list if none qualify.",
+    )
 
 
 class QAReview(BaseModel):

@@ -12,6 +12,7 @@ _DRAFT = {
     "difficulty": "intermediate",
     "topics": ["physics"],
     "sections": [{"type": "prose", "text": "Body"}],
+    "further_reading_urls": [],
 }
 
 
@@ -140,6 +141,37 @@ async def test_fetch_budget_is_enforced(monkeypatch):
 
     assert calls == ["https://a.org"]  # second fetch refused by the budget
     assert len(outcome.fetch_log) == 1
+
+
+async def test_stuck_budget_loop_forces_draft(monkeypatch):
+    """The story-371 failure: after exhausting its search budget, the model kept
+    re-issuing the same searches every turn. Two consecutive all-refused turns must
+    break to the draft instead of burning the remaining step budget."""
+    monkeypatch.setattr(settings, "enrich_max_searches", 1)
+    monkeypatch.setattr(settings, "enrich_max_steps", 12)
+
+    class AlwaysSearch:
+        tool_turns = 0
+
+        async def chat_messages(self, role, messages, tools=None, response_schema=None,
+                                temperature=0.3):
+            if response_schema is not None:
+                return _assistant_final(json.dumps(_DRAFT))
+            self.tool_turns += 1
+            return _assistant_toolcall("web_search", '{"query": "x"}', f"c{self.tool_turns}")
+
+    gw = AlwaysSearch()
+    monkeypatch.setattr(agent, "gateway", gw)
+
+    async def fake_search(q):
+        return [{"title": "t", "url": "https://x.org", "snippet": "s"}]
+
+    monkeypatch.setattr(agent, "web_search", fake_search)
+
+    outcome = await agent.run_writer_loop("sys", "seed")
+    # Turn 1 spends the budget; turns 2 and 3 are all-refused -> break. Never 12.
+    assert gw.tool_turns == 3
+    assert outcome.decision == "write"
 
 
 async def test_draft_validation_retries_with_repair(monkeypatch):

@@ -36,12 +36,15 @@ spec (data model, pipeline stages, feed-composition rules, roadmap phases, decid
   `research_notes` on the story, and the writer produced grounded prose using
   researched facts (no verbatim-summary restatement). `sources` section matched
   the DB row exactly; `further_reading` built from research fetches with
-  already-cited URLs deduplicated. Zero errors, article page renders.
+  already-cited URLs deduplicated. (Since 2026-07-18 the fetch log records final
+  post-redirect URLs and the writer selects which fetched pages qualify —
+  closed-set selection, see the architecture section.) Zero errors, article page renders.
 - **Observability + admin + API verified live (2026-07-17)**: `llm_calls` /
   `pipeline_runs` tables, gateway instrumentation, `/api/*` JSON routes, and the
   `/admin` dashboard + per-story provenance page all live-tested — a story-284
   rewrite produced 5 tagged rows (4 research tool-chats + 1 writer call, correct
-  stage/story_id/tokens/timing) rendered on `/admin/story/284`. Postgres is
+  stage/story_id/tokens/timing) rendered on the provenance page (then
+  `/admin/story/284`; since 2026-07-18 it is `/post/{id}/provenance`). Postgres is
   published to the host at `127.0.0.1:5433` (5432 was taken) for pgAdmin;
   credentials in `.env`.
 - Embedding models: `Octen-Embedding-4B.Q8_0` (default `embed` role),
@@ -126,8 +129,8 @@ curl -X POST http://127.0.0.1:8200/api/pipeline/resume     # ?run=false to only 
 curl -X POST http://127.0.0.1:8200/api/llm/unload          # free VRAM now, no pause
 
 # Admin dashboard + JSON API (single-user, no auth — decided constraint)
-# http://127.0.0.1:8200/admin            status, sources, pipeline runs, job queue, defer buttons
-# http://127.0.0.1:8200/admin/story/{id} provenance: every LLM call behind a story's post
+# http://127.0.0.1:8200/admin                 status, sources, pipeline runs, job queue, defer buttons
+# http://127.0.0.1:8200/post/{id}/provenance  every LLM call behind THIS post version (post-scoped, not admin)
 curl http://127.0.0.1:8200/api/status    # /api/{status,sources,runs,jobs,stories,posts,llm-calls}
 curl "http://127.0.0.1:8200/api/llm-calls?story_id=284&full=true"  # full prompts/responses
 
@@ -163,8 +166,12 @@ docker compose exec -T db psql -U episteme -d episteme
   bounded revise rounds, sets `quality_score`). Stages are plain async
   functions wrapped in procrastinate tasks; the orchestrator runs them role-batched so
   each model loads once per run. **The post `sources` / `further_reading` sections are
-  always built from the DB / fetch log, never by the LLM** — citations must not be
-  able to hallucinate, and QA revisions can only replace body sections.
+  always built from the DB / fetch log, never from LLM free text** — citations must
+  not be able to hallucinate, and QA revisions can only replace body sections.
+  `further_reading` is the writer's `further_reading_urls` selection intersected
+  with the fetch log (closed set: the model contributes judgment about which fetched
+  pages were relevant — dead-end fetches stay out — but only fetch-log membership
+  puts a URL on the page; the log stores final post-redirect URLs).
 - **Observability** (`llm/observe.py`): every gateway call is persisted to `llm_calls`
   (request/response, tokens, timing; embeds log batch size only) — the gateway is
   the single choke point, so instrumentation there covers everything including
@@ -177,8 +184,16 @@ docker compose exec -T db psql -U episteme -d episteme
   a `pipeline_runs` row (per-stage counters, outcome). Recording is best-effort
   (failures swallowed, `llm_log_enabled` off in unit tests via conftest) and pruned
   after `llm_log_retention_days`. The `/api/*` JSON routes are the query layer; the
-  `/admin` HTML pages (dashboard, queue, per-story provenance) are thin views over
-  the same functions.
+  `/admin` HTML pages (dashboard, queue) and the public `/post/{id}/provenance`
+  page are thin views over the same functions. **Provenance is post-scoped**
+  (2026-07-18): `llm_calls.post_id` records which post generation a call
+  produced — qa stamps it at call time; condense/write calls run before the
+  post row exists, so `pipeline._stamp_post_calls` stamps them right after it
+  lands; triage stays `post_id NULL` (story-level, shown on every version's
+  page). A rewrite archives the old post (`archived_at`) with its calls intact —
+  each version's provenance page shows only its own calls, and the retention
+  prune deletes archived posts (and, by age, their calls) past
+  `llm_log_retention_days`.
 - **Jobs**: procrastinate (Postgres-backed queue, no broker). Worker and web are the
   same image with different entrypoints. Periodic tasks via `@app.periodic(cron=...)`,
   crons configurable through settings (`config.py` reads env / `.env`).
@@ -191,7 +206,13 @@ docker compose exec -T db psql -U episteme -d episteme
 - **Politeness toward sources is a hard requirement** (spec §5). All source HTTP goes
   through `ingest/http.py:polite_get`: one global throttle (min 2s gap, ~N(3s,1s))
   applied before every request; conditional GETs (ETag/Last-Modified stored on
-  `Source`); 429 → persisted per-source `cooldown_until` honoring Retry-After. New
+  `Source`); 429 → persisted per-source `cooldown_until` honoring Retry-After.
+  Per-source config keys for touchy rate limiters (both set on Phys.org,
+  2026-07-18, after repeated 429 cooldowns at global pacing):
+  `min_request_gap_seconds` (extra per-HOST spacing on top of the global
+  throttle — other hosts unaffected) and `fetch_interval_minutes` (scheduled
+  `ingest_all` polls the source less often than the cron; manual
+  `ingest_source` defers still force). New
   adapters MUST use `polite_get()` (returns a transport-agnostic `FetchResponse`;
   raises `FetchError` on >=400). See the HTTP-transport-modes note above for
   `http_mode`/impersonation. Never `docker compose down -v` casually — re-ingesting
@@ -199,6 +220,14 @@ docker compose exec -T db psql -U episteme -d episteme
 - **Two-tier feed** (spec §8): generated articles first, "you're caught up" divider,
   then infinite-scroll aggregation stream (htmx `revealed` sentinels swap in
   `/partials/*` pages). Falls back to raw source items until the pipeline has output.
+  **All feed content is a post** (decided 2026-07-18): aggregate cluster cards are
+  identity-only `Post` rows (`kind="aggregate"`, content columns NULL — the card
+  renders from the story's items at read time). Triage mints the card on an
+  aggregate verdict; a written feature archives it (at most one published post per
+  story); every demote path (writer, thin-gate, QA) re-mints it via
+  `pipeline.ensure_aggregate_post`. QA skips aggregates. This gives every visible
+  content unit a `/post/{id}/provenance` page and, in Phase 4, a uniform feedback
+  target.
   Frontend is server-rendered Jinja2 + htmx + vanilla CSS — no SPA framework, htmx
   until it demonstrably fails (user decision).
 

@@ -136,9 +136,9 @@ PaperRef        — traced primary source: doi/arxiv_id, title, authors, journal
 Story           — id, cluster of related SourceItems (same underlying event/paper),
                   topic tags, embedding centroid,
                   status (new|written|aggregated|skipped)
-Post            — id, story_id?, kind (feature|micro|game|...), title, slug, summary,
+Post            — id, story_id?, kind (feature|aggregate|micro|game|...), title?, slug, summary?,
                   sections JSON (see §6), topics[], reading_time, difficulty,
-                  generated_at, model_used, quality_score,
+                  generated_at, archived_at?, model_used, quality_score,
                   status (draft|published|archived)
 MediaAsset      — id, article_id?, source_item_id?, kind (image|video-embed|chart-spec),
                   remote_url, attribution, last_verified_at,
@@ -320,8 +320,11 @@ A chain of composable stages; each stage is a Procrastinate job, checkpointed in
   `main` (research, writing, QA — the authority) — each role maps to a configured
   model, so upgrading a model is a config change.
 - Enforces structured output (JSON Schema), retries with repair prompts, and
-  persists every call (prompts, responses, tokens, latency) to `llm_calls` for
-  the admin provenance view.
+  persists every call (prompts, responses, tokens, latency) to `llm_calls`,
+  tagged with stage/story/post, for the provenance view (`/post/{id}/provenance`
+  — post-scoped: each version of a post, archived included, shows only the calls
+  that produced it plus shared story-level calls like triage; superseded posts
+  and old calls age out together via `llm_log_retention_days`).
 
 **Scheduling & idle behavior**
 
@@ -379,9 +382,15 @@ tiers:
 
 *Tier 2 — the aggregation stream (below the divider):*
 
-- Infinite scroll over `aggregate`-triaged Stories: Google-News-style cluster cards
-  (best headline, snippet, outlet list, links out to originals). No LLM writing —
-  effectively free content, so the feed never runs dry.
+- Infinite scroll of Google-News-style cluster cards (best headline, snippet,
+  outlet list, links out to originals). No LLM writing — effectively free
+  content, so the feed never runs dry.
+- **All feed content is a post (decided 2026-07-18):** each card is an
+  identity-only `Post` row (`kind="aggregate"`, no stored content — the card
+  renders from the story's items at read time, canonical minimum). The triage
+  verdict mints it; a written feature supersedes it (at most one published post
+  per story); demotes re-mint it. Uniform identity means uniform provenance
+  pages and, later, uniform feedback capture.
 - Ranked by the same scorer + freshness; clearly styled as a distinct, lighter tier.
 - Feedback on aggregation cards feeds the profile too — and can promote a story to
   `write` ("write me a full article on this") for the next processing window.
@@ -476,19 +485,23 @@ guidance; rename roles (`writer`→`main`) and content entities (`articles`→`p
 with `kind`, long-form = `feature`); provenance view renders tool loops as one
 conversation.
 
-**Phase 3 — Personalization & health**
+**Phase 3 — Rich content & provenance**
+Images inside features (source media reuse with attribution — today only the feed
+card shows a thumbnail; the feature body is text-only), quiz/chart/diagram/
+timeline/glossary sections, new post kinds (micro-posts, minigames), video
+embeds, quality gate + draft review UI, OpenAlex source tracing
+(primary-vs-secondary source distinction in features).
+
+**Phase 4 — Personalization & health**
 Feedback capture, interest profile, scoring, healthy feed composition, "why am I
 seeing this", natural-language feedback box.
 
-**Phase 4 — Rich content & provenance**
-Quiz/chart/diagram/timeline/glossary sections, new post kinds (micro-posts,
-minigames), source media reuse with attribution, video embeds, quality gate +
-draft review UI, OpenAlex source tracing (primary-vs-secondary source distinction
-in features).
-
 **Phase 5 — More sources & polish**
 arXiv/PubMed/HN/Reddit/X/email adapters, idle-aware scheduling agent, admin panel,
-backups.
+backups. Live activity view in the admin: a real-time window into what the pipeline
+is doing right now — current stage/story, the LLM's output streaming as it is
+generated (writer prose, tool calls as they happen), likely SSE/htmx over the
+existing `llm_calls`/gateway choke point.
 
 **Stretch**
 YouTube transcripts, podcast transcription (Whisper), local image generation,

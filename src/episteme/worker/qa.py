@@ -17,6 +17,7 @@ from __future__ import annotations
 import base64
 import logging
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -118,10 +119,14 @@ async def _qa_post(session: AsyncSession, browser, post: Post) -> None:
             if review.verdict == "approve":
                 return
             if review.verdict == "demote":
+                from .pipeline import ensure_aggregate_post
+
                 post.status = "archived"
+                post.archived_at = datetime.now(UTC)
                 story.status = "aggregated"
                 story.triage_decision = "aggregate"
                 story.triage_reason = f"QA demoted: {review.critique}"[:500]
+                await ensure_aggregate_post(session, story)  # the card takes its place
                 log.info("QA demoted post %d: %s", post.id, review.critique)
                 return
             post.sections = apply_revision(post.sections, review)
@@ -143,12 +148,17 @@ async def qa_posts(
     already has a score — and bypasses `qa_enabled`, since it was asked for."""
     if post_id is None and not settings.qa_enabled:
         return 0
+    # Aggregate posts are identity-only cards — nothing generated to review.
     if post_id is not None:
-        query = select(Post.id).where(Post.id == post_id)
+        query = select(Post.id).where(Post.id == post_id, Post.kind != "aggregate")
     else:
         query = (
             select(Post.id)
-            .where(Post.quality_score.is_(None), Post.status == "published")
+            .where(
+                Post.quality_score.is_(None),
+                Post.status == "published",
+                Post.kind != "aggregate",
+            )
             .order_by(Post.id)
         )
         if limit is not None:
@@ -168,7 +178,7 @@ async def qa_posts(
                     break
                 try:
                     post = await session.get(Post, post_id)
-                    with llm_context(stage="qa", story_id=post.story_id):
+                    with llm_context(stage="qa", story_id=post.story_id, post_id=post.id):
                         await _qa_post(session, browser, post)
                     reviewed += 1
                 except Exception as exc:  # per-post; the next post still gets reviewed

@@ -111,12 +111,16 @@ async def _pinned_get(url: str, ip: str) -> FetchResponse:
     )
 
 
-async def _guarded_get(url: str):
+async def _guarded_get(url: str) -> tuple[FetchResponse, str]:
     """polite_get with the SSRF check applied to the initial URL and every redirect
     hop (auto-follow is disabled so a public->private redirect can't slip through),
     each connection pinned to the IP that passed the check. Transport failures (DNS,
     connect, TLS, timeout) surface as ResearchError — a tool error handed back to
-    the model, never an exception that aborts the whole research loop."""
+    the model, never an exception that aborts the whole research loop.
+
+    Returns (response, final_url): the URL that actually served the response can
+    differ from the requested one, and callers must attribute content to it — a
+    slug/ID mismatch on the target site can redirect to an entirely different page."""
     current, ip = _validate_url(url)
     for _ in range(_MAX_REDIRECTS + 1):
         try:
@@ -126,10 +130,10 @@ async def _guarded_get(url: str):
         if response.status_code in (301, 302, 303, 307, 308):
             location = response.headers.get("location")
             if not location:
-                return response
+                return response, current
             current, ip = _validate_url(urljoin(current, location))
             continue
-        return response
+        return response, current
     raise ResearchError(f"too many redirects (> {_MAX_REDIRECTS})")
 
 
@@ -183,8 +187,10 @@ async def web_search(query: str) -> list[dict[str, str]]:
 
 async def fetch_page(url: str) -> dict:
     """Fetch an arbitrary URL and return cleaned article text plus outbound links.
-    All guards in this module apply. Text is truncated to `enrich_fetch_char_limit`."""
-    response = await _guarded_get(url)
+    All guards in this module apply. Text is truncated to `enrich_fetch_char_limit`.
+    `url` in the result is the FINAL post-redirect URL — the page the content is
+    actually from, which is what fetch logs and citations must record."""
+    response, final_url = await _guarded_get(url)
     try:
         response.raise_for_status()
     except FetchError as exc:
@@ -193,10 +199,10 @@ async def fetch_page(url: str) -> dict:
         raise ResearchError(f"response too large (> {_MAX_RESPONSE_BYTES} bytes)")
     text = trafilatura.extract(response.text, include_comments=False, favor_recall=True) or ""
     return {
-        "url": url,
+        "url": final_url,
         "title": _page_title(response.text),
         "text": text[: settings.enrich_fetch_char_limit],
-        "links": _extract_links(response.text, url),
+        "links": _extract_links(response.text, final_url),
     }
 
 
