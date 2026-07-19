@@ -3,6 +3,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select, text
 from sqlalchemy.orm import joinedload, selectinload
+from starlette_compress import CompressMiddleware
 
 from ..config import settings
 from ..db import SessionLocal
@@ -14,6 +15,9 @@ from .api import router as api_router
 from .templating import BASE_DIR, templates
 
 app = FastAPI(title="Episteme")
+# Negotiates zstd > brotli > gzip > identity per request's Accept-Encoding;
+# htmx partials and JSON API responses are the main beneficiaries.
+app.add_middleware(CompressMiddleware)
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 app.include_router(api_router)
 app.include_router(admin_router)

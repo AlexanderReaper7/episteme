@@ -26,6 +26,7 @@ dependencies = [
     "markdown>=3.6",
     "nh3>=0.2",
     "playwright>=1.45",
+    "starlette-compress>=1.8",
 ]
 
 [project.optional-dependencies]

@@ -8,7 +8,8 @@ informative, educational, and genuinely entertaining posts with interactive comp
 
 ## 1. Vision & Principles
 
-**What it is:** a personal editor/researcher that reads the internet for you at night
+### What it is: a personal editor/researcher that reads the internet for you at night
+
 and hands you a finite, high-quality feed in the morning — a deliberate blend of the
 informative, the educational, and the genuinely fun, built the way a feed *should* be:
 citing its sources, transparent about why things appear, and free of the manipulative
@@ -16,7 +17,7 @@ and destructive mechanics (rage-bait, engagement traps, doomscroll filler) that 
 ordinary feeds. "A good Reddit" is a rough approximation — varied, browsable, alive —
 but curated for your curiosity and growth rather than your compulsion.
 
-**Nomenclature** (used consistently across code, schema, and docs):
+### Nomenclature (used consistently across code, schema, and docs):
 
 - **Post** — any single item in the feed, of whatever kind.
 - **Feature** — the long-form written kind of post (what Phase 2 generates today).
@@ -28,7 +29,7 @@ but curated for your curiosity and growth rather than your compulsion.
   in system RAM. (Code currently says `writer` for `main`; the rename lands with
   the agentic-writer refactor.)
 
-**Design principles**
+### Design principles
 
 1. **Healthy by construction** — the feed leads with a finite daily selection
    ("you're caught up"), balanced across topics, transparent about *why* an item
@@ -125,7 +126,7 @@ can be upgraded without a rewrite.
 
 ## 4. Data Model (core entities)
 
-```
+```text
 Source          — id, type (rss|arxiv|reddit|x|email|...), config JSON, schedule,
                   enabled, credibility_rating
 SourceItem      — id, source_id, url, title, author, published_at, raw_content,
@@ -161,7 +162,7 @@ the data model. This keeps every query and every table simpler.
 
 ## 5. Ingestion
 
-**Adapter interface** — each source type implements:
+### Adapter interface** — each source type implements:
 
 ```python
 class SourceAdapter(Protocol):
@@ -174,7 +175,7 @@ class SourceAdapter(Protocol):
 Adapters are registered via entry points / a registry dict — adding a source type is
 one new module, zero core changes.
 
-**Planned adapters**
+### Planned adapters
 
 | Adapter | Notes |
 |---|---|
@@ -188,18 +189,20 @@ one new module, zero core changes.
 | YouTube (stretch) | Transcript ingestion via captions |
 | Podcasts (stretch) | RSS enclosure + local Whisper transcription |
 
-**Normalization:** everything becomes a `SourceItem` with extracted text, media
+### Normalization: everything becomes a `SourceItem` with extracted text, media
+
 references, and an embedding (computed by a small local embedding model through the
 same LLM gateway).
 
-**Deduplication (three stages, cheap → expensive):**
+### Deduplication (three stages, cheap → expensive):**
 
 1. Exact: SHA-256 of canonical URL.
 2. Near-duplicate text: MinHash + LSH (`datasketch`), Jaccard > ~0.85.
 3. Semantic: nearest-neighbor check on the new embedding (cosine > ~0.93) — keep
    the higher-authority item, link the rest into the same Story.
 
-**Science source tracing** (what makes this a *science* feed, not just a news feed):
+### Science source tracing
+
 for each item, extract DOI / arXiv-ID patterns and quoted paper titles from the text,
 resolve them against the free OpenAlex API (responses cached forever — a DOI resolved
 once never needs resolving again). This attaches the *primary literature* behind a
@@ -213,7 +216,7 @@ news story: citation counts, journal, authors. Used for:
 Ingestion is cheap and runs on its own schedule (e.g., every 1–2 h) — it does **not**
 wait for idle time. Only LLM processing is deferred to idle/overnight windows.
 
-**Politeness (be a good citizen toward sources):**
+### Politeness (be a good citizen toward sources):
 
 - **Global throttle:** every outbound request to any source goes through one shared
   rate limiter — min 2 s gap, normally distributed around a 3 s mean — regardless of
@@ -274,7 +277,7 @@ Rules:
   gracefully (caption + source link shown when the remote image is gone). Link rot
   is accepted; opt-in caching can be added later via `MediaAsset.cached_path`.
 - **Adding a section type** = JSON Schema + Jinja2 partial (+ optional Web Component)
-  + a line in the writer prompt. Nothing else changes.
+  - a line in the writer prompt. Nothing else changes.
 
 ---
 
@@ -283,7 +286,7 @@ Rules:
 A chain of composable stages; each stage is a Procrastinate job, checkpointed in
 `JobRun`, so the pipeline can stop mid-run and resume where it left off.
 
-```
+```text
 1. cluster    — group new SourceItems into Stories (embedding similarity + time window)
 2. triage     — `fast` model scores each Story: relevance to profile, learning/
                 entertainment value, credibility signals → write | aggregate | skip.
@@ -313,7 +316,7 @@ A chain of composable stages; each stage is a Procrastinate job, checkpointed in
 6. publish    — quality gate (score threshold), else mark draft for manual review
 ```
 
-**LLM Gateway** (single module all stages go through):
+### LLM Gateway (single module all stages go through):
 
 - Talks to any OpenAI-compatible endpoint; base URL + model names in config.
 - **Model roles, not model names**, in code: `embed`, `fast` (first-pass work),
@@ -326,7 +329,7 @@ A chain of composable stages; each stage is a Procrastinate job, checkpointed in
   that produced it plus shared story-level calls like triage; superseded posts
   and old calls age out together via `llm_log_retention_days`).
 
-**Scheduling & idle behavior**
+### Scheduling & idle behavior
 
 - A lightweight host-side agent (native Windows, outside Docker) watches user idle
   time and GPU usage; it flips a `processing_allowed` flag via the backend API.
@@ -348,7 +351,7 @@ A chain of composable stages; each stage is a Procrastinate job, checkpointed in
 
 ## 8. Recommendation & Feedback
 
-**Signals**
+### Signals
 
 - *Explicit:* like/dislike, "more/less of this topic", hide source, save, report error.
 - *Natural-language feedback:* a free-text box ("less speculative AI hype, more
@@ -360,17 +363,18 @@ A chain of composable stages; each stage is a Procrastinate job, checkpointed in
 - *Implicit (gentle):* opened, dwell time, scroll depth, quiz interaction. Implicit
   signals get low weight — this system optimizes learning value, not engagement.
 
-**Profile:** topic weights + liked/disliked embedding centroids + source weights +
+### Profile: topic weights + liked/disliked embedding centroids + source weights +
+
 preferred difficulty + hard blocks (keywords, source types), updated incrementally
 from feedback with a conservative learning rate and time decay (old interests fade
 unless reinforced, single interactions can't yank the profile around).
 
-**Scoring:** hard blocks filter first; then candidates scored by
+### Scoring: hard blocks filter first; then candidates scored by
+
 `similarity to liked-centroid − similarity to disliked-centroid + topic weight +
 source/paper authority (OpenAlex-informed) + freshness (half-life ~36 h)`.
 
-**Healthy feed composition** — ranking alone is not the feed. The feed has two
-tiers:
+### Healthy feed composition — ranking alone is not the feed. The feed has two tiers:
 
 *Tier 1 — the daily selection (generated articles):*
 
@@ -427,7 +431,7 @@ spaced-repetition of past quiz topics) can be added independently.
 
 ## 10. Deployment (Docker Compose)
 
-```
+```text
 services:
   db:        postgres:16 + pgvector          (volume: pgdata)
   backend:   FastAPI app (API + server-rendered frontend)

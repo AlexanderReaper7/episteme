@@ -1,4 +1,5 @@
 # Episteme — AI-Driven Personalized News Aggregator & Synthesizer
+
 ## Architectural Blueprint & Execution Plan v1.0
 
 > **Naming note:** "Episteme" (ἐπίστημη, knowledge/science)
@@ -292,6 +293,7 @@ Stage 3 (semantic, post-embedding) — in ChromaDB query:
 ```
 
 Topic classification uses a zero-shot prompt to `llama3.2:3b` (fast, small):
+
 ```
 "Classify this article into 1-3 topics from [taxonomy list]. Return JSON only."
 ```
@@ -499,6 +501,7 @@ embeddings: 768 dims for nomic-embed-text) stored in `episteme_user_profiles`.
 **Initialization:** `U = mean(embeddings of first 10 articles shown)`
 
 **Update rules on explicit signals:**
+
 ```python
 ALPHA = 0.08  # learning rate — conservative to prevent preference drift
 
@@ -517,6 +520,7 @@ Natural language feedback is parsed by `llama3.2:3b` (fast inference, ~0.5–1s)
 into a structured intent object:
 
 **Extraction prompt:**
+
 ```
 Extract user feed preferences from this feedback as compact JSON.
 
@@ -536,6 +540,7 @@ Output (JSON only, no explanation):
 ```
 
 **Example parse:**
+
 ```
 Input:  "I like the depth of the biology breakdown, but stop showing me speculative crypto news"
 
@@ -549,6 +554,7 @@ Output: {
 ```
 
 **Applying parsed preferences to the user vector:**
+
 ```python
 def apply_nl_feedback(U: np.ndarray, parsed: dict, chroma_client) -> np.ndarray:
     # Retrieve topic centroid embeddings
@@ -568,6 +574,7 @@ def apply_nl_feedback(U: np.ndarray, parsed: dict, chroma_client) -> np.ndarray:
 ```
 
 **Persistent preference state** stored alongside the user vector:
+
 ```json
 {
   "user_id": "default",
@@ -705,6 +712,7 @@ instead, a curated daily digest model with explicit navigation.
 ### Primary Synthesis Model
 
 **`qwen2.5:14b-instruct-q4_K_M`**
+
 - VRAM: ~9.2 GB (just fits; leaves ~800 MB for KV cache)
 - Context: 128K tokens
 - Why: Qwen2.5 has industry-leading performance at long-form writing, report
@@ -713,11 +721,13 @@ instead, a curated daily digest model with explicit navigation.
 - Pull: `ollama pull qwen2.5:14b-instruct-q4_K_M`
 
 Fallback if VRAM proves tight: **`llama3.1:8b-instruct-q5_K_M`**
+
 - VRAM: ~6.2 GB · Context: 128K · Strong instruction following · Leaves 4 GB free
 
 ### Fast Task Model (tagging, feedback parsing, per-source summaries)
 
 **`llama3.2:3b-instruct-q8_0`**
+
 - VRAM: ~3.4 GB (Ollama swaps it in/out automatically when primary model isn't loaded)
 - Inference: ~30–50 tokens/sec on your GPU
 - Use for: topic classification, NL feedback parsing, Stage 1 per-source summaries
@@ -726,6 +736,7 @@ Fallback if VRAM proves tight: **`llama3.1:8b-instruct-q5_K_M`**
 ### Embedding Model
 
 **`nomic-embed-text`** via Ollama
+
 - Runs on CPU (no VRAM usage)
 - 768-dim output; good for semantic similarity in scientific text
 - Pull: `ollama pull nomic-embed-text`
@@ -733,6 +744,7 @@ Fallback if VRAM proves tight: **`llama3.1:8b-instruct-q5_K_M`**
 ### Image Generation Model
 
 **SD 1.5 + LCM-LoRA** loaded in ComfyUI
+
 - In CPU offload mode: ~25s per 512×512 image with 4-step LCM sampling
 - Model download (~1.1 GB for SD 1.5 base + ~68 MB for LCM-LoRA)
 - Acceptable quality for contextual illustrations; not photorealistic, which is intentional
@@ -879,6 +891,7 @@ papers with full abstracts easily exceeds 40,000 tokens. More importantly,
 quality degrades with very long prompts as the model "loses track" of early content.
 
 **Mitigation:**
+
 - Hierarchical synthesis (Stage 1 → Stage 2) is the primary solution — see §3.4.
   Stage 2 input is bounded to ~2,000 tokens regardless of cluster size.
 - Hard cap: maximum 12 source documents per synthesis job. If a cluster exceeds 12,
@@ -894,6 +907,7 @@ quality degrades with very long prompts as the model "loses track" of early cont
 at minimum ~2 GB to load the UNet. They cannot run simultaneously.
 
 **Mitigation (implemented in architecture):**
+
 1. `OLLAMA_KEEP_ALIVE=30s` ensures the LLM evicts from VRAM quickly after synthesis.
 2. Synthesis orchestrator sends ntfy event `episteme/synthesis_complete` only after
    the Ollama request returns and a 35-second buffer wait.
@@ -903,6 +917,7 @@ at minimum ~2 GB to load the UNet. They cannot run simultaneously.
    if VRAM is somehow still occupied.
 
 **Timeline impact:** A full synthesis cycle (10 articles → 1 post):
+
 - Stage 1 summaries (llama3.2:3b): ~30s
 - Stage 2 synthesis (qwen2.5:14b): ~90s
 - Buffer: 35s
@@ -917,6 +932,7 @@ at minimum ~2 GB to load the UNet. They cannot run simultaneously.
 Playwright is especially slow (3–5s per page).
 
 **Mitigation:**
+
 - arXiv: Use the official `arxiv` Python package which respects the API's 3s
   request delay. Batch queries by category, not per-paper.
 - News sites: 2-second minimum delay between requests; random jitter ±1s.
@@ -934,6 +950,7 @@ Playwright is especially slow (3–5s per page).
 on CPU. This blocks the ingestion worker thread.
 
 **Mitigation:**
+
 - Run transcription in a separate process pool (Python `ProcessPoolExecutor`).
 - Use `large-v3` model if accuracy is critical; `medium` model for ~2× speed with
   minimal quality loss for spoken non-technical content.
@@ -950,6 +967,7 @@ on CPU. This blocks the ingestion worker thread.
 metadata-filtered queries (e.g., "get all space articles from last 7 days") may slow.
 
 **Mitigation:**
+
 - ChromaDB's HNSW index is fast at ANN search but metadata filtering is post-hoc.
   For a personal aggregator, 60K articles/year is well within ChromaDB's comfortable range.
 - Partition by time if needed: archive articles older than 90 days to a separate
@@ -966,6 +984,7 @@ metadata-filtered queries (e.g., "get all space articles from last 7 days") may 
 or conflate two different studies in a synthesis.
 
 **Mitigation:**
+
 - **Grounding constraint in prompt:** *"Only state facts that appear verbatim in
   the source summaries provided. If a claim is uncertain, use hedging language."*
 - **Post-synthesis citation check:** After generation, extract all citation markers
