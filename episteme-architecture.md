@@ -209,7 +209,7 @@ once never needs resolving again). This attaches the *primary literature* behind
 news story: citation counts, journal, authors. Used for:
 
 - distinguishing **primary sources** (the paper) from **secondary sources** (the
-  news article) in the article's `sources` and `go_deeper` sections;
+  news article) in the article's `sources` and `further_reading` sections;
 - an authority signal for triage and feed scoring;
 - clustering — two news items citing the same DOI are the same Story.
 
@@ -251,15 +251,17 @@ the design never touches article data.
   "sections": [
     {"type": "prose",     "text": "markdown-formatted body text..."},
     {"type": "key_points","items": ["...", "..."]},
-    {"type": "image",     "asset_id": 42, "caption": "...", "attribution": "..."},
+    {"type": "image",     "url": "https://...", "caption": "...",
+                          "attribution": "...", "source_url": "https://..."},
     {"type": "chart",     "spec": {"$schema": "vega-lite", "...": "..."}},
     {"type": "diagram",   "mermaid": "flowchart LR; A-->B"},
-    {"type": "video",     "embed_url": "https://youtube.com/...", "caption": "..."},
-    {"type": "quiz",      "question": "...", "choices": ["..."], "answer": 1,
+    {"type": "video",     "url": "https://youtube.com/...", "caption": "...",
+                          "attribution": "...", "source_url": "https://..."},
+    {"type": "quiz",      "question": "...", "choices": ["..."], "answer_index": 1,
                           "explanation": "..."},
     {"type": "glossary",  "terms": [{"term": "...", "definition": "..."}]},
     {"type": "timeline",  "events": [{"date": "...", "label": "..."}]},
-    {"type": "go_deeper", "links": [{"title": "...", "url": "...", "kind": "paper"}]},
+    {"type": "further_reading", "items": [{"title": "...", "url": "...", "outlet": "..."}]},
     {"type": "sources",   "items": [{"title": "...", "url": "...", "outlet": "..."}]}
   ]
 }
@@ -271,13 +273,22 @@ Rules:
   invalid sections are retried or dropped — malformed data can never reach the
   renderer.
 - `sources` is **mandatory** — every article links what it was written from.
-- Interactive types (`quiz`, `chart`, `timeline`, `diagram`) are Web Components
-  hydrated from the JSON; prose stays server-rendered HTML.
+- **Media is closed-set, like citations** (built 2026-07-19): the writer sees the
+  story's ingested `media_refs` as an "available media" list and may only reference
+  those exact URLs in `image`/`video` sections; code drops anything else and stamps
+  `attribution`/`source_url` from the DB. QA revisions pass the same sanitizer.
+  Media sections reference URLs directly (no `MediaAsset` indirection — it buys
+  nothing while media is never cached; revisit if opt-in caching lands).
+- Interactive types hydrate client-side from the JSON: `quiz` via a small vanilla
+  script, `chart` via vendored Vega-Lite, `diagram` via vendored Mermaid (dark
+  themes, loaded only on pages containing those types; a failed render collapses
+  to the caption). `timeline`/`glossary` are pure server-rendered HTML/CSS.
 - Images/video are **hotlinked, not cached** — the `image` template must degrade
   gracefully (caption + source link shown when the remote image is gone). Link rot
-  is accepted; opt-in caching can be added later via `MediaAsset.cached_path`.
-- **Adding a section type** = JSON Schema + Jinja2 partial (+ optional Web Component)
-  - a line in the writer prompt. Nothing else changes.
+  is accepted. Video embeds only through the iframe whitelist (YouTube/Vimeo).
+- **Adding a section type** = pydantic schema (in the `Section` union) + a branch in
+  `_sections.html` (+ optional hydration in `post.js`) + a line in the writer
+  prompt. Nothing else changes.
 
 ---
 
@@ -302,8 +313,11 @@ A chain of composable stages; each stage is a Procrastinate job, checkpointed in
                 rules ("2–4 sources"-style constraints are out). The `fast` model
                 may serve as a cheap subroutine (condensing very long sources),
                 batched so it never causes mid-story model swapping.
-4. enrich     — generate quiz, glossary, chart specs where the content supports them;
-                select/caption source media
+4. (enrich    — FOLDED INTO WRITE, decided 2026-07-19: rich/media sections — quiz,
+                glossary, chart, diagram, timeline, image, video — are emitted by
+                the writer itself in the same agentic conversation, guided not
+                quota'd; no separate enrichment pass, no mid-story model swap.
+                Media selection is closed-set from ingested media_refs, §6.)
 5. qa         — **the `main` model reviews the rendered post.** The post is rendered
                 through the real templates and screenshotted (headless Chromium is
                 already in the worker image); the vision-capable `main` model
@@ -327,7 +341,13 @@ A chain of composable stages; each stage is a Procrastinate job, checkpointed in
   tagged with stage/story/post, for the provenance view (`/post/{id}/provenance`
   — post-scoped: each version of a post, archived included, shows only the calls
   that produced it plus shared story-level calls like triage; superseded posts
-  and old calls age out together via `llm_log_retention_days`).
+  and old calls age out together via `llm_log_retention_days`). **Pinning is the
+  retention override** (2026-07-19): a pinned post (`posts.pinned`, toggled on
+  the provenance page or `POST /api/posts/{id}/pin`) is never auto-pruned and
+  keeps its provenance page complete (stamped calls + shared story-level
+  calls); calls with no post row to pin through — a failed attempt's write-side
+  calls — are pinned by attempt via `POST /api/llm-calls/pin?attempt_id=...`
+  (`llm_calls.pinned`).
 
 ### Scheduling & idle behavior
 
@@ -489,11 +509,17 @@ guidance; rename roles (`writer`→`main`) and content entities (`articles`→`p
 with `kind`, long-form = `feature`); provenance view renders tool loops as one
 conversation.
 
-**Phase 3 — Rich content & provenance**
-Images inside features (source media reuse with attribution — today only the feed
-card shows a thumbnail; the feature body is text-only), quiz/chart/diagram/
-timeline/glossary sections, new post kinds (micro-posts, minigames), video
-embeds, quality gate + draft review UI, OpenAlex source tracing
+**Phase 3 — Rich content & provenance** *(first push built 2026-07-19; live
+verification pending)*
+Built: images + video embeds inside features (closed-set reuse of ingested source
+media with DB-stamped attribution; YouTube/Vimeo embeds captured at ingestion),
+quiz/chart/diagram/timeline/glossary sections (writer-emitted — the enrich stage
+was folded into the agentic write, §7), vendored Vega-Lite + Mermaid renderers.
+Remaining pushes: new post kinds — **micro-post** = small regularly occurring
+standalone content (e.g. "word of the day"); **minigame** = an interactive that
+makes you think and ideally teaches (canonical example: NYT Connections; distinct
+from `quiz`, which is one small comprehension check inside a feature) — plus
+quality gate + draft review UI, and OpenAlex source tracing
 (primary-vs-secondary source distinction in features).
 
 **Phase 4 — Personalization & health**
@@ -509,12 +535,44 @@ existing `llm_calls`/gateway choke point.
 
 **Stretch**
 YouTube transcripts, podcast transcription (Whisper), local image generation,
-spaced-repetition quiz resurfacing.
+spaced-repetition quiz resurfacing, free-text quiz answers judged by the local
+LLM (instead of multiple choice).
 
 ---
 
 ## 13. Open Questions
 
+- **Two-stage agentic write: research agent → writer agent (idea noted
+  2026-07-19, deliberately NOT implemented yet).** Motivation: hallucination
+  risk and information loss in the current single write conversation — the
+  writer drafts from fast-model condensations plus whatever it fetched, and by
+  draft time its context is a long mix of seed, tool noise, and page dumps.
+  Sketch: keep triage as is, then split the main-model work into (1) a
+  *research agent* that searches/fetches and *curates* — decides which source
+  texts/passages to KEEP, in full fidelity, discarding the rest — and (2) a
+  *writer agent* that receives only that curated context and writes. Same
+  model for both; the point is a smaller, higher-signal writer context rather
+  than a different model split. Open trade-offs: loses the single-conversation
+  provenance flow (research → judgment → draft in one chain), doubles
+  main-model conversations per story, and the hand-off itself can lose
+  information if curation is bad. **Decision gate: do not build on guesswork —
+  first get sufficient visibility into what the writer actually sees and where
+  quality is lost mid-pipeline (e.g. inspect writer contexts at draft time via
+  the provenance pages / `llm_calls?full=true`, compare drafts against curated
+  vs. raw contexts on real stories). Revisit once that evidence exists.**
+  Companion idea (2026-07-19): a **post-version compare view** as the evaluation
+  tool for exactly this kind of pipeline change. Post versions already exist
+  (a rewrite archives the old post with its sections and provenance intact;
+  `attempt_id` groups even failed attempts), so the data layer is done — what's
+  missing is a side-by-side view of two versions of the same story with a
+  section-aware diff (align sections structurally; word-level diff inside
+  prose). Considerations when building: retention prunes archived versions
+  after `llm_log_retention_days` (rolling window — raise it for experiments,
+  or **pin** the versions under comparison: `posts.pinned` exempts a version
+  and its provenance from the prune, added 2026-07-19);
+  producing two *candidate* versions to compare before publishing conflicts
+  with "at most one published post per story" and belongs with the planned
+  quality-gate/draft-review push (a draft status solves both).
 - Whether `qa`-on-everything (rendered-screenshot review + revise rounds) fits in
   the nightly window at target feed size (10–15 features); if nights run long,
   shrink the daily selection rather than skipping QA.

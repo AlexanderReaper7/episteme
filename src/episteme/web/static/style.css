@@ -242,6 +242,157 @@ main {
   color: var(--muted);
 }
 
+/* Rich/media sections (Phase 3) */
+
+.section-image,
+.section-video,
+.section-chart,
+.section-diagram {
+  margin: 1.5rem 0;
+}
+
+.section-image img {
+  display: block;
+  max-width: 100%;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+}
+
+.section-image figcaption,
+.section-video figcaption,
+.section-chart figcaption,
+.section-diagram figcaption {
+  margin-top: 0.5rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.attribution a { color: var(--muted); }
+.attribution a:hover { color: var(--accent); }
+
+/* Hotlink rot: the img removed itself; keep the caption as the graceful remnant. */
+.media-gone { opacity: 0.7; }
+
+.video-frame {
+  aspect-ratio: 16 / 9;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--card-bg);
+}
+
+.video-frame iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+}
+
+.section-quiz,
+.section-timeline,
+.section-glossary {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem 1.5rem;
+  margin: 1.5rem 0;
+}
+
+.section-quiz h2,
+.section-timeline h2,
+.section-glossary h2 {
+  margin-top: 0;
+  font-size: 1rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.quiz-question { font-weight: 600; }
+
+.quiz-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.quiz-choice {
+  background: var(--card-hover);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.5rem 0.9rem;
+  font-size: 0.92rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.quiz-choice:hover:not(:disabled) { border-color: var(--accent); }
+.quiz-choice:disabled { cursor: default; opacity: 0.85; }
+.quiz-choice.quiz-correct { border-color: #9ece6a; color: #9ece6a; opacity: 1; }
+.quiz-choice.quiz-wrong { border-color: #f7768e; color: #f7768e; opacity: 1; }
+
+.quiz-explanation {
+  margin-bottom: 0;
+  font-size: 0.9rem;
+  color: var(--muted);
+  border-top: 1px solid var(--border);
+  padding-top: 0.75rem;
+}
+
+.section-chart .chart-target { min-height: 2rem; }
+
+.section-diagram pre.mermaid {
+  display: flex;
+  justify-content: center;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem;
+  overflow-x: auto;
+}
+
+/* A chart/diagram that failed to hydrate collapses to its caption. */
+.render-failed .chart-target,
+.render-failed pre.mermaid { display: none; }
+
+.section-timeline ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.section-timeline li {
+  display: flex;
+  gap: 1rem;
+  padding: 0.45rem 0;
+  border-top: 1px solid var(--border);
+}
+
+.section-timeline li:first-child { border-top: 0; }
+
+.timeline-date {
+  flex: 0 0 8rem;
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.timeline-label { font-size: 0.95rem; }
+
+.section-glossary dl { margin: 0; }
+
+.section-glossary dt {
+  font-weight: 700;
+  margin-top: 0.6rem;
+}
+
+.section-glossary dd {
+  margin: 0.15rem 0 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
 .article-footnote {
   margin-top: 3rem;
   font-size: 0.82rem;

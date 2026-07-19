@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 
 from episteme.ingest.base import canonicalize_url, content_hash
-from episteme.ingest.rss import parse_feed
+from episteme.ingest.rss import find_video_embeds, parse_feed
 
 SAMPLE_RSS = b"""<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:media="http://search.yahoo.com/mrss/">
@@ -40,6 +40,28 @@ def test_parse_feed_since_filter():
     since = datetime(2024, 6, 1, tzinfo=UTC)
     items = parse_feed(SAMPLE_RSS, since=since)
     assert [i.title for i in items] == ["New quantum result"]
+
+
+def test_find_video_embeds_captures_players_not_links():
+    """Embedded players (iframes) mean the article presents the video; mere links
+    (sidebars, comments) must not become video candidates."""
+    html = """
+    <article>
+      <iframe src="https://www.youtube.com/embed/dQw4w9WgXcQ?rel=0"></iframe>
+      <iframe src="https://player.vimeo.com/video/76979871"></iframe>
+      <iframe src="https://www.youtube.com/embed/dQw4w9WgXcQ"></iframe>
+      <a href="https://www.youtube.com/watch?v=sidebar99">Related video</a>
+    </article>
+    """
+    assert find_video_embeds(html) == [
+        {"kind": "video", "url": "https://www.youtube.com/embed/dQw4w9WgXcQ"},
+        {"kind": "video", "url": "https://player.vimeo.com/video/76979871"},
+    ]
+
+
+def test_find_video_embeds_respects_limit():
+    html = " ".join(f'<iframe src="https://www.youtube.com/embed/video{i:03d}xx">' for i in range(9))
+    assert len(find_video_embeds(html, limit=3)) == 3
 
 
 def test_canonicalize_url_strips_tracking_and_fragment():

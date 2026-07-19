@@ -13,6 +13,10 @@
         #{{ post.id }} · {{ post.kind }} · {{ post.status }}
         · generated {{ post.generated_at | dt }}
         {% if post.archived_at %} · archived {{ post.archived_at | dt }}{% endif %}
+        {% if post.pinned %} · <strong>pinned</strong> (never auto-pruned){% endif %}
+        · <button hx-post="/api/posts/{{ post.id }}/pin?value={{ 'false' if post.pinned else 'true' }}"
+                  hx-swap="none" hx-on::after-request="location.reload()">
+            {{ "unpin" if post.pinned else "pin" }}</button>
       </td></tr>
       {% if story.posts | length > 1 %}
       <tr><th>versions</th><td>
@@ -24,6 +28,7 @@
           <a href="/post/{{ p.id }}/provenance">#{{ p.id }} ({{ p.status }})</a>
           — {{ p.title or "(" ~ p.kind ~ ")" }} · {{ p.generated_at | dt }}
           {% endif %}
+          {% if p.pinned %} · pinned{% endif %}
         </div>
         {% endfor %}
       </td></tr>

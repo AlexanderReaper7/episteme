@@ -1,6 +1,13 @@
 import math
 
-from episteme.worker.pipeline import _further_reading_section, _reading_time, update_centroid
+from episteme.worker.pipeline import (
+    _further_reading_section,
+    _reading_time,
+    _writer_seed,
+    media_candidates,
+    sanitize_media_sections,
+    update_centroid,
+)
 
 
 def test_update_centroid_stays_normalized():
@@ -66,3 +73,95 @@ def test_further_reading_keeps_only_writer_selected_fetches():
 def test_further_reading_empty_selection_means_no_section():
     fetch_log = [{"url": "https://a.org/x", "title": "A"}]
     assert _further_reading_section(fetch_log, item_urls=set(), selected=[]) is None
+
+
+def test_reading_time_counts_rich_section_text():
+    sections = [
+        {"type": "quiz", "question": "one two", "choices": ["three", "four five"],
+         "answer_index": 0, "explanation": "six " * 100},
+        {"type": "glossary", "terms": [{"term": "seven", "definition": "eight " * 100}]},
+        {"type": "timeline", "events": [{"date": "2026", "label": "nine " * 15}]},
+        # Chart specs are looked at, not read: only the caption counts.
+        {"type": "chart", "spec": {"data": {"values": [{"x": "many words here"} for _ in range(200)]}},
+         "caption": "ten"},
+    ]
+    # ~226 words -> 1 min; the chart's 600 spec words must NOT push it to 3+.
+    assert _reading_time(sections) == 1
+
+
+_CANDIDATES = {
+    "https://cdn.example.org/webb.jpg": {
+        "kind": "image", "attribution": "ESA Webb", "source_url": "https://esa.int/a1"
+    },
+    "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ": {
+        "kind": "video", "attribution": "NASA", "source_url": "https://nasa.gov/a2"
+    },
+}
+
+
+def test_sanitize_media_drops_non_candidate_urls():
+    """The closed-set rule: a hallucinated image URL never reaches the page."""
+    sections = [
+        {"type": "prose", "text": "body"},
+        {"type": "image", "url": "https://evil.example/fake.jpg", "caption": "c"},
+    ]
+    assert sanitize_media_sections(sections, _CANDIDATES) == [{"type": "prose", "text": "body"}]
+
+
+def test_sanitize_media_stamps_attribution_from_db():
+    sections = [{"type": "image", "url": "https://cdn.example.org/webb.jpg", "caption": "c"}]
+    result = sanitize_media_sections(sections, _CANDIDATES)
+    assert result == [
+        {
+            "type": "image",
+            "url": "https://cdn.example.org/webb.jpg",
+            "caption": "c",
+            "attribution": "ESA Webb",
+            "source_url": "https://esa.int/a1",
+        }
+    ]
+
+
+def test_sanitize_media_enforces_kind_match():
+    """An image section pointing at a video candidate (or vice versa) is dropped."""
+    sections = [
+        {"type": "image", "url": "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ",
+         "caption": "c"},
+        {"type": "video", "url": "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ",
+         "caption": "c"},
+    ]
+    result = sanitize_media_sections(sections, _CANDIDATES)
+    assert [s["type"] for s in result] == ["video"]
+
+
+def test_media_candidates_collects_refs_with_attribution():
+    from episteme.models import Source, SourceItem
+
+    source = Source(name="Phys.org", type_name="rss", config={})
+    item = SourceItem(
+        url="https://phys.org/news/1.html",
+        media_refs=[
+            {"kind": "image", "url": "https://cdn.phys.org/1.jpg"},
+            {"kind": "video", "url": "https://www.youtube-nocookie.com/embed/abc123"},
+            {"kind": "image"},  # no url -> ignored
+        ],
+    )
+    item.source = source
+    candidates = media_candidates([item])
+    assert candidates == {
+        "https://cdn.phys.org/1.jpg": {
+            "kind": "image", "attribution": "Phys.org",
+            "source_url": "https://phys.org/news/1.html",
+        },
+        "https://www.youtube-nocookie.com/embed/abc123": {
+            "kind": "video", "attribution": "Phys.org",
+            "source_url": "https://phys.org/news/1.html",
+        },
+    }
+
+
+def test_writer_seed_lists_available_media_only_when_present():
+    seed = _writer_seed(["[A] title\nbody"], _CANDIDATES)
+    assert "Available media" in seed
+    assert "https://cdn.example.org/webb.jpg (from ESA Webb)" in seed
+    assert "Available media" not in _writer_seed(["[A] title\nbody"], {})

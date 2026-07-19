@@ -122,17 +122,25 @@ ADDITIVE_MIGRATIONS = [
     "ALTER TABLE llm_calls ADD COLUMN IF NOT EXISTS post_id INT",
     "CREATE INDEX IF NOT EXISTS ix_llm_calls_post_id ON llm_calls (post_id)",
     "ALTER TABLE posts ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ",
-    # Backfill pre-migration rows by timestamp (only ever touches NULL post_id, so
-    # rerunning is a no-op once stamped). Write-side calls precede their post ->
-    # earliest post generated after the call; qa reviews an existing post ->
-    # latest post generated before the call. 'research' is the pre-2.5 tool-loop
-    # stage name, retired but present in old rows.
+    # Write-side calls are grouped per generation attempt so the post stamp is
+    # exact (a failed attempt's calls stay off later posts' provenance pages).
+    "ALTER TABLE llm_calls ADD COLUMN IF NOT EXISTS attempt_id VARCHAR(36)",
+    # Retention pin (user override): pinned posts/calls survive the prune.
+    "ALTER TABLE posts ADD COLUMN IF NOT EXISTS pinned BOOLEAN NOT NULL DEFAULT FALSE",
+    "ALTER TABLE llm_calls ADD COLUMN IF NOT EXISTS pinned BOOLEAN NOT NULL DEFAULT FALSE",
+    # Backfill pre-attempt_id rows by timestamp (attempt-tagged rows are excluded:
+    # if they are still unstamped, their attempt produced no post — sweeping them
+    # into the next post by timestamp is exactly the misattribution the attempt id
+    # exists to prevent). Write-side calls precede their post -> earliest post
+    # generated after the call; qa reviews an existing post -> latest post
+    # generated before the call. 'research' is the pre-2.5 tool-loop stage name,
+    # retired but present in old rows.
     """
     UPDATE llm_calls c SET post_id = (
         SELECT p.id FROM posts p
         WHERE p.story_id = c.story_id AND p.generated_at >= c.created_at
         ORDER BY p.generated_at LIMIT 1)
-     WHERE c.post_id IS NULL AND c.story_id IS NOT NULL
+     WHERE c.post_id IS NULL AND c.story_id IS NOT NULL AND c.attempt_id IS NULL
        AND c.stage IN ('condense', 'research', 'write')
     """,
     """

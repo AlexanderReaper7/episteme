@@ -103,8 +103,9 @@ class Post(Base):
     `kind`: `feature` = long-form article (title/summary/sections filled);
     `aggregate` = identity-only row for a cluster card — no stored content, the
     card renders from the story's items at read time (canonical minimum).
-    Micro-posts, minigames etc. come with Phase 4. At most one published post
-    per story at any time. `sections` is the typed-section data of spec §6."""
+    Micro-posts and minigames are later Phase 3 work (definitions in spec §12).
+    At most one published post per story at any time. `sections` is the
+    typed-section data of spec §6."""
 
     __tablename__ = "posts"
 
@@ -126,8 +127,19 @@ class Post(Base):
     # Set when the post leaves "published" (rewrite supersession or QA demote);
     # archived posts older than llm_log_retention_days are pruned with their calls.
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # User-set retention override: a pinned post and its stamped llm_calls are
+    # never auto-pruned (e.g. keep a superseded draft for later comparison).
+    pinned: Mapped[bool] = mapped_column(default=False)
 
     story: Mapped[Story] = relationship(back_populates="posts")
+
+
+# Stages whose calls belong to ONE post generation (post-scoped provenance).
+# Calls in other stages that carry a story_id (triage) are story-level, shared
+# by every version of the story's post. Used by the /api/posts/{id}/llm-calls
+# filter and by the retention prune's pinned-post protection — the two must
+# agree so a pinned post's provenance page stays complete.
+POST_SCOPED_STAGES = ("condense", "research", "write", "qa")
 
 
 class LlmCall(Base):
@@ -151,6 +163,14 @@ class LlmCall(Base):
     # (the post doesn't exist yet while they run). NULL = story-level work
     # (triage) that is shared provenance across every version of a post.
     post_id: Mapped[int | None] = mapped_column(index=True)
+    # Groups the write-side calls of ONE generation attempt (uuid, set at call
+    # time via llm_context). The post stamp targets exactly this attempt, so a
+    # failed attempt's calls can never be swept into a later post's provenance.
+    attempt_id: Mapped[str | None] = mapped_column(String(36))
+    # User-set retention override for calls with no post row to pin through —
+    # a failed attempt's write-side calls (post_id NULL), pinned by attempt_id.
+    # Calls stamped to a pinned post are protected via the post, not this flag.
+    pinned: Mapped[bool] = mapped_column(default=False)
     # Tool loops store per-row message DELTAS: rows sharing a chain_id are one
     # conversation; full transcript = concat(request.messages + response) by seq.
     chain_id: Mapped[str | None] = mapped_column(String(36))

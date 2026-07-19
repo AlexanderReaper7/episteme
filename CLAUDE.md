@@ -16,7 +16,8 @@ spec (data model, pipeline stages, feed-composition rules, roadmap phases, decid
 
 - **Phases 1, 2, and 2.5 are built** (1: ingestion + raw feed UI; 2: LLM writer
   pipeline; 2.5: agentic writer + vision QA + renames — see the Phase 2.5 bullet
-  below for what still needs live verification).
+  below for what still needs live verification). **Phase 3 first push built
+  (2026-07-19), not yet live-verified** — see the Phase 3 bullet below.
 - **Phase 2 verified live end-to-end (2026-07-17)**: full run on real models —
   embed 323/323 → cluster 287 stories (25 multi-item) → triage 287 (178 aggregate /
   90 write / 19 skip) → write 10 (`max_writes_per_run` cap). Zero errors and zero
@@ -102,6 +103,51 @@ spec (data model, pipeline stages, feed-composition rules, roadmap phases, decid
   pinned to system RAM (`--n-gpu-layers 0`) — enforced host-side in the router
   config, not in this repo. Mission framing: entertainment + education blended,
   zero manipulative mechanics ("a good Reddit"). See spec §1/§7/§12.
+- **Phase 3 first push built (2026-07-19), write path live-verified same day** —
+  rich content sections. Scope decided with the user: media + rich sections now; micro-posts,
+  minigames (definitions now in spec §12), quality gate + draft review UI, and
+  OpenAlex tracing are later pushes. (a) `Section` union grew to 9 types:
+  `image`/`video`/`quiz`/`chart` (vega-lite)/`diagram` (mermaid)/`timeline`/
+  `glossary` + existing prose/key_points (`llm/schemas.py`; quiz validates
+  answer_index in range). (b) *Media is closed-set like citations*: the writer
+  seed lists ingested `media_refs` as "Available media" (exact URLs);
+  `pipeline.sanitize_media_sections` drops non-candidate URLs and stamps
+  `attribution`/`source_url` from the DB; QA revisions pass the same sanitizer
+  (`qa.apply_revision`). No MediaAsset indirection — sections store the URL
+  directly. (c) enrich stage folded into the writer (user decision 2026-07-19):
+  rich sections come from the same agentic conversation, guidance not quotas;
+  spec §7 stage 4 annotated. (d) RSS extraction now captures YouTube/Vimeo
+  *embeds* (iframes, not mere links) as `kind="video"` media_refs. (e) Rendering:
+  `_sections.html` partial (one branch per type), `video_embed` whitelist filter
+  (youtube-nocookie/vimeo only), vendored vega/vega-lite/vega-embed/mermaid in
+  `static/vendor/` (versions + re-download commands in its README) loaded only
+  when the post contains chart/diagram, `static/post.js` hydrates
+  quiz/chart/diagram with dark themes, failed renders collapse to the caption.
+  QA screenshot settle bumped 500→1500ms for client-rendered sections.
+  (f) *finish_research tool added during live test (2026-07-19)*: the writer's
+  first live run ended research by calling `demote_story` ("no need to demote")
+  — the only terminal-looking tool — killing the feature; `agent.py` now offers
+  `finish_research(note)` as the explicit "done researching" affordance,
+  `demote_story`'s description says it KILLS the feature, and the loop breaks to
+  the draft on finish (regression test in test_agent.py).
+  **Live-verified (2026-07-19, story 291 rewrite → post 247)**: grammar handled
+  the 9-type union on Qwopus zero-retry; writer picked 1 of 3 offered images
+  with a real caption (skipped quiz/chart for a news-y item — correct per
+  guidance); sanitizer passed it and stamped `attribution`/`source_url` from the
+  DB; `sources` (3 items) + `further_reading` (2 fetched URLs) DB/fetch-log
+  built; page renders image figure + onerror, vendor JS correctly NOT loaded
+  (no chart/diagram). Loop exit was the stuck-budget breaker (12 fetch attempts),
+  so `finish_research` itself hasn't fired live yet. Still to verify live:
+  chart/diagram/quiz/timeline/glossary emission on a suitable story, video
+  sections (no video media_refs ingested yet), QA vision pass (needs `--mmproj`).
+  Provenance quirk FIXED (2026-07-19): write-side calls now carry a
+  per-generation `attempt_id` (uuid, stamped at call time via `llm_context`,
+  column on `llm_calls`); `_stamp_post_calls` targets exactly that attempt, so
+  a failed attempt's calls can never be swept into a later post's provenance —
+  they stay attempt-tagged, post_id NULL, visible only in story-level history
+  (`/api/stories/{id}/llm-calls`). The bootstrap timestamp-backfill is guarded
+  with `attempt_id IS NULL` for the same reason. Post 247's data was repaired
+  in place (job 1822's 7 calls unstamped, tagged `repair-job1822-...`).
 
 ## Commands
 
@@ -133,6 +179,12 @@ curl -X POST http://127.0.0.1:8200/api/llm/unload          # free VRAM now, no p
 # http://127.0.0.1:8200/post/{id}/provenance  every LLM call behind THIS post version (post-scoped, not admin)
 curl http://127.0.0.1:8200/api/status    # /api/{status,sources,runs,jobs,stories,posts,llm-calls}
 curl "http://127.0.0.1:8200/api/llm-calls?story_id=284&full=true"  # full prompts/responses
+
+# Retention pins (exempt from the auto-prune; ?value=false unpins). Post pin also
+# has a button on the provenance page; attempt pin covers a failed attempt's
+# calls (post_id NULL — attempt_id visible in /api/stories/{id}/llm-calls).
+curl -X POST http://127.0.0.1:8200/api/posts/20/pin
+curl -X POST "http://127.0.0.1:8200/api/llm-calls/pin?attempt_id=<uuid>"
 
 # Database
 docker compose exec -T db psql -U episteme -d episteme
@@ -193,7 +245,12 @@ docker compose exec -T db psql -U episteme -d episteme
   page). A rewrite archives the old post (`archived_at`) with its calls intact —
   each version's provenance page shows only its own calls, and the retention
   prune deletes archived posts (and, by age, their calls) past
-  `llm_log_retention_days`.
+  `llm_log_retention_days` — **unless pinned** (2026-07-19): `posts.pinned`
+  keeps a version plus its complete provenance page (stamped calls + shared
+  story-level calls, same `POST_SCOPED_STAGES` split as the API — the constant
+  lives in `models.py` so prune and API can't drift); `llm_calls.pinned`
+  (set per attempt via `POST /api/llm-calls/pin`) protects a failed attempt's
+  unstamped calls, which no post pin can reach.
 - **Jobs**: procrastinate (Postgres-backed queue, no broker). Worker and web are the
   same image with different entrypoints. Periodic tasks via `@app.periodic(cron=...)`,
   crons configurable through settings (`config.py` reads env / `.env`).

@@ -95,6 +95,32 @@ async def test_demote_story_skips_drafting(monkeypatch):
     assert gw.draft_turns == 0  # demotion must not request a draft
 
 
+async def test_finish_research_ends_loop_and_carries_note(monkeypatch):
+    """The story-291 failure inverted: the model signals 'done researching' with an
+    explicit tool call (it used to reach for demote_story, killing the feature).
+    finish_research must end the loop, keep the note, and go to the draft."""
+    gw = ScriptedGateway([
+        _assistant_toolcall("fetch_page", '{"url": "https://a.org"}', "c1"),
+        _assistant_toolcall(
+            "finish_research", '{"note": "Nature piece is strongest."}', "c2"
+        ),
+        _assistant_toolcall("web_search", '{"query": "never reached"}', "c3"),
+    ])
+    monkeypatch.setattr(agent, "gateway", gw)
+
+    async def fake_fetch(url):
+        return {"url": url, "title": url, "text": "rich text", "links": []}
+
+    monkeypatch.setattr(agent, "fetch_page", fake_fetch)
+
+    outcome = await agent.run_writer_loop("sys", "seed")
+
+    assert outcome.decision == "write"
+    assert outcome.notes == "Nature piece is strongest."
+    assert gw.tool_turns == 2  # finish_research ended the loop; c3 never ran
+    assert gw.draft_turns == 1
+
+
 async def test_loop_nudges_when_model_narrates_instead_of_acting(monkeypatch):
     # Model returns a plan (no tool_calls) before fetching anything -> gets nudged,
     # then actually fetches on the next turn.

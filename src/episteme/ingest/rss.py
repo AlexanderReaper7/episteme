@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import UTC, datetime
 from typing import Any
 
@@ -46,6 +47,30 @@ def _entry_media(entry: Any) -> list[dict[str, Any]]:
         href = enclosure.get("href") or enclosure.get("url")
         if href and str(enclosure.get("type", "")).startswith("image/"):
             refs.append({"kind": "image", "url": href})
+    return refs
+
+
+# Actual video *embeds* only (iframe players), not mere links — a page's sidebar
+# and comments are full of YouTube links, but an embed means the article itself
+# presents the video. These populate kind="video" media_refs, the closed set the
+# writer's video sections draw from.
+_VIDEO_EMBED_RE = re.compile(
+    r"https?://(?:www\.)?"
+    r"(?:youtube(?:-nocookie)?\.com/embed/[\w-]{6,}|player\.vimeo\.com/video/\d+)"
+)
+
+
+def find_video_embeds(html: str, limit: int = 3) -> list[dict[str, Any]]:
+    refs: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for match in _VIDEO_EMBED_RE.finditer(html):
+        url = match.group(0)
+        if url in seen:
+            continue
+        seen.add(url)
+        refs.append({"kind": "video", "url": url})
+        if len(refs) >= limit:
+            break
     return refs
 
 
@@ -120,4 +145,5 @@ class RssAdapter:
                 media_refs.append({"kind": "image", "url": metadata.image})
         except Exception:  # metadata is best-effort; never fail extraction over it
             pass
+        media_refs.extend(find_video_embeds(response.text))
         return ExtractedItem(text=text, media_refs=media_refs)

@@ -23,6 +23,7 @@ log = logging.getLogger("episteme.llm.observe")
 _stage: ContextVar[str | None] = ContextVar("llm_stage", default=None)
 _story_id: ContextVar[int | None] = ContextVar("llm_story_id", default=None)
 _post_id: ContextVar[int | None] = ContextVar("llm_post_id", default=None)
+_attempt_id: ContextVar[str | None] = ContextVar("llm_attempt_id", default=None)
 
 
 @dataclass
@@ -108,7 +109,12 @@ def _chain_info(messages: list, response: dict | None) -> tuple[str | None, int 
 
 
 @contextmanager
-def llm_context(stage: str | None = None, story_id: int | None = None, post_id: int | None = None):
+def llm_context(
+    stage: str | None = None,
+    story_id: int | None = None,
+    post_id: int | None = None,
+    attempt_id: str | None = None,
+):
     """Tag gateway calls made inside the block. Only the fields passed are
     overridden, so nested contexts compose (e.g. `research` inside a story's
     `write` context keeps the story_id)."""
@@ -119,6 +125,8 @@ def llm_context(stage: str | None = None, story_id: int | None = None, post_id: 
         tokens.append((_story_id, _story_id.set(story_id)))
     if post_id is not None:
         tokens.append((_post_id, _post_id.set(post_id)))
+    if attempt_id is not None:
+        tokens.append((_attempt_id, _attempt_id.set(attempt_id)))
     try:
         yield
     finally:
@@ -161,6 +169,7 @@ async def record_llm_call(
                     stage=_stage.get(),
                     story_id=_story_id.get(),
                     post_id=_post_id.get(),
+                    attempt_id=_attempt_id.get(),
                     chain_id=chain_id,
                     seq=seq,
                     duration_ms=duration_ms,

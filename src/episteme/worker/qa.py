@@ -51,7 +51,9 @@ async def _screenshot(browser, post_id: int) -> bytes:
     )
     try:
         await page.goto(f"{settings.web_internal_url}/post/{post_id}", wait_until="load")
-        await page.wait_for_timeout(500)  # let hotlinked media settle or fail out
+        # Let hotlinked media settle or fail out, and give client-hydrated sections
+        # (vega charts, mermaid diagrams) time to draw — they render after load.
+        await page.wait_for_timeout(1500)
         return await page.screenshot(full_page=True, type="png")
     finally:
         await page.close()
@@ -85,22 +87,32 @@ def _grounding_digest(items: list[SourceItem], story: Story) -> str:
     return "\n\n---\n\n".join(parts)
 
 
-def apply_revision(sections: list[dict], review: QAReview) -> list[dict]:
+def apply_revision(
+    sections: list[dict], review: QAReview, candidates: dict[str, dict] | None = None
+) -> list[dict]:
     """Replace the model-authored body with the revision, preserving the DB-built
-    tail (sources / further_reading) — the model never rewrites citations."""
+    tail (sources / further_reading) — the model never rewrites citations. Revised
+    image/video sections pass the same closed-set check as the writer's draft
+    (`candidates` from pipeline.media_candidates), so QA can't introduce media the
+    story never ingested."""
+    from .pipeline import sanitize_media_sections
+
     tail = [s for s in sections if s.get("type") in ("sources", "further_reading")]
     if review.revised_sections:
-        body = [s.model_dump() for s in review.revised_sections]
+        body = sanitize_media_sections(
+            [s.model_dump() for s in review.revised_sections], candidates or {}
+        )
     else:
         body = [s for s in sections if s.get("type") not in ("sources", "further_reading")]
     return body + tail
 
 
 async def _qa_post(session: AsyncSession, browser, post: Post) -> None:
-    from .pipeline import _reading_time, _story_items
+    from .pipeline import _reading_time, _story_items, media_candidates
 
     story = await session.get(Story, post.story_id)
     items = await _story_items(session, story)
+    candidates = media_candidates(items)
     with llm_conversation():  # all rounds render as one provenance chain
         messages: list[dict] = [{"role": "system", "content": QA_SYSTEM}]
         prompt = (
@@ -129,7 +141,7 @@ async def _qa_post(session: AsyncSession, browser, post: Post) -> None:
                 await ensure_aggregate_post(session, story)  # the card takes its place
                 log.info("QA demoted post %d: %s", post.id, review.critique)
                 return
-            post.sections = apply_revision(post.sections, review)
+            post.sections = apply_revision(post.sections, review, candidates)
             if review.revised_title:
                 post.title = review.revised_title
             if review.revised_summary:

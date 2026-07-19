@@ -64,10 +64,31 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "finish_research",
+            "description": "Declare research COMPLETE and move on to writing the post. "
+            "Call this once you have gathered enough to write with depth and accuracy.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "note": {
+                        "type": "string",
+                        "description": "Short editorial note: what you found and which "
+                        "sources are strongest",
+                    }
+                },
+                "required": ["note"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "demote_story",
-            "description": "Decline to write a feature for this story because even after "
+            "description": "DECLINE to write a feature for this story because even after "
             "research the material is too thin or of too little learning value. The story "
-            "falls back to the aggregation stream — a fine outcome for minor items.",
+            "falls back to the aggregation stream — a fine outcome for minor items. Do NOT "
+            "call this when the material IS worth a feature — to proceed to writing, call "
+            "finish_research instead.",
             "parameters": {
                 "type": "object",
                 "properties": {"reason": {"type": "string", "description": "One sentence"}},
@@ -167,6 +188,7 @@ async def _run_writer_loop(system: str, seed: str) -> WriteOutcome:
             state.notes = message.get("content") or ""
             break
         turn_all_refused = True
+        finished = False
         for call in tool_calls:
             fn = call.get("function", {})
             name = fn.get("name")
@@ -178,12 +200,29 @@ async def _run_writer_loop(system: str, seed: str) -> WriteOutcome:
                     fetch_log=state.fetch_log,
                     gathered_chars=state.gathered_chars,
                 )
+            if name == "finish_research":
+                # The explicit "done researching" affordance. Without it, tool-tuned
+                # models reach for the only other terminal tool — story 291 called
+                # demote_story with reason "no need to demote" just to end research.
+                state.notes = str(args.get("note", "")) or state.notes
+                finished = True
+                turn_all_refused = False
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": call.get("id", ""),
+                        "content": "Research phase closed.",
+                    }
+                )
+                continue
             content = await _dispatch(name, args, state)
             if content not in (_SEARCH_EXHAUSTED, _FETCH_EXHAUSTED):
                 turn_all_refused = False
             messages.append(
                 {"role": "tool", "tool_call_id": call.get("id", ""), "content": content}
             )
+        if finished:
+            break
         # Stuck-loop breaker: turns where EVERY tool call bounced off an exhausted
         # budget gather nothing — after a couple of those, go straight to the draft.
         state.refused_turns = state.refused_turns + 1 if turn_all_refused else 0

@@ -9,6 +9,7 @@ deferrable for testing.
 import logging
 import re
 import time
+import uuid
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select, update
@@ -219,6 +220,49 @@ async def _condensed_source(item: SourceItem) -> str:
     return text[: settings.summarize_above_chars]
 
 
+def media_candidates(items: list[SourceItem]) -> dict[str, dict]:
+    """The closed set of media the writer may use: every media_ref ingested with
+    this story's items, keyed by URL, carrying the attribution code will stamp
+    (outlet + the article the media came from). Mirrors the sources/further_reading
+    principle — only DB membership puts media on the page."""
+    candidates: dict[str, dict] = {}
+    for item in items:
+        for ref in item.media_refs or []:
+            url = ref.get("url")
+            if not url or url in candidates:
+                continue
+            candidates[url] = {
+                "kind": ref.get("kind", "image"),
+                "attribution": item.source.name,
+                "source_url": item.url,
+            }
+    return candidates
+
+
+def sanitize_media_sections(sections: list[dict], candidates: dict[str, dict]) -> list[dict]:
+    """Enforce the closed set on model-authored image/video sections: drop any whose
+    URL was not ingested with the story, and stamp attribution from the DB (never
+    from model free text). Applied to writer drafts and QA revisions alike."""
+    kept: list[dict] = []
+    for section in sections:
+        if section.get("type") in ("image", "video"):
+            candidate = candidates.get(section.get("url", ""))
+            if candidate is None or candidate["kind"] != section["type"]:
+                log.info(
+                    "Dropping %s section with non-candidate url: %s",
+                    section.get("type"),
+                    section.get("url"),
+                )
+                continue
+            section = {
+                **section,
+                "attribution": candidate["attribution"],
+                "source_url": candidate["source_url"],
+            }
+        kept.append(section)
+    return kept
+
+
 def _sources_section(items: list[SourceItem]) -> dict:
     """Built from the database, never by the LLM — citations cannot hallucinate."""
     return {
@@ -260,36 +304,72 @@ def _further_reading_section(
     return {"type": "further_reading", "items": items}
 
 
+# Per-type map of which fields hold reader-visible text (chart specs and mermaid
+# source are looked at, not read, so they count only via their captions).
+_SECTION_TEXT_FIELDS: dict[str, tuple[str, ...]] = {
+    "prose": ("text",),
+    "key_points": ("items",),
+    "image": ("caption",),
+    "video": ("caption",),
+    "quiz": ("question", "choices", "explanation"),
+    "chart": ("caption",),
+    "diagram": ("caption",),
+    "timeline": ("events",),
+    "glossary": ("terms",),
+    # Citation tails are scanned, not read.
+    "sources": (),
+    "further_reading": (),
+}
+
+
+def _count_words(value) -> int:
+    if isinstance(value, str):
+        return len(value.split())
+    if isinstance(value, list):
+        return sum(_count_words(v) for v in value)
+    if isinstance(value, dict):
+        return sum(_count_words(v) for v in value.values())
+    return 0
+
+
 def _reading_time(sections: list[dict]) -> int:
     words = 0
     for section in sections:
-        words += len(section.get("text", "").split())
-        words += sum(len(point.split()) for point in section.get("items", []) if isinstance(point, str))
+        for field in _SECTION_TEXT_FIELDS.get(section.get("type", ""), ("text", "items")):
+            words += _count_words(section.get(field))
     return max(1, round(words / 220))
 
 
-def _writer_seed(condensed: list[str]) -> str:
-    return (
+def _writer_seed(condensed: list[str], candidates: dict[str, dict]) -> str:
+    seed = (
         "Source items for this story (trusted feed). Research to deepen the story — "
         "fetch these URLs to recover links they contain, search for primary sources — "
         "then you will write the post:\n\n" + "\n\n---\n\n".join(condensed)
     )
+    if candidates:
+        media_lines = "\n".join(
+            f"- {info['kind']}: {url} (from {info['attribution']})"
+            for url, info in candidates.items()
+        )
+        seed += (
+            "\n\nAvailable media for this story — the ONLY URLs usable in image/video "
+            "sections (exact string; anything else is dropped):\n" + media_lines
+        )
+    return seed
 
 
-async def _stamp_post_calls(session: AsyncSession, story_id: int, post_id: int) -> None:
+async def _stamp_post_calls(session: AsyncSession, attempt_id: str, post_id: int) -> None:
     """Attribute the write-side llm_calls that just produced a post to it. They
-    run before the post row exists, so they land with post_id NULL and are
-    stamped here right after the post commits. Scoops any unattributed
-    condense/write rows for the story — including a prior failed attempt's,
-    which is the same generation effort. Best-effort like all call logging."""
+    run before the post row exists, so they land with post_id NULL (tagged with
+    this attempt's uuid at call time) and are stamped here right after the post
+    commits. Scoped to the attempt — a prior FAILED attempt's calls must never
+    appear on a later post's provenance page; they stay attempt-tagged but
+    unstamped, visible only in the story-level history. Best-effort like all
+    call logging."""
     try:
         await session.execute(
             update(LlmCall)
-            .where(
-                LlmCall.story_id == story_id,
-                LlmCall.post_id.is_(None),
-                LlmCall.stage.in_(("condense", "write")),
-            )
+            .where(LlmCall.attempt_id == attempt_id, LlmCall.post_id.is_(None))
             .values(post_id=post_id)
         )
         await session.commit()
@@ -352,23 +432,31 @@ async def write_posts(
         )
     stories = (await session.execute(query)).scalars().all()
 
-    # Pass 1 (fast, batched): condense long sources once per story.
-    prepared: dict[int, tuple[list[SourceItem], str, int]] = {}
+    # Pass 1 (fast, batched): condense long sources once per story. Each story
+    # gets a generation-attempt uuid here; every call of the attempt (condense
+    # now, the write loop in pass 2) carries it, so the post stamp is exact.
+    prepared: dict[int, tuple[list[SourceItem], str, int, str]] = {}
     for story in stories:
         if await pause_requested(session):
             # Don't start main-model work on a pause: condense output is cheap to
             # redo next run, the write pass is minutes of GPU per story.
             log.info("write stage pausing before main-model pass (%d condensed)", len(prepared))
             return 0
+        attempt = uuid.uuid4().hex
         items = await _story_items(session, story)
-        with llm_context(story_id=story.id):
+        with llm_context(story_id=story.id, attempt_id=attempt):
             condensed = [
                 f"[{item.source.name}] {item.title}\nURL: {item.url}\n"
                 f"{await _condensed_source(item)}"
                 for item in items
             ]
         source_chars = sum(len(_plain_text(item)) for item in items)
-        prepared[story.id] = (items, _writer_seed(condensed), source_chars)
+        prepared[story.id] = (
+            items,
+            _writer_seed(condensed, media_candidates(items)),
+            source_chars,
+            attempt,
+        )
 
     # Pass 2 (main): one agentic loop per story.
     written = 0
@@ -380,9 +468,9 @@ async def write_posts(
         if await pause_requested(session):
             log.info("write stage pausing after %d posts", written)
             break
-        items, seed, source_chars = prepared[story.id]
+        items, seed, source_chars, attempt = prepared[story.id]
         try:
-            with llm_context(stage="write", story_id=story.id):
+            with llm_context(stage="write", story_id=story.id, attempt_id=attempt):
                 outcome = await run_writer_loop(WRITER_AGENT_SYSTEM, seed)
         except Exception as exc:
             log.warning("Writer loop failed for story %d: %s", story.id, exc)
@@ -405,7 +493,9 @@ async def write_posts(
             continue
 
         item_urls = {item.url for item in items}
-        sections = [s.model_dump() for s in outcome.draft.sections]
+        sections = sanitize_media_sections(
+            [s.model_dump() for s in outcome.draft.sections], media_candidates(items)
+        )
         sections.append(_sources_section(items))
         further = _further_reading_section(
             outcome.fetch_log, item_urls, outcome.draft.further_reading_urls
@@ -435,7 +525,7 @@ async def write_posts(
         new_post_id = post.id
         story.status = "written"
         await session.commit()
-        await _stamp_post_calls(session, story.id, new_post_id)
+        await _stamp_post_calls(session, attempt, new_post_id)
         written += 1
         log.info("Wrote feature for story %d: %s", story.id, outcome.draft.title)
     return written
@@ -447,13 +537,42 @@ async def write_posts(
 async def _prune_expired(session: AsyncSession) -> None:
     """Retention: drop llm_calls past the window, and archived posts whose
     replacement is old enough that the before/after comparison is over —
-    a superseded version and its provenance age out together."""
-    from sqlalchemy import delete
+    a superseded version and its provenance age out together. `pinned` is the
+    explicit user override: a pinned post survives with its provenance page
+    complete — every call stamped to it plus the story-level calls the page
+    shares (same POST_SCOPED_STAGES split as /api/posts/{id}/llm-calls) — and
+    individually pinned calls (a failed attempt worth keeping, pinned by
+    attempt_id via the API) survive on their own."""
+    from sqlalchemy import and_, delete, not_, or_
+
+    from ..models import POST_SCOPED_STAGES
 
     cutoff = datetime.now(UTC) - timedelta(days=settings.llm_log_retention_days)
-    await session.execute(delete(LlmCall).where(LlmCall.created_at < cutoff))
+    pinned_posts = select(Post.id).where(Post.pinned)
+    pinned_stories = select(Post.story_id).where(Post.pinned)
     await session.execute(
-        delete(Post).where(Post.status == "archived", Post.archived_at < cutoff)
+        delete(LlmCall).where(
+            LlmCall.created_at < cutoff,
+            LlmCall.pinned.is_(False),
+            # NOT IN over a subquery is NULL (not true) for post_id NULL rows,
+            # so unstamped calls need the explicit branch to stay prunable.
+            or_(LlmCall.post_id.is_(None), LlmCall.post_id.not_in(pinned_posts)),
+            not_(
+                and_(
+                    LlmCall.post_id.is_(None),
+                    LlmCall.story_id.is_not(None),
+                    LlmCall.story_id.in_(pinned_stories),
+                    LlmCall.stage.notin_(POST_SCOPED_STAGES),
+                )
+            ),
+        )
+    )
+    await session.execute(
+        delete(Post).where(
+            Post.status == "archived",
+            Post.archived_at < cutoff,
+            Post.pinned.is_(False),
+        )
     )
     await session.commit()
 

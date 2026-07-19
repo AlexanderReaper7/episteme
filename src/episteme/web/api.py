@@ -7,12 +7,20 @@ plain dict builders — the ORM models are the schema."""
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query
-from sqlalchemy import and_, func, or_, select, text
+from sqlalchemy import and_, func, or_, select, text, update
 
 from ..config import settings
 from ..db import SessionLocal
 from ..llm import gateway
-from ..models import LlmCall, PipelineRun, Post, Source, SourceItem, Story
+from ..models import (
+    POST_SCOPED_STAGES,
+    LlmCall,
+    PipelineRun,
+    Post,
+    Source,
+    SourceItem,
+    Story,
+)
 
 router = APIRouter(prefix="/api")
 
@@ -108,6 +116,7 @@ def _post_dict(post: Post, with_sections: bool = False) -> dict:
         "status": post.status,
         "generated_at": post.generated_at,
         "archived_at": post.archived_at,
+        "pinned": post.pinned,
     }
     if with_sections:
         data["sections"] = post.sections
@@ -135,6 +144,8 @@ def _llm_call_dict(call: LlmCall, full: bool = False) -> dict:
         "stage": call.stage,
         "story_id": call.story_id,
         "post_id": call.post_id,
+        "attempt_id": call.attempt_id,
+        "pinned": call.pinned,
         "chain_id": call.chain_id,
         "seq": call.seq,
         "duration_ms": call.duration_ms,
@@ -390,11 +401,6 @@ async def api_story_llm_calls(story_id: int, full: bool = False):
     return [_llm_call_dict(c, full=full) for c in calls]
 
 
-# Stages whose calls belong to one post generation; anything else with a
-# story_id (triage) is story-level provenance shared by every version.
-POST_SCOPED_STAGES = ("condense", "research", "write", "qa")
-
-
 @router.get("/posts/{post_id}/llm-calls")
 async def api_post_llm_calls(post_id: int, full: bool = False):
     """Provenance of ONE post generation: the calls stamped with this post_id
@@ -446,6 +452,21 @@ async def api_posts(limit: int = Query(50, ge=1, le=500), offset: int = Query(0,
     return [_post_dict(p) for p in posts]
 
 
+@router.post("/posts/{post_id}/pin")
+async def api_post_pin(post_id: int, value: bool = Query(True)):
+    """Retention override: a pinned post is never auto-pruned, and its
+    provenance page's calls (stamped + shared story-level) are kept with it —
+    e.g. keep a superseded draft around for a later side-by-side comparison.
+    ?value=false unpins."""
+    async with SessionLocal() as session:
+        post = await session.get(Post, post_id)
+        if post is None:
+            raise HTTPException(404)
+        post.pinned = value
+        await session.commit()
+        return {"id": post.id, "pinned": post.pinned}
+
+
 @router.get("/posts/{post_id}")
 async def api_post(post_id: int):
     async with SessionLocal() as session:
@@ -475,3 +496,18 @@ async def api_llm_calls(
     async with SessionLocal() as session:
         calls = (await session.execute(query)).scalars().all()
     return [_llm_call_dict(c, full=full) for c in calls]
+
+
+@router.post("/llm-calls/pin")
+async def api_llm_calls_pin(attempt_id: str, value: bool = Query(True)):
+    """Retention override for calls with no post row to pin through: a failed
+    generation attempt's write-side calls (post_id NULL), addressed by the
+    attempt_id shown in /api/stories/{id}/llm-calls. ?value=false unpins."""
+    async with SessionLocal() as session:
+        result = await session.execute(
+            update(LlmCall).where(LlmCall.attempt_id == attempt_id).values(pinned=value)
+        )
+        await session.commit()
+    if result.rowcount == 0:
+        raise HTTPException(404, f"no llm_calls with attempt_id {attempt_id!r}")
+    return {"attempt_id": attempt_id, "pinned": value, "calls": result.rowcount}

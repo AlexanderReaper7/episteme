@@ -42,6 +42,35 @@ def test_apply_revision_without_sections_keeps_existing_body():
     assert result == _SECTIONS
 
 
+def test_apply_revision_sanitizes_revised_media_sections():
+    """QA can't introduce media the story never ingested: a revised image with a
+    non-candidate URL is dropped; a candidate URL is kept and re-stamped with DB
+    attribution (the model never writes attribution)."""
+    from episteme.worker.qa import apply_revision
+
+    candidates = {
+        "https://cdn.example.org/real.jpg": {
+            "kind": "image", "attribution": "Nature", "source_url": "https://nature.com/x"
+        }
+    }
+    review = QAReview.model_validate(
+        {
+            "verdict": "revise",
+            "quality_score": 6.0,
+            "critique": "swap image",
+            "revised_sections": [
+                {"type": "prose", "text": "new body"},
+                {"type": "image", "url": "https://cdn.example.org/real.jpg", "caption": "ok"},
+                {"type": "image", "url": "https://evil.example/fake.jpg", "caption": "no"},
+            ],
+        }
+    )
+    result = apply_revision(_SECTIONS, review, candidates)
+    body_types = [s["type"] for s in result[:-2]]
+    assert body_types == ["prose", "image"]
+    assert result[1]["attribution"] == "Nature"
+
+
 def test_qa_review_schema_rejects_unknown_verdict():
     import pytest
 

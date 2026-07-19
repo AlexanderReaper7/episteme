@@ -5,9 +5,9 @@ are constrained to the generated JSON schema server-side (llama.cpp grammar) and
 validated here client-side. Invalid output never leaves this layer.
 """
 
-from typing import Annotated, Literal, Union
+from typing import Annotated, Any, Literal, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class TriageResult(BaseModel):
@@ -36,7 +36,91 @@ class KeyPointsSection(BaseModel):
     items: list[str] = Field(min_length=2, max_length=8)
 
 
-Section = Annotated[Union[ProseSection, KeyPointsSection], Field(discriminator="type")]
+# --- Rich/media sections (spec §6, Phase 3) ---------------------------------------
+# Media sections are closed-set like citations: the writer may only use URLs offered
+# in its "Available media" list — pipeline.sanitize_media_sections drops anything
+# else and stamps attribution from the DB, so media can't be hallucinated.
+
+
+class ImageSection(BaseModel):
+    type: Literal["image"]
+    url: str = Field(description="EXACT URL from this story's 'Available media' list")
+    caption: str = Field(max_length=500)
+
+
+class VideoSection(BaseModel):
+    type: Literal["video"]
+    url: str = Field(description="EXACT URL from this story's 'Available media' list")
+    caption: str = Field(default="", max_length=500)
+
+
+class QuizSection(BaseModel):
+    """One multiple-choice question testing whether the reader understood the post."""
+
+    type: Literal["quiz"]
+    question: str = Field(max_length=500)
+    choices: list[str] = Field(min_length=2, max_length=6)
+    answer_index: int = Field(ge=0, description="0-based index into choices")
+    explanation: str = Field(max_length=1000)
+
+    @model_validator(mode="after")
+    def _answer_in_range(self) -> "QuizSection":
+        if self.answer_index >= len(self.choices):
+            raise ValueError(
+                f"answer_index {self.answer_index} out of range for {len(self.choices)} choices"
+            )
+        return self
+
+
+class ChartSection(BaseModel):
+    type: Literal["chart"]
+    spec: dict[str, Any] = Field(
+        description="Vega-Lite spec with inline data (data.values). Only chart real "
+        "numbers taken from the sources — never invented ones."
+    )
+    caption: str = Field(default="", max_length=500)
+
+
+class DiagramSection(BaseModel):
+    type: Literal["diagram"]
+    mermaid: str = Field(description="Mermaid source, e.g. 'flowchart LR; A --> B'")
+    caption: str = Field(default="", max_length=500)
+
+
+class TimelineEvent(BaseModel):
+    date: str = Field(max_length=100, description="Free-form: '1969', 'March 2026', '4.5 Gya'")
+    label: str = Field(max_length=500)
+
+
+class TimelineSection(BaseModel):
+    type: Literal["timeline"]
+    events: list[TimelineEvent] = Field(min_length=2, max_length=15)
+
+
+class GlossaryTerm(BaseModel):
+    term: str = Field(max_length=100)
+    definition: str = Field(max_length=500)
+
+
+class GlossarySection(BaseModel):
+    type: Literal["glossary"]
+    terms: list[GlossaryTerm] = Field(min_length=1, max_length=15)
+
+
+Section = Annotated[
+    Union[
+        ProseSection,
+        KeyPointsSection,
+        ImageSection,
+        VideoSection,
+        QuizSection,
+        ChartSection,
+        DiagramSection,
+        TimelineSection,
+        GlossarySection,
+    ],
+    Field(discriminator="type"),
+]
 
 
 class PostDraft(BaseModel):

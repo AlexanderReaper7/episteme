@@ -5,6 +5,7 @@ import httpx
 
 from episteme.llm.gateway import LLMGateway
 from episteme.llm.observe import (
+    _attempt_id,
     _chain_info,
     _stage,
     _story_id,
@@ -21,13 +22,15 @@ gateway_module = importlib.import_module("episteme.llm.gateway")
 
 def test_llm_context_nesting_composes():
     assert _stage.get() is None and _story_id.get() is None
-    with llm_context(stage="write", story_id=5):
+    with llm_context(stage="write", story_id=5, attempt_id="att1"):
         assert _stage.get() == "write" and _story_id.get() == 5
+        assert _attempt_id.get() == "att1"
         # Nested override changes only the field passed; story_id survives.
         with llm_context(stage="research"):
             assert _stage.get() == "research" and _story_id.get() == 5
+            assert _attempt_id.get() == "att1"  # the attempt spans nested stages
         assert _stage.get() == "write"
-    assert _stage.get() is None and _story_id.get() is None
+    assert _stage.get() is None and _story_id.get() is None and _attempt_id.get() is None
 
 
 async def test_record_is_noop_when_disabled():
