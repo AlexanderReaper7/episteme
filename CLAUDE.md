@@ -189,6 +189,11 @@ curl -X POST "http://127.0.0.1:8200/api/llm-calls/pin?attempt_id=<uuid>"
 # Database
 docker compose exec -T db psql -U episteme -d episteme
 
+# Backup: pg_dump -Fc --compress=zstd into BACKUP_DIR (host bind-mount, default
+# ./backups), pruned past backup_retention_days. Worker-owned; no scheduled cron but is a one liner to add.
+# Restore a dump with pg_restore.
+curl -X POST http://127.0.0.1:8200/api/jobs/defer/backup_database
+
 # Dev (venv at .venv, Windows)
 .venv/Scripts/python -m pytest -q                        # all tests
 .venv/Scripts/python -m pytest tests/test_llm.py -k retry  # single test

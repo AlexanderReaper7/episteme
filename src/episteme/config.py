@@ -80,6 +80,20 @@ class Settings(BaseSettings):
     # picked "skip" on rich material — so this is a code-level content-volume check.
     min_write_chars: int = 1200
 
+    # --- Backups (the worker owns backups; it already runs procrastinate, so no
+    # separate service). Custom format (-Fc) is restore-selective via pg_restore
+    # and, on PG18/PGDG pg_dump, compresses with zstd instead of the default gzip
+    # (--compress=zstd:<level>) — the WAL is already zstd-compressed
+    # (wal_compression=zstd in compose), this brings the base dumps in line. Dumps
+    # land in backup_dir (bind-mounted to the host in compose) and are pruned past
+    # the retention window. Manual-only in alpha: POST /api/jobs/defer/backup_database
+    # (no periodic cron registered yet — see worker/backup.py).
+    backup_enabled: bool = True
+    backup_cron: str = "0 5 * * *"  # unused until a scheduled task is wired up
+    backup_dir: str = "/backups"
+    backup_retention_days: int = 14  # <=0 keeps every dump
+    backup_zstd_level: int = 19  # pg_dump --compress=zstd:<level> (1..22)
+
     # --- QA stage (main model reviews the rendered post; spec §7 stage 5) ---
     # Requires vision on the main model (--mmproj in models-preset.ini) and headless
     # Chromium in the worker image. Failures are per-post and non-fatal.

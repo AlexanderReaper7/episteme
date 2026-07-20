@@ -470,7 +470,10 @@ No media volume — media is hotlinked, and chart/diagram specs live in the DB.
   maintain.
 - Host-side idle agent installed separately (tiny Python script + Task Scheduler).
 - Config via `.env` + a `config.yaml` (sources, model roles, schedules, feed knobs).
-- Backups: nightly `pg_dump` + media volume copy to a location of your choice.
+- Backups: the worker runs `pg_dump -Fc --compress=zstd` into `BACKUP_DIR`
+  (bind-mounted to a host location of your choice), pruned past a retention window.
+  Manual-only right now (`POST /api/jobs/defer/backup_database`); a periodic cron is
+  a one-liner to add later. Media is hotlinked, so there's no media volume to copy.
 
 ---
 

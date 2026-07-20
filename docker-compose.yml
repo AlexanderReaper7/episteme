@@ -53,6 +53,11 @@ services:
     # (Playwright in the QA stage); the python worker as PID 1 won't.
     init: true
     environment: *env
+    # Nightly pg_dump (--compress=zstd) lands here; bind-mounted to the host so the
+    # dumps survive the pgdata volume and can be copied offsite. Point BACKUP_DIR at
+    # the location of your choice.
+    volumes:
+      - ${BACKUP_DIR:-./backups}:/backups
     depends_on:
       migrate:
         condition: service_completed_successfully

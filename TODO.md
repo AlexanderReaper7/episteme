@@ -11,4 +11,3 @@ This is a list of things to maybe do, in no particular order. And serves as a pl
 
 - remove time from when the pipeline runs, since the pipeline runs when there is downtime, and downtime is not predictable.
 - automatic database migrations
-- 
