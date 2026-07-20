@@ -30,7 +30,10 @@ dependencies = [
     "starlette-compress>=1.8",
 ]
 
-[project.optional-dependencies]
+[dependency-groups]
+# Dev tooling lives in a uv dependency group (not project.optional-dependencies):
+# `uv sync` installs it by default for local work, and the Dockerfile excludes it
+# with `uv sync --no-dev`.
 dev = [
     "pytest>=9",
     "pytest-asyncio>=1.4",

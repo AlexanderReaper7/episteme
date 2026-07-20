@@ -191,20 +191,22 @@ docker compose exec -T db psql -U episteme -d episteme
 
 # Schema migrations (Alembic). `up` applies pending ones automatically, but ONLY
 # after the UNREVIEWED marker has been deleted by hand — see the review rule below.
-.venv/Scripts/python -m episteme.migrations status
-.venv/Scripts/python -m episteme.migrations new -m "add posts.foo"   # DRAFT
-.venv/Scripts/python -m episteme.migrations upgrade
+uv run python -m episteme.migrations status
+uv run python -m episteme.migrations new -m "add posts.foo"   # DRAFT
+uv run python -m episteme.migrations upgrade
 
 # Backup: pg_dump -Fc --compress=zstd into BACKUP_DIR (host bind-mount, default
 # ./backups), pruned past backup_retention_days. Worker-owned; no scheduled cron but is a one liner to add.
 # Restore a dump with pg_restore.
 curl -X POST http://127.0.0.1:8200/api/jobs/defer/backup_database
 
-# Dev (venv at .venv, Windows)
-.venv/Scripts/python -m pytest -q                        # all tests
-.venv/Scripts/python -m pytest tests/test_llm.py -k retry  # single test
-.venv/Scripts/python -m ruff check src tests
-.venv/Scripts/python -m pip install -e ".[dev]"
+# Dev (uv-managed venv at .venv). `uv sync` creates/updates it from uv.lock;
+# `uv run` auto-syncs before running, so it's the one command you need.
+uv sync                                     # create/update .venv from the lockfile
+uv run pytest -q                            # all tests
+uv run pytest tests/test_llm.py -k retry    # single test
+uv run ruff check src tests
+uv lock                                     # re-resolve after editing dependencies
 ```
 
 ## Architecture (the parts that span multiple files)
@@ -333,15 +335,15 @@ Reviewing means checking, at minimum:
    under a new NOT NULL column, `CREATE EXTENSION` (the baseline needed one
    added by hand), anything in a JSONB payload.
 
-Workflow (all of it is `python -m episteme.migrations <cmd>`):
+Workflow (all of it is `uv run python -m episteme.migrations <cmd>`):
 
 ```sh
-python -m episteme.migrations status              # what exists, what is unreviewed
-python -m episteme.migrations new -m "add x"      # autogenerate a DRAFT from models.py
-python -m episteme.migrations new --empty -m "backfill y"   # data migration, no diff
-python -m episteme.migrations check <rev>         # re-run the hazard analysis
+uv run python -m episteme.migrations status              # what exists, what is unreviewed
+uv run python -m episteme.migrations new -m "add x"      # autogenerate a DRAFT from models.py
+uv run python -m episteme.migrations new --empty -m "backfill y"   # data migration, no diff
+uv run python -m episteme.migrations check <rev>         # re-run the hazard analysis
 # ... read the file, correct it, delete its UNREVIEWED line ...
-python -m episteme.migrations upgrade             # or just `docker compose up`
+uv run python -m episteme.migrations upgrade             # or just `docker compose up`
 ```
 
 Generating a revision requires a reachable database (autogenerate diffs against

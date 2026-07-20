@@ -59,11 +59,13 @@ Adding a source type: implement the `SourceAdapter` protocol in a new module und
 
 ## Development
 
+Dependencies are managed with [uv](https://docs.astral.sh/uv/); `uv.lock` is
+committed for reproducible installs.
+
 ```sh
-python -m venv .venv && .venv/Scripts/activate   # or source .venv/bin/activate
-pip install -e .[dev]
-pytest
-ruff check .
+uv sync              # create .venv from uv.lock (dev tooling included)
+uv run pytest
+uv run ruff check .
 ```
 
 Run the web app locally against the compose database:
