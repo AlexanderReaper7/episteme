@@ -12,15 +12,13 @@ services:
     # host already has something on 5432.
     ports:
       - "127.0.0.1:5433:5432"
-    # PG18 images moved the volume mount from /var/lib/postgresql/data to
-    # /var/lib/postgresql (PGDATA lives at <mount>/18/docker).
     volumes:
       - pgdata:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U episteme -d episteme"]
       interval: 5s
       timeout: 3s
-      retries: 20
+      retries: 12
     restart: unless-stopped
 
   # One-shot: brings the schema to head (Alembic), applies the procrastinate
@@ -52,6 +50,15 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+    healthcheck:
+      # /health runs a `SELECT 1`, so this covers uvicorn being up AND the DB
+      # reachable. curl is already in the image (PGDG key fetch).
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8200/health || exit 1"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_interval: 20s
+      start_period: 3s
     restart: unless-stopped
 
   worker:
@@ -69,6 +76,16 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+    healthcheck:
+      # The worker has no HTTP port; procrastinate's built-in healthchecks command
+      # verifies it can reach the Postgres-backed job queue (the worker's one hard
+      # dependency) and that the schema is applied. Exits non-zero on failure.
+      test: ["CMD-SHELL", "procrastinate --app=episteme.worker.app.app healthchecks || exit 1"]
+      interval: 300s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+      start_interval: 30s
     restart: unless-stopped
 
 volumes:

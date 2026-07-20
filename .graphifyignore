@@ -1,0 +1,11 @@
+# graphify knowledge-graph build excludes.
+# Vendored third-party libraries (minified bundles: vega, vega-lite, vega-embed,
+# mermaid, htmx). They are not project code — parsing their minified sources adds
+# ~2,500 single-letter-function nodes that swamp the graph and bury the actual
+# codebase in the report's god-nodes / suggested-questions. Excluded from every
+# graphify run (detection auto-loads this file).
+src/episteme/web/static/vendor/
+
+# Any minified bundle, anywhere (e.g. static/htmx.min.js). Minified == vendored;
+# authored scripts like static/post.js are not matched.
+*.min.js

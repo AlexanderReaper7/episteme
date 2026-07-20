@@ -19,4 +19,5 @@ This is a list of things to maybe do, in no particular order. And serves as a pl
 - benchmarking
 - docker test? testing db?
 - bind mount ./src for automatic reload of website code changes.
+- prefix caching for system prompts?
 - 
