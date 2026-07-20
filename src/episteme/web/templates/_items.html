@@ -25,7 +25,7 @@
   </div>
 </article>
 {% else %}
-{% if page == 1 %}
+{% if first_page %}
 <p class="empty-state">
   No items yet — the worker fetches feeds on its schedule. Trigger a run now with:
   <code>docker compose exec worker procrastinate --app=episteme.worker.app.app defer episteme.ingest_all '{}'</code>
@@ -33,9 +33,9 @@
 {% endif %}
 {% endfor %}
 
-{% if has_more %}
+{% if has_more and next_cursor %}
 <div class="load-sentinel"
-     hx-get="/partials/items?page={{ page + 1 }}"
+     hx-get="/partials/items?cursor_at={{ next_cursor.at | urlencode }}&cursor_id={{ next_cursor.id }}"
      hx-trigger="revealed"
      hx-swap="outerHTML">
   <span class="loading">loading…</span>

@@ -9,5 +9,14 @@ This is a list of things to maybe do, in no particular order. And serves as a pl
 
 ---
 
-- remove time from when the pipeline runs, since the pipeline runs when there is downtime, and downtime is not predictable.
-- automatic database migrations
+- remove time from when the pipeline runs, since the pipeline runs when there is downtime, and downtime is not 100% predictable.
+- defense-in-depth review.
+- styling, branding.
+- post narration with AI TTS (s2.1-pro).
+- pre TTS LLM pass for emotional tagging, pronunciation.
+- improve quizes and add more questions.
+- use uv
+- benchmarking
+- docker test? testing db?
+- bind mount ./src for automatic reload of website code changes.
+- 

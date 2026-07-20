@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <title>{% block title %}Episteme{% endblock %}</title>
+  <title>Episteme{% block title %}{% endblock %}</title>
   <link rel="stylesheet" href="/static/style.css">
   <!-- Vendored htmx preferred; falls back to CDN until static/htmx.min.js exists.
        Vendor it with:
@@ -14,8 +14,7 @@
 </head>
 <body>
   <header class="site-header">
-    <h1>Episteme</h1>
-    <p class="tagline">your personal science feed</p>
+    <h1><a href="/">Episteme</a></h1>
     <nav class="site-nav">
       <a href="/">feed</a>
       <a href="/admin">admin</a>

@@ -34,16 +34,5 @@
   </div>
 </article>
 {% else %}
-{% if page == 1 %}
 <p class="empty-state">No story clusters yet — the pipeline will fill this stream on its next run.</p>
-{% endif %}
 {% endfor %}
-
-{% if has_more %}
-<div class="load-sentinel"
-     hx-get="/partials/stream?page={{ page + 1 }}"
-     hx-trigger="revealed"
-     hx-swap="outerHTML">
-  <span class="loading">loading…</span>
-</div>
-{% endif %}

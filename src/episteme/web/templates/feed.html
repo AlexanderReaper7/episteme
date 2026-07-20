@@ -1,49 +1,22 @@
 {% extends "base.html" %}
 
+{% block title %} • Feed{% endblock %}
+
 {% block content %}
-{% if posts %}
-<section class="feed" id="posts">
-  {% for post in posts %}
-  {% set banner = post.story | story_banner %}
-  <article class="card article-card">
-    {% if banner %}
-    <a class="card-banner" href="/post/{{ post.id }}">
-      <img src="{{ banner }}" alt="" loading="lazy"
-           onerror="this.closest('.card-banner').remove()">
-    </a>
-    {% endif %}
-    <div class="card-body">
-      <div class="card-meta">
-        <span class="byline">Episteme</span>
-        <span>{{ post.reading_time_minutes }} min · {{ post.difficulty }}</span>
-        <time>{{ post.generated_at | dt }}</time>
-      </div>
-      <h2 class="card-title"><a href="/post/{{ post.id }}">{{ post.title }}</a></h2>
-      <p class="card-snippet">{{ post.summary | truncate(300) }}</p>
-      <div class="topic-chips">
-        {% for topic in post.topics %}<span class="chip">{{ topic }}</span>{% endfor %}
-      </div>
-    </div>
-  </article>
-  {% endfor %}
-</section>
-
-<div class="divider"><span>you're caught up — below is the raw stream</span></div>
-{% endif %}
-
 {% if fallback %}
 <p class="note">The pipeline hasn't produced posts or story clusters yet — showing raw
 source items. Trigger a run with:
 <code>docker compose exec worker procrastinate --app=episteme.worker.app.app defer episteme.run_pipeline '{}'</code></p>
 <section id="feed" class="feed">
-  {% with items = fallback["items"], page = fallback.page, has_more = fallback.has_more %}
+  {% with items = fallback["items"], has_more = fallback.has_more, next_cursor = fallback.next_cursor, first_page = fallback.first_page %}
   {% include "_items.html" %}
   {% endwith %}
 </section>
 {% else %}
-<section id="stream" class="feed stream">
-  {% with cards = stream.cards, page = stream.page, has_more = stream.has_more %}
-  {% include "_stories.html" %}
+{# One unified vertical stream: features and aggregate cluster cards interleaved. #}
+<section id="feed" class="feed">
+  {% with posts = feed.posts, has_more = feed.has_more, next_cursor = feed.next_cursor, first_page = feed.first_page %}
+  {% include "_feed.html" %}
   {% endwith %}
 </section>
 {% endif %}

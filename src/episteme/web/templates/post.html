@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}{{ post.title or "Story cluster" }} — Episteme{% endblock %}
+{% block title %} • {{ post.title or "Story cluster" }}{% endblock %}
 
 {% block content %}
 {% if post.kind == "aggregate" %}

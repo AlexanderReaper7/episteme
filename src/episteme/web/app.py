@@ -1,8 +1,11 @@
-from fastapi import FastAPI, HTTPException, Query, Request
+from datetime import datetime
+
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import select, text
+from sqlalchemy import and_, case, func, or_, select, text
 from sqlalchemy.orm import joinedload, selectinload
+from starlette.types import Scope
 from starlette_compress import CompressMiddleware
 
 from ..config import settings
@@ -14,87 +17,152 @@ from .api import api_post_llm_calls, api_story
 from .api import router as api_router
 from .templating import BASE_DIR, templates
 
+
+class RevalidateStaticFiles(StaticFiles):
+    """Serve our own static assets with `Cache-Control: no-cache`.
+
+    `no-cache` does NOT mean "don't store" — it means "store, but revalidate
+    with the server before every reuse". StaticFiles already sends ETag +
+    Last-Modified and answers conditional GETs with a cheap 304, so the browser
+    stays one round-trip from fresh and never serves stale CSS/JS after an edit.
+    This header rides only on OUR
+    responses; externally-hosted (CDN) assets carry their own headers and keep
+    caching as their servers dictate.
+    """
+
+    async def get_response(self, path: str, scope: Scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 app = FastAPI(title="Episteme")
 # Negotiates zstd > brotli > gzip > identity per request's Accept-Encoding;
 # htmx partials and JSON API responses are the main beneficiaries.
 app.add_middleware(CompressMiddleware)
-app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
+app.mount("/static", RevalidateStaticFiles(directory=BASE_DIR / "static"), name="static")
 app.include_router(api_router)
 app.include_router(admin_router)
 
 
-async def _stream_page(session, page: int) -> dict:
-    """Aggregation stream: Google-News-style cluster cards (spec §8, tier 2).
-    Cards are identity-only aggregate posts; their content renders from the
-    story's items at read time."""
+def _feed_sort_at(post: Post) -> datetime:
+    """Python mirror of the SQL `feed_at` expression, so a rendered row can
+    produce the keyset cursor for the next page without re-querying."""
+    if post.kind == "aggregate":
+        return post.story.last_item_at or post.generated_at
+    return post.generated_at
+
+
+async def _feed_page(session, cursor: tuple[datetime, int] | None = None) -> dict:
+    """Unified vertical stream (spec §8): one recency-ordered column of every
+    published post — generated `feature` articles and identity-only `aggregate`
+    cluster cards interleaved as equal units. Features sort by when they were
+    written; aggregates by their story's latest item (a cluster keeps surfacing
+    as new sources join it), falling back to mint time if the story has none.
+
+    Paged by keyset, not OFFSET: the stream grows at the head (features get
+    written, aggregates re-sort up as sources join), so an offset window would
+    re-serve rows that shifted down between the initial render and a `revealed`
+    fetch — visible duplicates. The cursor is the last rendered row's
+    `(feed_at, id)`; we fetch strictly below it. Because `feed_at` only ever
+    increases for a given row, a row can never cross back below the cursor, so
+    keyset here never duplicates (an aggregate that jumps to the head after
+    being shown simply isn't re-fetched)."""
     size = settings.feed_page_size
-    cards = (
-        (
-            await session.execute(
-                select(Post)
-                .options(
-                    selectinload(Post.story)
-                    .selectinload(Story.items)
-                    .joinedload(SourceItem.source)
+    feed_at = case(
+        (Post.kind == "aggregate", func.coalesce(Story.last_item_at, Post.generated_at)),
+        else_=Post.generated_at,
+    )
+    stmt = (
+        select(Post)
+        .options(
+            selectinload(Post.story)
+            .selectinload(Story.items)
+            .joinedload(SourceItem.source)
+        )
+        .join(Post.story)
+        .where(Post.status == "published")
+        .order_by(feed_at.desc(), Post.id.desc())
+        .limit(size + 1)
+    )
+    if cursor is not None:
+        cur_at, cur_id = cursor
+        stmt = stmt.where(
+            or_(feed_at < cur_at, and_(feed_at == cur_at, Post.id < cur_id))
+        )
+    posts = (await session.execute(stmt)).scalars().all()
+    has_more = len(posts) > size
+    posts = posts[:size]
+    next_cursor = None
+    if has_more and posts:
+        last = posts[-1]
+        next_cursor = {"at": _feed_sort_at(last).isoformat(), "id": last.id}
+    return {
+        "posts": posts,
+        "has_more": has_more,
+        "next_cursor": next_cursor,
+        "first_page": cursor is None,
+    }
+
+
+async def _items_page(session, cursor: tuple[datetime | None, int] | None = None) -> dict:
+    """Raw source items — pre-LLM fallback stream (Phase 1 behavior). Keyset-paged
+    for the same reason as `_feed_page` (items are ingested continuously at the
+    head). Ordering is `published_at DESC NULLS LAST, id DESC`, so the cursor
+    carries a nullable timestamp: a null `at` means the cursor is already inside
+    the trailing null-`published_at` region, ordered by id alone."""
+    size = settings.feed_page_size
+    stmt = (
+        select(SourceItem)
+        .options(joinedload(SourceItem.source))
+        .order_by(SourceItem.published_at.desc().nulls_last(), SourceItem.id.desc())
+        .limit(size + 1)
+    )
+    if cursor is not None:
+        cur_at, cur_id = cursor
+        if cur_at is not None:
+            stmt = stmt.where(
+                or_(
+                    SourceItem.published_at < cur_at,
+                    and_(SourceItem.published_at == cur_at, SourceItem.id < cur_id),
+                    SourceItem.published_at.is_(None),
                 )
-                .join(Post.story)
-                .where(Post.kind == "aggregate", Post.status == "published")
-                .order_by(Story.last_item_at.desc().nulls_last(), Post.id.desc())
-                .offset((page - 1) * size)
-                .limit(size + 1)
             )
-        )
-        .scalars()
-        .all()
-    )
-    return {"cards": cards[:size], "page": page, "has_more": len(cards) > size}
-
-
-async def _items_page(session, page: int) -> dict:
-    """Raw source items — pre-LLM fallback stream (Phase 1 behavior)."""
-    size = settings.feed_page_size
-    items = (
-        (
-            await session.execute(
-                select(SourceItem)
-                .options(joinedload(SourceItem.source))
-                .order_by(SourceItem.published_at.desc().nulls_last(), SourceItem.id.desc())
-                .offset((page - 1) * size)
-                .limit(size + 1)
+        else:
+            stmt = stmt.where(
+                and_(SourceItem.published_at.is_(None), SourceItem.id < cur_id)
             )
-        )
-        .scalars()
-        .all()
-    )
-    return {"items": items[:size], "page": page, "has_more": len(items) > size}
+    items = (await session.execute(stmt)).scalars().all()
+    has_more = len(items) > size
+    items = items[:size]
+    next_cursor = None
+    if has_more and items:
+        last = items[-1]
+        next_cursor = {
+            "at": last.published_at.isoformat() if last.published_at else "",
+            "id": last.id,
+        }
+    return {
+        "items": items,
+        "has_more": has_more,
+        "next_cursor": next_cursor,
+        "first_page": cursor is None,
+    }
 
 
 @app.get("/", response_class=HTMLResponse)
 async def feed(request: Request):
     async with SessionLocal() as session:
-        posts = (
-            (
-                await session.execute(
-                    select(Post)
-                    .options(selectinload(Post.story).selectinload(Story.items))
-                    .where(Post.status == "published", Post.kind != "aggregate")
-                    .order_by(Post.generated_at.desc())
-                    .limit(50)
-                )
-            )
-            .scalars()
-            .all()
-        )
-        stream = await _stream_page(session, page=1)
+        page = await _feed_page(session)
         # Before the pipeline has produced anything, fall back to raw items so
         # the feed is useful from day one.
         fallback = None
-        if not posts and not stream["cards"]:
-            fallback = await _items_page(session, page=1)
+        if not page["posts"]:
+            fallback = await _items_page(session)
     return templates.TemplateResponse(
         request,
         "feed.html",
-        {"posts": posts, "stream": stream, "fallback": fallback},
+        {"feed": page, "fallback": fallback},
     )
 
 
@@ -147,17 +215,35 @@ async def post_provenance(request: Request, post_id: int):
     )
 
 
-@app.get("/partials/stream", response_class=HTMLResponse)
-async def stream_partial(request: Request, page: int = Query(1, ge=1)):
+@app.get("/partials/feed", response_class=HTMLResponse)
+async def feed_partial(
+    request: Request,
+    cursor_at: str | None = None,
+    cursor_id: int | None = None,
+):
+    # feed_at is never null (generated_at is NOT NULL), so a feed cursor always
+    # carries a timestamp; ignore a malformed cursor and serve the head.
+    cursor = None
+    if cursor_at and cursor_id is not None:
+        cursor = (datetime.fromisoformat(cursor_at), cursor_id)
     async with SessionLocal() as session:
-        context = await _stream_page(session, page=page)
-    return templates.TemplateResponse(request, "_stories.html", context)
+        context = await _feed_page(session, cursor=cursor)
+    return templates.TemplateResponse(request, "_feed.html", context)
 
 
 @app.get("/partials/items", response_class=HTMLResponse)
-async def items_partial(request: Request, page: int = Query(1, ge=1)):
+async def items_partial(
+    request: Request,
+    cursor_at: str | None = None,
+    cursor_id: int | None = None,
+):
+    # An empty `cursor_at` with an id is the null-`published_at` region cursor.
+    cursor = None
+    if cursor_id is not None:
+        at = datetime.fromisoformat(cursor_at) if cursor_at else None
+        cursor = (at, cursor_id)
     async with SessionLocal() as session:
-        context = await _items_page(session, page=page)
+        context = await _items_page(session, cursor=cursor)
     return templates.TemplateResponse(request, "_items.html", context)
 
 

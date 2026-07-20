@@ -1,4 +1,4 @@
-/* Episteme — always dark, true-black OLED theme, full-width grid. */
+/* Episteme — always dark, true-black OLED theme, full-width. */
 
 :root {
   color-scheme: dark;
@@ -9,6 +9,12 @@
   --muted: #8f95a3;
   --accent: #7aa2f7;
   --border: #1e1f26;
+  /* Feed column width. The feed cards are short (title + snippet + image), so
+     they can run wider than the long-form article body (`.article`, ~46rem)
+     without hurting readability. Tune this one knob to make the stream feel
+     roomier or tighter — on a 4K screen at browser zoom it is the difference
+     between a narrow ribbon and a column with presence. */
+  --feed-width: 58rem;
 }
 
 * { box-sizing: border-box; }
@@ -22,11 +28,16 @@ body {
 }
 
 .site-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
   display: flex;
   align-items: baseline;
   gap: 1rem;
-  padding: 1.25rem 2rem 0.75rem;
+  padding: 1rem 2rem 0.85rem;
   border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  backdrop-filter: blur(10px);
 }
 
 .site-header h1 {
@@ -35,35 +46,68 @@ body {
   letter-spacing: 0.02em;
 }
 
-.tagline {
-  margin: 0;
-  color: var(--muted);
-  font-size: 0.9rem;
+/* Neutral wordmark placeholder until the real logo/visual language lands. */
+.site-header h1 a {
+  color: var(--text);
+  text-decoration: none;
 }
+
+.site-header h1 a:hover { color: var(--accent); }
 
 main {
-  padding: 1.5rem 2rem 3rem;
+  padding: 1.5rem 1rem 4rem;
 }
 
-/* Full-width responsive grid: ~4-6 columns on a 4K screen. */
+/* One vertical column, one post at a time (spec §8). Centered so the reading
+   measure stays comfortable even on a 4K screen. */
 .feed {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(24rem, 1fr));
-  gap: 1.25rem;
-  align-items: start;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  width: 100%;
+  max-width: var(--feed-width);
+  margin: 0 auto;
 }
 
 .card {
+  position: relative; /* anchor for the stretched .card-link */
   background: var(--card-bg);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 14px;
   overflow: hidden;
-  transition: background 0.15s ease, border-color 0.15s ease;
+  transition: background 0.15s ease, border-color 0.15s ease,
+    transform 0.15s ease, box-shadow 0.15s ease;
 }
 
 .card:hover {
   background: var(--card-hover);
   border-color: #2c2e3a;
+  transform: translateY(-2px);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45);
+}
+
+.card:focus-within {
+  border-color: var(--accent);
+}
+
+/* Generated articles read as the "hero" tier even inside the unified stream. */
+.card--feature {
+  border-color: color-mix(in srgb, var(--accent) 22%, var(--border));
+}
+
+/* The ENTIRE card is one link: this anchor is stretched over the whole card, so
+   a click anywhere navigates — never the image and title as separate links.
+   Genuine inner links (provenance) lift above it with position + z-index. */
+.card-link {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+}
+
+.card-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 .card-banner {
@@ -86,24 +130,62 @@ main {
 
 .card-meta {
   display: flex;
-  gap: 0.75rem;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
   font-size: 0.78rem;
   color: var(--muted);
 }
 
+/* Kind badge — keeps the "written article vs aggregated cluster" signal that the
+   old two-tier divider used to carry, now that both live in one stream. */
+.card-kind {
+  font-size: 0.66rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  padding: 0.12rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+}
+
+.card-kind--feature {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.card-kind--aggregate { color: var(--muted); }
+
+/* Provenance is a real link inside a fully-linked card, so it must sit above the
+   stretched .card-link (which otherwise swallows the click). */
 .card-provenance {
+  position: relative;
+  z-index: 2;
   margin-left: auto;
   color: var(--muted);
+  text-decoration: none;
 }
+
+.card-provenance:hover { color: var(--accent); }
 
 .source-name { font-weight: 600; }
 
 .card-title {
-  margin: 0.35rem 0 0.5rem;
-  font-size: 1.05rem;
-  line-height: 1.35;
+  margin: 0.5rem 0 0.55rem;
+  font-size: 1.3rem;
+  line-height: 1.3;
+  color: var(--text);
+  transition: color 0.15s ease;
 }
 
+.card--feature .card-title {
+  font-size: 1.45rem;
+  font-weight: 700;
+}
+
+.card:hover .card-title { color: var(--accent); }
+
+/* Detail-page cards (_stories.html) still use an inner title link. */
 .card-title a {
   color: var(--text);
   text-decoration: none;
@@ -113,7 +195,7 @@ main {
 
 .card-snippet {
   margin: 0;
-  font-size: 0.9rem;
+  font-size: 0.95rem;
   color: var(--muted);
 }
 
