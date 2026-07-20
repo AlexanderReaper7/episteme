@@ -23,13 +23,21 @@ services:
       retries: 20
     restart: unless-stopped
 
-  # One-shot: creates the pgvector extension, tables, seed sources, and the
-  # procrastinate job-queue schema. Idempotent; re-runs on every `up`.
+  # One-shot: brings the schema to head (Alembic), applies the procrastinate
+  # job-queue schema, seeds sources. Idempotent; re-runs on every `up`.
+  #
+  # It refuses to apply any revision still marked UNREVIEWED, and dumps the
+  # database before applying anything to a non-empty one — so this failing is a
+  # normal, informative outcome, not a broken stack. Read its logs.
   migrate:
     build: .
     command: python -m episteme.bootstrap
     environment: &env
       DATABASE_URL: postgresql://episteme:${POSTGRES_PASSWORD:-episteme}@db:5432/episteme
+    # Same bind-mount as the worker: pre-migration dumps land beside the regular
+    # backups, on the host, outside the pgdata volume.
+    volumes:
+      - ${BACKUP_DIR:-./backups}:/backups
     depends_on:
       db:
         condition: service_healthy

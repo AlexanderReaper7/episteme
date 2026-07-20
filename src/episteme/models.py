@@ -10,8 +10,9 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 # Dimension of the `embed` model role output. 1024 = native dim of
 # Octen-Embedding-0.6B; larger models (4B = 2560) are truncated + re-normalized
-# by the gateway (Matryoshka). Changing this requires a vector-column migration
-# (see bootstrap.ADDITIVE_MIGRATIONS) and re-embedding everything.
+# by the gateway (Matryoshka). Changing this requires an Alembic revision that
+# rewrites both vector columns, and re-embedding everything — old-dimension
+# vectors cannot be cast, so the migration has to null them deliberately.
 EMBEDDING_DIM = 1024
 
 
