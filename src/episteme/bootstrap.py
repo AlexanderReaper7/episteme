@@ -25,7 +25,7 @@ from sqlalchemy import text
 from .config import settings
 from .db import SessionLocal, engine
 from .migrations import alembic_config
-from .seeds import seed_sources
+from .seeds import seed_sources, seed_voices
 
 log = logging.getLogger("episteme.bootstrap")
 
@@ -45,8 +45,11 @@ async def main() -> None:
 
     async with SessionLocal() as session:
         added = await seed_sources(session)
+        added_voices = await seed_voices(session)
     if added:
         log.info("Seeded %d sources", added)
+    if added_voices:
+        log.info("Seeded %d voices", added_voices)
     log.info("Bootstrap complete")
 
 

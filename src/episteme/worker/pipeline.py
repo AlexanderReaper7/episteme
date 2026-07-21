@@ -11,6 +11,7 @@ import re
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,7 +23,9 @@ from ..llm.agent import run_writer_loop
 from ..llm.observe import llm_context
 from ..llm.prompts import SUMMARIZE_SYSTEM, TRIAGE_SYSTEM, WRITER_AGENT_SYSTEM
 from ..llm.schemas import SourceSummary, TriageResult
-from ..models import LlmCall, PipelineRun, Post, SourceItem, Story
+from ..models import LlmCall, PipelineRun, Post, PostAudio, SourceItem, Story
+from ..tts import build_script, default_voice_id, get_voice, script_hash, synthesize_to_file
+from ..tts.store import upsert_post_audio as _upsert_post_audio
 from .app import app
 from .control import pause_requested
 from .qa import qa_posts
@@ -567,14 +570,157 @@ async def _prune_expired(session: AsyncSession) -> None:
             ),
         )
     )
-    await session.execute(
-        delete(Post).where(
-            Post.status == "archived",
-            Post.archived_at < cutoff,
-            Post.pinned.is_(False),
-        )
+    pruned_posts = and_(
+        Post.status == "archived",
+        Post.archived_at < cutoff,
+        Post.pinned.is_(False),
     )
+    # Unlink the narration files first: the DB rows cascade away with the posts,
+    # but the MP3s live on disk and would otherwise be orphaned.
+    orphan_audio = (
+        await session.execute(
+            select(PostAudio.path)
+            .join(Post, Post.id == PostAudio.post_id)
+            .where(pruned_posts, PostAudio.path.is_not(None))
+        )
+    ).scalars().all()
+    audio_root = Path(settings.audio_dir)
+    for rel_path in orphan_audio:
+        try:
+            (audio_root / rel_path).unlink(missing_ok=True)
+        except OSError as exc:
+            log.warning("Could not prune audio file %s: %s", rel_path, exc)
+    await session.execute(delete(Post).where(pruned_posts))
     await session.commit()
+
+
+async def narrate_posts(
+    session: AsyncSession,
+    limit: int | None = None,
+    post_id: int | None = None,
+    voice: str | None = None,
+) -> int:
+    """Synthesize TTS narration for published feature posts in one voice and store
+    the MP3 under settings.audio_dir. Data-driven like the other stages: a
+    (post, voice) is (re)narrated when it has no `ready` audio or when its script
+    hash has drifted (e.g. a QA revision changed the sections). Returns the number
+    synthesized this pass.
+
+    `voice` is a catalog id (tts.voices, backed by the `voices` table); None
+    resolves to the configured/catalog default. Uses the external Fish Audio API
+    — no local LLM — so it carries no VRAM cost and the orchestrator can run it
+    after qa without a model swap. An explicit `post_id` bypasses `tts_enabled`,
+    since it was asked for. Per-(post,voice) failures are non-fatal and recorded
+    as a `failed` audio row."""
+    if post_id is None and not settings.tts_enabled:
+        return 0
+    if not settings.fish_api_key:
+        log.warning("narrate stage skipped: fish_api_key is not configured")
+        return 0
+
+    voice_id = voice or await default_voice_id(session, settings.tts_default_voice)
+    voice_obj = await get_voice(session, voice_id)
+    if voice_obj is None:
+        log.warning("narrate stage skipped: no such voice %r (empty catalog?)", voice_id)
+        return 0
+    if post_id is not None:
+        post_ids = [post_id]
+    else:
+        post_ids = list(
+            (
+                await session.execute(
+                    select(Post.id)
+                    .where(Post.kind == "feature", Post.status == "published")
+                    .order_by(Post.id.desc())
+                )
+            ).scalars()
+        )
+    if not post_ids:
+        return 0
+
+    audio_root = Path(settings.audio_dir)
+    audio_root.mkdir(parents=True, exist_ok=True)
+    fmt = settings.tts_audio_format
+    narrated = 0
+    for pid in post_ids:
+        if limit is not None and narrated >= limit:
+            break
+        if await pause_requested(session):
+            log.info("narrate stage pausing after %d posts", narrated)
+            break
+        post = await session.get(Post, pid)
+        if post is None or post.kind != "feature":
+            continue
+        script = build_script(post)
+        if not script.strip():
+            continue  # nothing audible (e.g. all quiz/media sections)
+        digest = script_hash(script)
+        existing = (
+            await session.execute(
+                select(PostAudio).where(PostAudio.post_id == pid, PostAudio.voice == voice_id)
+            )
+        ).scalar_one_or_none()
+        if (
+            existing
+            and existing.status == "ready"
+            and existing.script_hash == digest
+            and existing.audio_format == fmt
+            and (existing.params or {}) == (voice_obj.params or {})
+        ):
+            continue  # this voice is already up to date for this script + params
+
+        filename = f"{pid}-{voice_id}.{fmt}"
+        try:
+            result = await synthesize_to_file(
+                text=script,
+                dest=audio_root / filename,
+                api_key=settings.fish_api_key,
+                model=settings.tts_model,
+                ref_id=voice_obj.ref_id,
+                params=voice_obj.params,
+                audio_format=fmt,
+                opus_bitrate=settings.tts_opus_bitrate,
+                mp3_bitrate=settings.tts_mp3_bitrate,
+                latency=settings.tts_latency,
+                base_url=settings.tts_fish_base_url,
+            )
+            await _upsert_post_audio(
+                session,
+                pid,
+                voice_id,
+                status="ready",
+                path=filename,
+                model=settings.tts_model,
+                provider=voice_obj.provider,
+                params=voice_obj.params,
+                audio_format=fmt,
+                char_count=len(script),
+                script_hash=digest,
+                error=None,
+            )
+            await session.commit()
+            narrated += 1
+            log.info(
+                "Narrated post %d voice %s (%d chars, %d bytes)",
+                pid, voice_id, len(script), result.bytes_written,
+            )
+        except Exception as exc:  # per-(post,voice); the next one still gets narrated
+            await session.rollback()
+            log.warning("Narration failed for post %d voice %s: %s", pid, voice_id, exc)
+            await _upsert_post_audio(
+                session,
+                pid,
+                voice_id,
+                status="failed",
+                provider=voice_obj.provider,
+                params=voice_obj.params,
+                audio_format=fmt,
+                char_count=len(script),
+                script_hash=digest,
+                error=str(exc),
+            )
+            await session.commit()
+    return narrated
 
 
 @app.task(name="episteme.run_pipeline")
@@ -615,6 +761,7 @@ async def run_pipeline() -> None:
                 ("triage", triage_stories),
                 ("write", write_posts),
                 ("qa", qa_posts),  # stays on `main`, so no model swap after write
+                ("narrate", narrate_posts),  # external Fish API; self-skips if tts_enabled off
             ):
                 try:
                     count = await stage(session)
@@ -658,6 +805,7 @@ STAGE_RUNNERS = {
     "triage": triage_stories,
     "write": write_posts,
     "qa": qa_posts,
+    "narrate": narrate_posts,
 }
 STAGE_PARAMS: dict[str, frozenset[str]] = {
     "embed": frozenset({"limit"}),
@@ -665,6 +813,7 @@ STAGE_PARAMS: dict[str, frozenset[str]] = {
     "triage": frozenset({"limit", "story_id"}),
     "write": frozenset({"limit", "story_id"}),
     "qa": frozenset({"limit", "post_id"}),
+    "narrate": frozenset({"limit", "post_id"}),
 }
 
 
@@ -674,6 +823,7 @@ async def pipeline_stage(
     limit: int | None = None,
     story_id: int | None = None,
     post_id: int | None = None,
+    voice: str | None = None,
 ) -> None:
     """One pipeline stage on its own, with optional caps/targeting — the testing
     lever behind POST /api/jobs/defer/{stage}. Records a PipelineRun row like the
@@ -684,12 +834,17 @@ async def pipeline_stage(
         for key, value in {"limit": limit, "story_id": story_id, "post_id": post_id}.items()
         if value is not None and key in STAGE_PARAMS[stage]
     }
+    # `voice` is a string param unique to narrate; it's threaded directly rather
+    # than via STAGE_PARAMS (which gates the int-only generic /jobs/defer route)
+    # — the /api/posts/{id}/narrate endpoint defers this task with it.
+    if stage == "narrate" and voice is not None:
+        kwargs["voice"] = voice
     async with SessionLocal() as session:
         run = PipelineRun()
         session.add(run)
         await session.commit()
 
-        if stage != "cluster" and not await gateway.is_available():
+        if stage not in ("cluster", "narrate") and not await gateway.is_available():
             run.status = "skipped"
             run.error = f"LLM endpoint {settings.llm_base_url} unavailable"
             run.finished_at = datetime.now(UTC)

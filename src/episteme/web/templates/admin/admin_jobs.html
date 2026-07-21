@@ -1,0 +1,38 @@
+{% extends "admin/admin_base.html" %}
+
+{% block title %} • Job queue{% endblock %}
+
+{% block admin_content %}
+<h1 class="admin-title">Job queue</h1>
+
+<section class="admin-card admin-card-wide">
+  <h2>Controls</h2>
+  <p>
+    <button hx-post="/admin/defer/ingest_all" hx-target="#queue" hx-swap="innerHTML">ingest now</button>
+    <button hx-post="/admin/defer/run_pipeline" hx-target="#queue" hx-swap="innerHTML">run pipeline now</button>
+    {% if status.pipeline.paused %}
+    <button hx-post="/admin/pipeline/resume" hx-on::after-request="location.reload()">resume pipeline</button>
+    <span class="bad">paused</span>
+    {% else %}
+    <button hx-post="/admin/pipeline/pause" hx-on::after-request="location.reload()">pause + unload</button>
+    {% endif %}
+  </p>
+  <p class="stage-controls">
+    <input id="stage-limit" name="limit" type="number" min="1" placeholder="limit">
+    <input id="stage-story" name="story_id" type="number" min="1" placeholder="story id">
+    <input id="stage-post" name="post_id" type="number" min="1" placeholder="post id">
+    <button hx-post="/admin/defer/embed" hx-include="#stage-limit" hx-target="#queue" hx-swap="innerHTML">embed</button>
+    <button hx-post="/admin/defer/cluster" hx-include="#stage-limit" hx-target="#queue" hx-swap="innerHTML">cluster</button>
+    <button hx-post="/admin/defer/triage" hx-include="#stage-limit,#stage-story" hx-target="#queue" hx-swap="innerHTML">triage</button>
+    <button hx-post="/admin/defer/write" hx-include="#stage-limit,#stage-story" hx-target="#queue" hx-swap="innerHTML">write</button>
+    <button hx-post="/admin/defer/qa" hx-include="#stage-limit,#stage-post" hx-target="#queue" hx-swap="innerHTML">qa</button>
+  </p>
+</section>
+
+<section class="admin-card admin-card-wide">
+  <h2>Queue</h2>
+  <div id="queue" hx-get="/admin/partials/queue" hx-trigger="every 10s">
+    {% include "admin/_admin_queue.html" %}
+  </div>
+</section>
+{% endblock %}

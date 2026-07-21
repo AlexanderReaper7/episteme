@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, ForeignKey, Index, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, Index, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -133,6 +133,94 @@ class Post(Base):
     pinned: Mapped[bool] = mapped_column(default=False)
 
     story: Mapped[Story] = relationship(back_populates="posts")
+    audios: Mapped[list[PostAudio]] = relationship(
+        back_populates="post", cascade="all, delete-orphan"
+    )
+
+
+class PostAudio(Base):
+    """One TTS narration of a post version, in one voice. A post can have several
+    (one per catalog voice the reader has generated), so the row is keyed by
+    (post_id, voice) — the reader picks a voice on the page and each is synthesized
+    and cached independently. Feature posts only — aggregate cards render from
+    their items and aren't narrated.
+
+    The MP3 lives on disk under settings.audio_dir (bind-mounted to the host); this
+    row is its metadata plus the `script_hash` that lets the narrate stage skip an
+    up-to-date voice and re-narrate after a QA revision changes the sections. Kept
+    separate from Post so an un-narrated post is simply a missing row.
+
+    The `script` column is deliberately NOT stored: today it is derived from the
+    post (tts.script.build_script), so only its hash is canonical. When the future
+    LLM preprocessing pass emits a marked-up (non-derivable) script, it gets its
+    own column here."""
+
+    __tablename__ = "post_audio"
+    __table_args__ = (
+        UniqueConstraint("post_id", "voice", name="uq_post_audio_post_voice"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # ondelete CASCADE so the retention prune's bulk `delete(Post)` (Core, no ORM
+    # cascade) doesn't hit an FK violation on an archived post's audio rows.
+    post_id: Mapped[int] = mapped_column(
+        ForeignKey("posts.id", ondelete="CASCADE"), index=True
+    )
+    voice: Mapped[str] = mapped_column(Text)  # Fish reference_id (catalog voice id)
+    # pending -> ready | failed. `ready` means `path` points at a playable file.
+    status: Mapped[str] = mapped_column(String(20), default="pending")
+    # Path relative to audio_dir (e.g. "247-<voice>.opus"); served at /media/<path>.
+    path: Mapped[str | None] = mapped_column(Text)
+    model: Mapped[str | None] = mapped_column(Text)  # Fish backend header, e.g. "s2.1-pro-free"
+    # Provenance of how this file was generated: which provider synthesized it and
+    # the exact generation params (temperature/top_p/prosody) that were used. The
+    # narrate stage re-synthesizes when these drift, not only when the script does.
+    provider: Mapped[str | None] = mapped_column(Text)  # e.g. "fish"; future: "local"
+    params: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    audio_format: Mapped[str] = mapped_column(String(10), default="opus")
+    duration_seconds: Mapped[float | None] = mapped_column()
+    char_count: Mapped[int] = mapped_column(default=0)  # script length (cost signal)
+    # sha256 of the narration script; the stage re-narrates when it changes.
+    script_hash: Mapped[str | None] = mapped_column(String(64))
+    error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    post: Mapped[Post] = relationship(back_populates="audios")
+
+
+class Voice(Base):
+    """A selectable narration voice (the catalog). Lives in the DB rather than in
+    code so voices and their generation parameters can be managed as data and, in
+    the future, differ per provider without a code change.
+
+    `id` is the catalog key and — for the Fish provider — equals the Fish
+    `reference_id`, so it stays the value stored in `post_audio.voice`, the
+    on-disk filename, and the `?voice=` query param. `provider_voice_id` lets a
+    provider address the voice by a different id (defaults to `id`).
+
+    `params` is a provider-agnostic JSON bag of generation controls
+    (`{temperature, top_p, prosody: {speed, volume}}` for Fish); each provider
+    reads the keys it understands, so a future local model can carry its own
+    params here with no schema change. The default voice is the lowest
+    `sort_order` enabled row (overridable via settings.tts_default_voice)."""
+
+    __tablename__ = "voices"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    label: Mapped[str] = mapped_column(Text)
+    provider: Mapped[str] = mapped_column(Text, default="fish")
+    provider_voice_id: Mapped[str | None] = mapped_column(Text)
+    params: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    sort_order: Mapped[int] = mapped_column(default=0)
+    enabled: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
 
 # Stages whose calls belong to ONE post generation (post-scoped provenance).

@@ -7,3 +7,4 @@
 - [Two-stage write idea](two-stage-write-idea.md) — research agent → writer agent split, parked until pipeline visibility exists
 - [Post-version compare idea](post-version-compare-idea.md) — side-by-side diff of two post versions, evaluation tool for pipeline experiments
 - [Migration review gate](migration-review-gate.md) — never delete a migration's UNREVIEWED line without reading the whole file first
+- [TTS narration](tts-narration.md) — Fish Audio TTS narrate stage; free tier model key is "s2.1-pro-free"; voice id pending

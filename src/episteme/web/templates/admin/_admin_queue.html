@@ -1,0 +1,16 @@
+{% import "admin/_macros.html" as ui %}
+<table class="admin-table">
+  <tr><th>#</th><th>task</th><th>params</th><th>status</th><th>attempts</th><th>scheduled</th></tr>
+  {% for job in jobs %}
+  <tr>
+    <td>{{ job.id }}</td>
+    <td class="mono">{{ job.task_name }}</td>
+    <td>{{ ui.kv_chips(job.args) }}</td>
+    <td>{{ ui.status_badge(job.status) }}</td>
+    <td>{{ job.attempts }}</td>
+    <td>{{ job.scheduled_at | dt }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="6" class="mono">queue empty</td></tr>
+  {% endfor %}
+</table>

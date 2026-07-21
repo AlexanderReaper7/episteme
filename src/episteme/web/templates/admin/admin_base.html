@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="admin-shell">
+  <aside class="admin-sidebar">
+    <p class="admin-sidebar-title">Admin</p>
+    <nav class="admin-sidebar-nav">
+      <a href="/admin" class="{{ 'active' if active == 'dashboard' else '' }}">Dashboard</a>
+      <a href="/admin/runs" class="{{ 'active' if active == 'runs' else '' }}">Pipeline runs</a>
+      <a href="/admin/jobs" class="{{ 'active' if active == 'jobs' else '' }}">Job queue</a>
+      <a href="/admin/sources" class="{{ 'active' if active == 'sources' else '' }}">Sources</a>
+      <a href="/admin/voices" class="{{ 'active' if active == 'voices' else '' }}">Voices</a>
+    </nav>
+  </aside>
+  <div class="admin-main">
+    {% block admin_content %}{% endblock %}
+  </div>
+</div>
+{% endblock %}

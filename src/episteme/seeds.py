@@ -1,10 +1,10 @@
-"""Seed sources — inserted once when the sources table is empty (see bootstrap.py).
-Afterwards, sources are managed as rows in the database."""
+"""Seed sources and voices — inserted once when their tables are empty (see
+bootstrap.py). Afterwards, both are managed as rows in the database."""
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import Source
+from .models import Source, Voice
 
 SEED_FEEDS: list[tuple[str, str] | tuple[str, str, dict]] = [
     # Science
@@ -39,3 +39,35 @@ async def seed_sources(session: AsyncSession) -> int:
         session.add(Source(type_name="rss", name=name, config=config))
     await session.commit()
     return len(SEED_FEEDS)
+
+
+# The starting narration catalog: Fish reference-ids the user selected. `params`
+# is the provider-agnostic generation bag (Fish reads temperature/top_p/prosody).
+# sort_order 0 = the default voice. Add or edit voices as DB rows afterwards.
+SEED_VOICES: list[dict] = [
+    {
+        "id": "c39a76f685cf4f8fb41cd5d3d66b497d",
+        "label": "David Attenborough",
+        "provider": "fish",
+        "sort_order": 0,
+        # A touch slower and a hair more consistent — measured narrator cadence.
+        "params": {"temperature": 0.7, "top_p": 0.7, "prosody": {"speed": 0.95, "volume": 0}},
+    },
+    {
+        "id": "ca3007f96ae7499ab87d27ea3599956a",
+        "label": "Girl",
+        "provider": "fish",
+        "sort_order": 1,
+        "params": {"temperature": 0.7, "top_p": 0.7, "prosody": {"speed": 1.0, "volume": 0}},
+    },
+]
+
+
+async def seed_voices(session: AsyncSession) -> int:
+    count = (await session.execute(select(func.count(Voice.id)))).scalar_one()
+    if count > 0:
+        return 0
+    for voice in SEED_VOICES:
+        session.add(Voice(**voice))
+    await session.commit()
+    return len(SEED_VOICES)

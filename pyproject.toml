@@ -26,8 +26,16 @@ dependencies = [
     "pydantic-settings>=2.14",
     "markdown>=3.10",
     "nh3>=0.3",
+    # Starlette form parsing (request.form()) for the admin POST forms.
+    "python-multipart>=0.0.20",
     "playwright>=1.61",
     "starlette-compress>=1.8",
+    "fish-audio-sdk>=1.3.0",
+    # Streaming TTS frames the Fish live WebSocket protocol directly (the SDK's
+    # TTSRequest can't request opus); these back that and are already pulled in
+    # transitively by fish-audio-sdk — declared here because we import them.
+    "httpx-ws>=0.7",
+    "ormsgpack>=1.5",
 ]
 
 [dependency-groups]

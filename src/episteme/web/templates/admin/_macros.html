@@ -1,0 +1,34 @@
+{# Reusable UI fragments. Import as: {% import "admin/_macros.html" as ui %} #}
+
+{# Render a dict as two-tone key=value chips (muted key, bright value). Nested
+   dicts (e.g. voice params' `prosody`) are flattened with dotted keys, matching
+   the form field labels (`prosody.speed`); flat dicts (job args, source config)
+   pass through unchanged. #}
+{% macro kv_chips(data, sort=true) -%}
+{%- if data -%}
+<span class="kv-chips">{{ _kv_inner(data, '', sort) }}</span>
+{%- else -%}
+<span class="muted">—</span>
+{%- endif -%}
+{%- endmacro %}
+
+{# Status label as a diff-style badge: dark tinted fill + same-hue border, in
+   the tone the status maps to. succeeded→ok, failed/aborted/cancelled→bad,
+   anything else (todo/doing/running/…) stays neutral. #}
+{% macro status_badge(value) -%}
+{%- if value == 'succeeded' -%}{%- set tone = 'ok' -%}
+{%- elif value in ('failed', 'aborted', 'cancelled') -%}{%- set tone = 'bad' -%}
+{%- else -%}{%- set tone = 'neutral' -%}
+{%- endif -%}
+<span class="status-badge status-badge-{{ tone }}">{{ value }}</span>
+{%- endmacro %}
+
+{% macro _kv_inner(data, prefix='', sort=true) -%}
+{%- for key in (data | sort if sort else data) -%}
+  {%- if data[key] is mapping -%}
+{{ _kv_inner(data[key], prefix ~ key ~ '.', sort) }}
+  {%- else -%}
+<span class="kv-chip"><span class="kv-chip-k">{{ prefix ~ key }}</span><span class="kv-chip-v">{{ data[key] }}</span></span>
+  {%- endif -%}
+{%- endfor -%}
+{%- endmacro %}

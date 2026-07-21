@@ -94,6 +94,37 @@ class LLMGateway:
         response.raise_for_status()
         return response.json().get("data", [])
 
+    async def endpoint_status(self) -> list[dict]:
+        """Per-distinct-endpoint health for the admin dashboard: one row per URL
+        we talk to, each independently probed, tagged with the roles it serves.
+        The embed server is a separate row only when it lives on a different URL."""
+
+        async def _ok(client: httpx.AsyncClient) -> bool:
+            try:
+                response = await client.get("/models", timeout=5.0)
+                return response.status_code == 200
+            except httpx.HTTPError:
+                return False
+
+        endpoints = [
+            {
+                "url": settings.llm_base_url,
+                "roles": ["main", "fast"],
+                "available": await _ok(self._client),
+            }
+        ]
+        if settings.llm_embed_base_url != settings.llm_base_url:
+            endpoints.append(
+                {
+                    "url": settings.llm_embed_base_url,
+                    "roles": ["embed"],
+                    "available": await _ok(self._embed_client),
+                }
+            )
+        else:
+            endpoints[0]["roles"].append("embed")
+        return endpoints
+
     async def unload_models(self) -> list[str]:
         """Ask the router to unload every loaded decode model, freeing VRAM for
         other applications (pause support). The router loads models lazily, so no

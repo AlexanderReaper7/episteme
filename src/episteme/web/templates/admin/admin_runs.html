@@ -1,0 +1,41 @@
+{% extends "admin/admin_base.html" %}
+{% import "admin/_macros.html" as ui %}
+
+{% block title %} • Pipeline runs{% endblock %}
+
+{% block admin_content %}
+<h1 class="admin-title">Pipeline runs</h1>
+
+<section class="admin-card admin-card-wide">
+  <p class="run-summary-line">
+    {% if summary.running %}
+    <span class="pill pill-live">running</span>
+    {% for run in summary.running %}#{{ run.id }}{% if not loop.last %}, {% endif %}{% endfor %}
+    {% elif summary.last %}
+    last {{ ui.status_badge(summary.last.status) }}
+    at {{ summary.last.started_at | dt }}
+    {% endif %}
+    · next scheduled {{ summary.next_fire | dt }} <span class="muted">(nightly)</span>
+  </p>
+  <table class="admin-table">
+    <tr><th>#</th><th>started</th><th>finished</th><th>status</th><th>stages</th></tr>
+    {% for run in runs %}
+    <tr{% if run.error %} class="run-has-error"{% endif %}>
+      <td>{{ run.id }}</td>
+      <td>{{ run.started_at | dt }}</td>
+      <td>{{ run.finished_at | dt }}</td>
+      <td>{{ ui.status_badge(run.status) }}</td>
+      <td>{{ ui.kv_chips(run.stages, sort=false) }}</td>
+    </tr>
+    {% if run.error %}
+    <tr class="run-error-row">
+      <td></td>
+      <td colspan="4" class="mono"><span class="run-error-label">error</span>{{ run.error }}</td>
+    </tr>
+    {% endif %}
+    {% else %}
+    <tr><td colspan="5" class="mono">no runs yet</td></tr>
+    {% endfor %}
+  </table>
+</section>
+{% endblock %}

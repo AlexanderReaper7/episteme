@@ -103,6 +103,37 @@ class Settings(BaseSettings):
     # Where the worker reaches the web app to render posts (compose service DNS).
     web_internal_url: str = "http://web:8200"
 
+    # --- TTS narration (Fish Audio; the `narrate` pipeline stage) ---
+    # Reads a published feature post, renders its spoken script (deterministic for
+    # now — a future LLM "preprocessing" pass will emit an emotion/pronunciation-
+    # marked script instead), synthesizes it via Fish Audio, and stores the MP3
+    # under audio_dir (bind-mounted to the host in compose). Manual-only until
+    # tts_enabled flips on: defer with POST /api/jobs/defer/narrate?post_id=N.
+    # Uses the external Fish API, not the local llama-server, so it is exempt from
+    # the LLM-availability gate and imposes no VRAM/model-residency cost.
+    tts_enabled: bool = False  # when true, narrate runs in the nightly orchestrator
+    fish_api_key: str = ""
+    # Sent verbatim as the Fish `model` header. The free tier is a distinct model
+    # key: "s2.1-pro-free" synthesizes on free credits, while "s2.1-pro" (and the
+    # older s2-pro / speech-1.6) return 402 without a paid balance. Passed as a
+    # free string — the pinned SDK's typed backends don't list either of these.
+    tts_model: str = "s2.1-pro-free"
+    # Voices are a client-selectable catalog stored in the DB (the `voices` table,
+    # seeded by seeds.seed_voices; accessed via tts.voices). This optionally
+    # overrides which catalog voice the nightly stage / selector defaults to;
+    # empty = the lowest sort_order enabled voice (David Attenborough). Per-post
+    # on-demand narration passes its own voice, so this only sets the default.
+    tts_default_voice: str = ""
+    # Audio is streamed live from Fish's WebSocket endpoint (/v1/tts/live) and
+    # tee'd to the on-disk cache. opus @ 64 kbps keeps the stream light; the
+    # pinned SDK can't request opus, so tts.fish frames the protocol directly.
+    tts_fish_base_url: str = "https://api.fish.audio"
+    tts_audio_format: str = "opus"  # opus | mp3 | wav | pcm
+    tts_opus_bitrate: int = 64000  # bps: 24000 | 32000 | 48000 | 64000 | -1000 (auto)
+    tts_mp3_bitrate: int = 128  # 64 | 128 | 192 (only when tts_audio_format=mp3)
+    tts_latency: str = "balanced"  # normal (best quality) | balanced | low
+    audio_dir: str = "/media"  # narration audio lands here (host bind-mount in compose)
+
     @property
     def sqlalchemy_url(self) -> str:
         """DATABASE_URL is plain libpq form (used by procrastinate/psycopg);

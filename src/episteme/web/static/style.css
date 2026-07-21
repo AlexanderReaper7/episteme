@@ -9,6 +9,27 @@
   --muted: #8f95a3;
   --accent: #7aa2f7;
   --border: #1e1f26;
+  --border-hover: #2c2e3a;
+  /* Status / semantic colors, reused across feed and admin. */
+  --ok: #a9c06a;             /* green text */
+  --bad: #c7082f;            /* saturated crimson red text (on black) */
+  --bad-fg: color-mix(in srgb, var(--bad) 62%, #ffffff);  /* lightened crimson for red text on a dark red chip fill, where pure --bad is too dark-on-dark */
+  --bad-muted: #b06a6a;      /* dimmer red for secondary error-message body */
+  --warn: #e0af68;
+  /* Chip fills — a subtle same-hue tint + translucent border (the "darker chip"
+     look). Shared by status badges, the live pill, and the error label. */
+  --ok-chip-bg: color-mix(in srgb, var(--ok) 12%, transparent);
+  --ok-chip-border: color-mix(in srgb, var(--ok) 45%, transparent);
+  --bad-chip-bg: color-mix(in srgb, var(--bad) 12%, transparent);
+  --bad-chip-border: color-mix(in srgb, var(--bad) 45%, transparent);
+  /* Neutral chip — grey is darker than --ok, so a higher mix matches the green
+     border's luminosity; text lifted off --muted toward --text. */
+  --neutral-chip-border: color-mix(in srgb, var(--muted) 65%, transparent);
+  --neutral-chip-fg: color-mix(in srgb, var(--muted) 45%, var(--text));
+  /* Structural one-offs. */
+  --banner-bg: #0a0a0d;                /* image placeholder behind card banners */
+  --card-feature-border: #2b3a5e;      /* generated-article card accent border */
+  --role-system: #565f89;              /* provenance system-message rail */
   /* Feed column width. The feed cards are short (title + snippet + image), so
      they can run wider than the long-form article body (`.article`, ~46rem)
      without hurting readability. Tune this one knob to make the stream feel
@@ -81,9 +102,9 @@ main {
 
 .card:hover {
   background: var(--card-hover);
-  border-color: #2c2e3a;
+  border-color: var(--border-hover);
   transform: translateY(-2px);
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 8px 30px color-mix(in srgb, var(--bg) 45%, transparent);
 }
 
 .card:focus-within {
@@ -114,7 +135,7 @@ main {
   display: block;
   aspect-ratio: 16 / 9;
   overflow: hidden;
-  background: #0a0a0d;
+  background: var(--banner-bg);
 }
 
 .card-banner img {
@@ -201,7 +222,7 @@ main {
 
 /* Generated-article cards: visually distinct from the raw stream. */
 .article-card {
-  border-color: #2b3a5e;
+  border-color: var(--card-feature-border);
 }
 
 .byline {
@@ -283,6 +304,70 @@ main {
   color: var(--muted);
 }
 
+.post-audio {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-top: 1rem;
+}
+
+.post-audio-controls {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.post-audio-voice {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.post-audio-continuous {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.post-audio-label {
+  font-size: 0.85rem;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+}
+
+.voice-select {
+  background: var(--card-bg);
+  color: inherit;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.3rem 0.5rem;
+  font: inherit;
+}
+
+.voice-select:focus-visible {
+  outline: 2px solid var(--accent);
+}
+
+.voice-status {
+  font-size: 0.85rem;
+  color: var(--muted);
+  min-height: 1.1em;
+}
+
+.voice-status:empty {
+  display: none;
+}
+
+.post-audio-player {
+  height: 2.25rem;
+  width: 100%;
+  max-width: 100%;
+}
+
 .section-prose {
   font-size: 1.02rem;
   line-height: 1.7;
@@ -290,6 +375,7 @@ main {
 
 .section-prose a { color: var(--accent); }
 
+.post-audio,
 .section-key-points,
 .section-sources {
   background: var(--card-bg);
@@ -299,6 +385,7 @@ main {
   margin: 1.5rem 0;
 }
 
+.post-audio h2,
 .section-key-points h2,
 .section-sources h2 {
   margin-top: 0;
@@ -411,8 +498,8 @@ main {
 
 .quiz-choice:hover:not(:disabled) { border-color: var(--accent); }
 .quiz-choice:disabled { cursor: default; opacity: 0.85; }
-.quiz-choice.quiz-correct { border-color: #9ece6a; color: #9ece6a; opacity: 1; }
-.quiz-choice.quiz-wrong { border-color: #f7768e; color: #f7768e; opacity: 1; }
+.quiz-choice.quiz-correct { border-color: var(--ok); color: var(--ok); opacity: 1; }
+.quiz-choice.quiz-wrong { border-color: var(--bad); color: var(--bad); opacity: 1; }
 
 .quiz-explanation {
   margin-bottom: 0;
@@ -509,9 +596,178 @@ main {
   color: var(--muted);
   text-decoration: none;
   margin-left: 1rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
 }
 
 .site-nav a:hover { color: var(--accent); }
+
+/* Admin shell: a left navigation pane beside the page content. */
+.admin-shell {
+  display: grid;
+  grid-template-columns: 13rem minmax(0, 1fr);
+  gap: 1.75rem;
+  max-width: 90rem;
+  margin: 0 auto;
+}
+
+.admin-sidebar {
+  position: sticky;
+  top: 4.5rem;
+  align-self: start;
+  border-right: 1px solid var(--border);
+  padding-right: 1rem;
+}
+
+.admin-sidebar-title {
+  margin: 0 0 0.75rem;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+}
+
+.admin-sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.admin-sidebar-nav a {
+  display: block;
+  padding: 0.45rem 0.7rem;
+  border-radius: 8px;
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 0.92rem;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.admin-sidebar-nav a:hover {
+  background: var(--card-hover);
+  color: var(--text);
+}
+
+.admin-sidebar-nav a.active {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+}
+
+.admin-main { min-width: 0; }
+
+.admin-title {
+  margin: 0 0 1.25rem;
+  font-size: 1.5rem;
+  letter-spacing: 0.01em;
+}
+
+@media (max-width: 48rem) {
+  .admin-shell {
+    grid-template-columns: 1fr;
+  }
+  .admin-sidebar {
+    position: static;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding: 0 0 0.75rem;
+  }
+  .admin-sidebar-nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+}
+
+/* Voices sub-page */
+.voice-default-tag {
+  margin-left: 0.4rem;
+  font-size: 0.66rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: 999px;
+  padding: 0.05rem 0.45rem;
+}
+
+.voice-row-actions {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.voice-row-actions form { margin: 0; }
+
+.admin-card button.danger { color: var(--bad); }
+.admin-card button.danger:hover { border-color: var(--bad); color: var(--bad); }
+
+.voice-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: 0.85rem 1rem;
+}
+
+.voice-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.voice-form input {
+  background: var(--card-hover);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.4rem 0.55rem;
+  font: inherit;
+  font-size: 0.9rem;
+}
+
+.voice-form input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+}
+
+.voice-form-check {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 0.4rem;
+  align-self: end;
+  color: var(--text);
+}
+
+.voice-form-check input { width: auto; }
+
+.voice-form-params {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.85rem 1rem 1rem;
+  margin: 1.1rem 0;
+}
+
+.voice-form-params legend {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  padding: 0 0.4rem;
+}
+
+.admin-form-hint { margin: 0 0 1rem; font-size: 0.85rem; }
+.admin-form-hint code { word-break: break-all; }
+
+.admin-card button.primary {
+  background: color-mix(in srgb, var(--accent) 20%, var(--card-hover));
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  color: var(--text);
+  padding: 0.5rem 1.2rem;
+}
+
+.admin-card button.primary:hover {
+  background: color-mix(in srgb, var(--accent) 32%, var(--card-hover));
+  color: var(--text);
+}
 
 /* Admin dashboard */
 .admin-grid {
@@ -564,8 +820,34 @@ main {
 }
 
 .muted { color: var(--muted); }
-.ok { color: #9ece6a; }
-.bad { color: #f7768e; }
+.ok { color: var(--ok); }
+.bad { color: var(--bad); }
+
+/* Status label as a diff-style chip: dark same-hue fill + brighter border,
+   legible text on top. Neutral falls back to the plain border/muted tokens. */
+.status-badge {
+  display: inline-block;
+  padding: 0.05rem 0.45rem;
+  border-radius: 4px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+.status-badge-ok {
+  color: var(--ok);
+  background: var(--ok-chip-bg);
+  border-color: var(--ok-chip-border);
+}
+.status-badge-bad {
+  color: var(--bad-fg);
+  background: var(--bad-chip-bg);
+  border-color: var(--bad-chip-border);
+}
+.status-badge-neutral {
+  color: var(--neutral-chip-fg);
+  border-color: var(--neutral-chip-border);
+}
 
 .admin-card button {
   background: var(--card-hover);
@@ -588,6 +870,262 @@ main {
   font-size: 0.85rem;
   width: 6.5rem;
 }
+
+/* Card header with a "view all" link */
+.admin-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.admin-card-head h2 { margin-bottom: 0.6rem; }
+
+.admin-card-head a {
+  font-size: 0.75rem;
+  color: var(--accent);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.admin-card-head a:hover { text-decoration: underline; }
+
+/* Health dot: green pulses while up, static red while down. */
+.status-dot {
+  display: inline-block;
+  width: 0.62rem;
+  height: 0.62rem;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.status-dot.up {
+  background: var(--ok);
+  animation: status-pulse 2s ease-in-out infinite;
+}
+
+.status-dot.down {
+  background: var(--bad);
+}
+
+@keyframes status-pulse {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 50%, transparent); }
+  70%  { box-shadow: 0 0 0 0.55rem color-mix(in srgb, var(--ok) 0%, transparent); }
+  100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 0%, transparent); }
+}
+
+/* LLM endpoint list */
+.endpoint-list {
+  list-style: none;
+  margin: 0 0 0.9rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.endpoint-row {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.endpoint-row code {
+  font-size: 0.82rem;
+  word-break: break-all;
+}
+
+.endpoint-roles {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.05rem 0.5rem;
+  white-space: nowrap;
+}
+
+/* Dashboard mini summary rows */
+.mini-rows { margin: 0; }
+
+.mini-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.55rem 0;
+  border-top: 1px solid var(--border);
+}
+
+.mini-row:first-child { border-top: none; padding-top: 0; }
+
+.mini-row-label {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+}
+
+.mini-row-value {
+  margin: 0;
+  font-size: 0.88rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem;
+}
+
+/* Small status pill; the "live" variant carries the pulse of a running unit. */
+.pill {
+  font-size: 0.72rem;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 0.05rem 0.5rem;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.pill-live {
+  color: var(--ok);
+  border-color: var(--ok-chip-border);
+  background: var(--ok-chip-bg);
+}
+
+.run-summary-line {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin: 0 0 1.25rem;
+  padding: 0.6rem 0.85rem;
+  font-size: 0.95rem;
+  background: var(--card-hover);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+}
+
+/* A run's error rides beneath its row, visually attached (no dividing border),
+   and is simply absent when the run has none. */
+.admin-table tr.run-has-error td { border-bottom: none; }
+
+.admin-table tr.run-error-row td {
+  border-top: none;
+  padding-top: 0.1rem;
+  padding-bottom: 0.5rem;
+  font-size: 0.78rem;
+  color: var(--bad-muted);
+  white-space: pre-wrap;
+}
+
+/* Small "error" tag preceding the message, in the brighter --bad so it reads as
+   a label distinct from the muted error body. */
+.run-error-label {
+  display: inline-block;
+  margin-right: 0.5rem;
+  padding: 0 0.35rem;
+  border-radius: 3px;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--bad-fg);
+  background: var(--bad-chip-bg);
+  border: 1px solid var(--bad-chip-border);
+}
+
+/* Sources overview stat tiles */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.85rem 1rem;
+  background: var(--card-hover);
+}
+
+.stat-value {
+  font-size: 1.35rem;
+  font-weight: 600;
+  line-height: 1.1;
+  word-break: break-word;
+}
+
+.stat-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.cooldown-list {
+  margin: 0.75rem 0 0;
+  padding-left: 1.1rem;
+  font-size: 0.85rem;
+}
+
+.cooldown-list li { margin: 0.2rem 0; }
+
+/* key=value chips (job params, source config) — two-tone: muted key, bright value */
+.kv-chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.kv-chip {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 0.74rem;
+  line-height: 1.5;
+}
+
+.kv-chip-k {
+  padding: 0.05rem 0.4rem;
+  background: var(--card-hover);
+  color: var(--muted);
+}
+
+.kv-chip-v {
+  padding: 0.05rem 0.45rem;
+  color: var(--text);
+}
+
+/* Sources table: favicon + name, feed URL sub-line, inline toggle form */
+.source-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.source-favicon {
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  object-fit: contain;
+}
+
+.source-feed {
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-decoration: none;
+}
+
+.source-feed:hover { color: var(--accent); }
+
+.admin-table form { margin: 0; }
 
 /* Provenance timeline */
 .llm-call {
@@ -620,10 +1158,10 @@ main {
   margin: 0.4rem 0;
 }
 
-.llm-msg-system { border-left-color: #565f89; }
-.llm-msg-user { border-left-color: #7aa2f7; }
-.llm-msg-assistant { border-left-color: #9ece6a; }
-.llm-msg-tool { border-left-color: #e0af68; }
+.llm-msg-system { border-left-color: var(--role-system); }
+.llm-msg-user { border-left-color: var(--accent); }
+.llm-msg-assistant { border-left-color: var(--ok); }
+.llm-msg-tool { border-left-color: var(--warn); }
 
 .llm-msg-role {
   font-size: 0.72rem;

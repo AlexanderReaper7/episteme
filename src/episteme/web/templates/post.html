@@ -26,6 +26,25 @@
     <div class="topic-chips">
       {% for topic in post.topics %}<span class="chip">{{ topic }}</span>{% endfor %}
     </div>
+    {% if tts_configured and voices %}
+    <div class="post-audio" data-post-id="{{ post.id }}">
+      <h2>Narration</h2>
+      <div class="post-audio-controls">
+        <label class="post-audio-voice">
+          <select class="voice-select">
+            {% for v in voices %}
+            <option value="{{ v.id }}" {% if v.id == default_voice %}selected{% endif %}>{{ v.label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label class="post-audio-continuous" title="Play through to the next post when this one ends">
+          <input type="checkbox" class="continuous-toggle"> Continuous
+        </label>
+      </div>
+      <audio class="post-audio-player" controls preload="none"></audio>
+      <span class="voice-status" role="status" aria-live="polite"></span>
+    </div>
+    {% endif %}
   </header>
 
   {% include "_sections.html" %}
@@ -40,6 +59,9 @@
 {% endblock %}
 
 {% block scripts %}
+{% if post.kind != "aggregate" and tts_configured and voices %}
+  <script src="/static/narrate.js"></script>
+{% endif %}
 {% if post.kind != "aggregate" and post.sections %}
   {% set types = post.sections | map(attribute="type") | list %}
   {% if "chart" in types %}

@@ -1,0 +1,171 @@
+{% extends "admin/admin_base.html" %}
+{% import "admin/_macros.html" as ui %}
+
+{% block title %} • Admin{% endblock %}
+
+{% block admin_content %}
+<h1 class="admin-title">Dashboard</h1>
+<div class="admin-page">
+  <div class="admin-grid">
+
+    <section class="admin-card">
+      <h2>LLM endpoint</h2>
+      <ul class="endpoint-list">
+        {% for ep in status.llm.endpoints %}
+        <li class="endpoint-row">
+          <span class="status-dot {{ 'up' if ep.available else 'down' }}"
+                title="{{ 'up' if ep.available else 'down' }}"></span>
+          <code>{{ ep.url }}</code>
+          <span class="endpoint-roles">{{ ep.roles | join(', ') }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+      <table class="admin-table">
+        <tr><th>role</th><th>model</th></tr>
+        {% for role, model in status.llm.roles.items() %}
+        <tr><td>{{ role }}</td><td class="mono">{{ model }}</td></tr>
+        {% endfor %}
+      </table>
+      {% if status.llm.models %}
+      <table class="admin-table">
+        <tr><th>loaded model</th><th>state</th></tr>
+        {% for m in status.llm.models %}
+        <tr><td class="mono">{{ m.id }}</td><td>{{ m.status }}</td></tr>
+        {% endfor %}
+      </table>
+      {% endif %}
+    </section>
+
+    <section class="admin-card">
+      <h2>Content</h2>
+      <table class="admin-table">
+        <tr><th>stories</th><th></th></tr>
+        {% for st, count in status.stories.items() %}
+        <tr><td>{{ st }}</td><td>{{ count }}</td></tr>
+        {% endfor %}
+        <tr><td>source items</td><td>{{ status.source_items.total }} ({{ status.source_items.unembedded }} unembedded)</td></tr>
+        <tr><td>posts</td><td>{{ status.posts }}</td></tr>
+      </table>
+    </section>
+
+    <section class="admin-card">
+      <div class="admin-card-head">
+        <h2>Sources</h2>
+        <a href="/admin/sources">view all →</a>
+      </div>
+      <dl class="mini-rows">
+        <div class="mini-row">
+          <dt class="mini-row-label">sources</dt>
+          <dd class="mini-row-value">
+            {{ sources_stats.source_count }}
+            <span class="muted">({{ sources_stats.enabled_count }} enabled · {{ sources_stats.item_count }} items)</span>
+          </dd>
+        </div>
+        <div class="mini-row">
+          <dt class="mini-row-label">most recent fetch</dt>
+          {% if sources_stats.most_recent %}
+          <dd class="mini-row-value">{{ sources_stats.most_recent.name }} <span class="muted">{{ sources_stats.most_recent.last_fetched_at | dt }}</span></dd>
+          {% else %}
+          <dd class="mini-row-value muted">never</dd>
+          {% endif %}
+        </div>
+        <div class="mini-row">
+          <dt class="mini-row-label">active cooldowns</dt>
+          {% if sources_stats.active_cooldowns %}
+          <dd class="mini-row-value">
+            {% for s in sources_stats.active_cooldowns %}<span class="bad">{{ s.name }}</span> <span class="muted">until {{ s.cooldown_until | dt }}</span>{% if not loop.last %} · {% endif %}{% endfor %}
+          </dd>
+          {% else %}
+          <dd class="mini-row-value muted">none</dd>
+          {% endif %}
+        </div>
+      </dl>
+    </section>
+
+    <section class="admin-card">
+      <div class="admin-card-head">
+        <h2>Pipeline runs</h2>
+        <a href="/admin/runs">view all →</a>
+      </div>
+      <dl class="mini-rows">
+        <div class="mini-row">
+          <dt class="mini-row-label">running</dt>
+          {% if runs_summary.running %}
+          {% for run in runs_summary.running %}
+          <dd class="mini-row-value">
+            <span class="pill pill-live">#{{ run.id }}</span>
+            <span class="mono">{% for name, count in run.stages.items() %}{{ name }}:{{ count }} {% endfor %}</span>
+            <span class="muted">since {{ run.started_at | dt }}</span>
+          </dd>
+          {% endfor %}
+          {% else %}
+          <dd class="mini-row-value muted">idle</dd>
+          {% endif %}
+        </div>
+        <div class="mini-row">
+          <dt class="mini-row-label">last</dt>
+          {% if runs_summary.last %}
+          <dd class="mini-row-value">
+            {{ ui.status_badge(runs_summary.last.status) }}
+            <span class="muted">{{ runs_summary.last.started_at | dt }}</span>
+            {% if runs_summary.last.stages %}<span class="mono">{% for name, count in runs_summary.last.stages.items() %}{{ name }}:{{ count }} {% endfor %}</span>{% endif %}
+          </dd>
+          {% else %}
+          <dd class="mini-row-value muted">none yet</dd>
+          {% endif %}
+        </div>
+        <div class="mini-row">
+          <dt class="mini-row-label">next</dt>
+          <dd class="mini-row-value">{{ runs_summary.next_fire | dt }} <span class="muted">· nightly</span></dd>
+        </div>
+      </dl>
+    </section>
+
+    <section class="admin-card">
+      <div class="admin-card-head">
+        <h2>Job queue</h2>
+        <a href="/admin/jobs">view all →</a>
+      </div>
+      <dl class="mini-rows">
+        <div class="mini-row">
+          <dt class="mini-row-label">running</dt>
+          {% if jobs_summary.running %}
+          {% for job in jobs_summary.running %}
+          <dd class="mini-row-value">
+            <span class="pill pill-live">#{{ job.id }}</span>
+            <span class="mono">{{ job.task_name }}</span>
+          </dd>
+          {% endfor %}
+          {% else %}
+          <dd class="mini-row-value muted">nothing running</dd>
+          {% endif %}
+        </div>
+        <div class="mini-row">
+          <dt class="mini-row-label">next up</dt>
+          {% if jobs_summary.upcoming %}
+          <dd class="mini-row-value">
+            <span class="mono">{{ jobs_summary.upcoming.task_name }}</span>
+            <span class="muted">#{{ jobs_summary.upcoming.id }}{% if jobs_summary.upcoming.scheduled_at %} · {{ jobs_summary.upcoming.scheduled_at | dt }}{% endif %}</span>
+          </dd>
+          {% else %}
+          <dd class="mini-row-value muted">queue empty</dd>
+          {% endif %}
+        </div>
+        <div class="mini-row">
+          <dt class="mini-row-label">last</dt>
+          {% if jobs_summary.recent %}
+          <dd class="mini-row-value">
+            {{ ui.status_badge(jobs_summary.recent.status) }}
+            <span class="mono">{{ jobs_summary.recent.task_name }}</span>
+          </dd>
+          {% else %}
+          <dd class="mini-row-value muted">none yet</dd>
+          {% endif %}
+        </div>
+      </dl>
+    </section>
+
+  </div>
+</div>
+{% endblock %}
+{# active nav highlight is passed from the route context (active="dashboard") #}

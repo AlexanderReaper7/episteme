@@ -19,6 +19,12 @@ def test_defer_args_qa_targets_post():
     assert defer_args("qa", post_id=8)[1] == {"post_id": 8, "stage": "qa"}
 
 
+def test_defer_args_narrate_targets_post():
+    name, kwargs = defer_args("narrate", post_id=247)
+    assert name == "episteme.pipeline_stage"
+    assert kwargs == {"post_id": 247, "stage": "narrate"}
+
+
 def test_defer_args_unknown_task():
     with pytest.raises(KeyError, match="Unknown task"):
         defer_args("nope")
@@ -43,3 +49,26 @@ def test_stage_entries_match_worker_contract():
     assert set(STAGE_RUNNERS) == set(STAGE_PARAMS)
     for stage, params in STAGE_PARAMS.items():
         assert DEFERRABLE_TASKS[stage] == ("episteme.pipeline_stage", params)
+
+
+def test_audio_is_current_requires_ready_matching_script_format_and_params():
+    """The stream endpoint only serves a cached file when it is ready for THIS
+    script, format, and voice params — a drift in any of them must miss the cache
+    (else a QA revision or a params change silently plays stale audio)."""
+    from types import SimpleNamespace
+
+    from episteme.web.api import _audio_is_current
+
+    row = SimpleNamespace(
+        status="ready", path="p.opus", script_hash="h", audio_format="opus",
+        params={"temperature": 0.7},
+    )
+    assert _audio_is_current(row, "h", "opus", {"temperature": 0.7})
+    assert not _audio_is_current(row, "h2", "opus", {"temperature": 0.7})  # script drift
+    assert not _audio_is_current(row, "h", "mp3", {"temperature": 0.7})    # format drift
+    assert not _audio_is_current(row, "h", "opus", {"temperature": 0.4})   # params drift
+    assert not _audio_is_current(None, "h", "opus", {})                    # no row
+    pending = SimpleNamespace(
+        status="pending", path="p", script_hash="h", audio_format="opus", params={}
+    )
+    assert not _audio_is_current(pending, "h", "opus", {})                 # not ready

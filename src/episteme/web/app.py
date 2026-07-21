@@ -11,6 +11,7 @@ from starlette_compress import CompressMiddleware
 from ..config import settings
 from ..db import SessionLocal
 from ..models import Post, SourceItem, Story
+from ..tts import default_voice_id, list_voices
 from .admin import _group_calls
 from .admin import router as admin_router
 from .api import api_post_llm_calls, api_story
@@ -41,6 +42,11 @@ app = FastAPI(title="Episteme")
 # htmx partials and JSON API responses are the main beneficiaries.
 app.add_middleware(CompressMiddleware)
 app.mount("/static", RevalidateStaticFiles(directory=BASE_DIR / "static"), name="static")
+# Narration MP3s the narrate stage writes into settings.audio_dir (bind-mounted to
+# the host in compose). check_dir=False so importing the app never fails when the
+# directory is absent (dev/tests); StaticFiles answers Range requests, so <audio>
+# seeking works.
+app.mount("/media", StaticFiles(directory=settings.audio_dir, check_dir=False), name="media")
 app.include_router(api_router)
 app.include_router(admin_router)
 
@@ -175,14 +181,25 @@ async def post_view(request: Request, post_id: int):
                 .options(
                     selectinload(Post.story)
                     .selectinload(Story.items)
-                    .joinedload(SourceItem.source)
+                    .joinedload(SourceItem.source),
                 )
                 .where(Post.id == post_id)
             )
         ).scalar_one_or_none()
-    if post is None:
-        raise HTTPException(status_code=404)
-    return templates.TemplateResponse(request, "post.html", {"post": post})
+        if post is None:
+            raise HTTPException(status_code=404)
+        voices = await list_voices(session)
+        default_voice = await default_voice_id(session, settings.tts_default_voice)
+    return templates.TemplateResponse(
+        request,
+        "post.html",
+        {
+            "post": post,
+            "voices": voices,
+            "default_voice": default_voice,
+            "tts_configured": bool(settings.fish_api_key),
+        },
+    )
 
 
 @app.get("/post/{post_id}/provenance", response_class=HTMLResponse)

@@ -6,9 +6,7 @@
   <meta name="color-scheme" content="dark">
   <title>Episteme{% block title %}{% endblock %}</title>
   <link rel="stylesheet" href="/static/style.css">
-  <!-- Vendored htmx preferred; falls back to CDN until static/htmx.min.js exists.
-       Vendor it with:
-       curl -sL -o src/episteme/web/static/htmx.min.js https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js -->
+  <!-- Vendored htmx preferred; falls back to CDN until static/htmx.min.js exists. -->
   <script src="/static/htmx.min.js"
           onerror="var s=document.createElement('script');s.src='https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js';document.head.appendChild(s);"></script>
 </head>
@@ -16,8 +14,7 @@
   <header class="site-header">
     <h1><a href="/">Episteme</a></h1>
     <nav class="site-nav">
-      <a href="/">feed</a>
-      <a href="/admin">admin</a>
+      <a href="/admin">Admin</a>
     </nav>
   </header>
   <main>

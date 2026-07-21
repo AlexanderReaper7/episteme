@@ -1,0 +1,95 @@
+{% extends "admin/admin_base.html" %}
+{% import "admin/_macros.html" as ui %}
+
+{% block title %} • Voices{% endblock %}
+
+{% block admin_content %}
+<h1 class="admin-title">Voices</h1>
+
+<section class="admin-card admin-card-wide">
+  <h2>Catalog</h2>
+  {% if voices %}
+  <table class="admin-table">
+    <tr>
+      <th>#</th><th>label</th><th>id</th><th>provider</th>
+      <th>params</th><th>state</th><th></th>
+    </tr>
+    {% for v in voices %}
+    <tr>
+      <td>{{ v.sort_order }}</td>
+      <td>
+        {{ v.label }}
+        {% if v.id == default_voice %}<span class="voice-default-tag">default</span>{% endif %}
+      </td>
+      <td class="mono">{{ v.id }}</td>
+      <td>{{ v.provider }}{% if v.provider_voice_id and v.provider_voice_id != v.id %} <span class="muted mono">→ {{ v.provider_voice_id }}</span>{% endif %}</td>
+      <td>{{ ui.kv_chips(v.params) }}</td>
+      <td class="{{ 'ok' if v.enabled else 'muted' }}">{{ 'enabled' if v.enabled else 'off' }}</td>
+      <td class="voice-row-actions">
+        <form method="post" action="/admin/voices/{{ v.id }}/toggle">
+          <button type="submit">{{ 'disable' if v.enabled else 'enable' }}</button>
+        </form>
+        <form method="post" action="/admin/voices/{{ v.id }}/delete"
+              onsubmit="return confirm('Delete voice {{ v.label }}?');">
+          <button type="submit" class="danger">delete</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p class="muted">No voices yet — add one below.</p>
+  {% endif %}
+</section>
+
+<section class="admin-card admin-card-wide">
+  <h2>Add / update voice</h2>
+  <p class="muted admin-form-hint">
+    The <strong>id</strong> is the catalog key — for the Fish provider it is the Fish
+    <code>reference_id</code>. Submitting an existing id overwrites that voice.
+    Generation params are stored provider-agnostically; blank fields are omitted.
+  </p>
+  <form method="post" action="/admin/voices" class="voice-form">
+    <div class="voice-form-grid">
+      <label>id (reference_id)
+        <input name="id" required placeholder="c39a76f685cf4f8f…">
+      </label>
+      <label>label
+        <input name="label" required placeholder="David Attenborough">
+      </label>
+      <label>provider
+        <input name="provider" value="fish">
+      </label>
+      <label>provider_voice_id <span class="muted">(optional)</span>
+        <input name="provider_voice_id" placeholder="defaults to id">
+      </label>
+      <label>sort_order
+        <input name="sort_order" type="number" value="0">
+      </label>
+      <label class="voice-form-check">
+        <input name="enabled" type="checkbox" checked> enabled
+      </label>
+    </div>
+    <fieldset class="voice-form-params">
+      <legend>Generation params <span class="muted">(all optional)</span></legend>
+      <div class="voice-form-grid">
+        <label>temperature
+          <input name="temperature" type="number" step="0.05" min="0" placeholder="0.7">
+        </label>
+        <label>top_p
+          <input name="top_p" type="number" step="0.05" min="0" max="1" placeholder="0.7">
+        </label>
+        <label>prosody.speed
+          <input name="speed" type="number" step="0.05" placeholder="1.0">
+        </label>
+        <label>prosody.volume
+          <input name="volume" type="number" step="1" placeholder="0">
+        </label>
+      </div>
+    </fieldset>
+    <div class="voice-form-actions">
+      <button type="submit" class="primary">Save voice</button>
+    </div>
+  </form>
+</section>
+{% endblock %}

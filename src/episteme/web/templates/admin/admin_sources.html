@@ -1,0 +1,75 @@
+{% extends "admin/admin_base.html" %}
+{% import "admin/_macros.html" as ui %}
+
+{% block title %} • Sources{% endblock %}
+
+{% block admin_content %}
+<h1 class="admin-title">Sources</h1>
+
+<section class="admin-card admin-card-wide">
+  <h2>Overview</h2>
+  <div class="stat-grid">
+    <div class="stat">
+      <span class="stat-value">{{ stats.source_count }}</span>
+      <span class="stat-label">sources <span class="muted">({{ stats.enabled_count }} enabled)</span></span>
+    </div>
+    <div class="stat">
+      <span class="stat-value">{{ stats.item_count }}</span>
+      <span class="stat-label">source items</span>
+    </div>
+    <div class="stat">
+      {% if stats.most_recent %}
+      <span class="stat-value">{{ stats.most_recent.name }}</span>
+      <span class="stat-label">most recent fetch <span class="muted">· {{ stats.most_recent.last_fetched_at | dt }}</span></span>
+      {% else %}
+      <span class="stat-value muted">—</span>
+      <span class="stat-label">most recent fetch</span>
+      {% endif %}
+    </div>
+    <div class="stat">
+      <span class="stat-value {{ 'bad' if stats.active_cooldowns else '' }}">{{ stats.active_cooldowns | length }}</span>
+      <span class="stat-label">active cooldowns</span>
+    </div>
+  </div>
+  {% if stats.active_cooldowns %}
+  <ul class="cooldown-list">
+    {% for src in stats.active_cooldowns %}
+    <li><span class="mono">{{ src.name }}</span> <span class="bad">until {{ src.cooldown_until | dt }}</span></li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>
+
+<section class="admin-card admin-card-wide">
+  <h2>All sources</h2>
+  <table class="admin-table">
+    <tr>
+      <th>name</th><th>type</th><th>mode</th><th>cred</th><th>items</th>
+      <th>config</th><th>last fetch</th><th>cooldown</th><th></th>
+    </tr>
+    {% for src in sources %}
+    <tr>
+      <td>
+        <span class="source-name">
+          {% if src.favicon_url %}<img class="source-favicon" src="{{ src.favicon_url }}" alt="" loading="lazy" onerror="this.remove()">{% endif %}
+          {{ src.name }}{% if not src.enabled %} <span class="bad">off</span>{% endif %}
+        </span>
+        {% if src.feed_url %}<br><a class="mono source-feed" href="{{ src.feed_url }}" target="_blank" rel="noopener">{{ src.feed_url }}</a>{% endif %}
+      </td>
+      <td>{{ src.type }}</td>
+      <td>{{ src.http_mode }}</td>
+      <td>{{ '%.2f' | format(src.credibility_rating) }}</td>
+      <td>{{ src.item_count }}</td>
+      <td>{{ ui.kv_chips(src.config_extra) }}</td>
+      <td>{{ src.last_fetched_at | dt }}</td>
+      <td class="bad">{% if src.cooldown_until and src.cooldown_until > stats.now %}{{ src.cooldown_until | dt }}{% endif %}</td>
+      <td>
+        <form method="post" action="/admin/sources/{{ src.id }}/toggle">
+          <button type="submit">{{ 'disable' if src.enabled else 'enable' }}</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+</section>
+{% endblock %}
