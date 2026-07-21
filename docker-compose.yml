@@ -42,9 +42,14 @@ services:
 
   web:
     build: .
-    command: uvicorn episteme.web.app:app --host 0.0.0.0 --port 8200
+    # --reload-dir scopes the watcher to source only (default watches the cwd,
+    # which would include .venv baked into the image).
+    command: uvicorn episteme.web.app:app --host 0.0.0.0 --port 8200 --reload --reload-dir src
     init: true
     environment: *env
+    # Bind-mount source over the baked-in copy so edits reload without a rebuild.
+    volumes:
+      - ./src:/app/src
     ports:
       - "127.0.0.1:8200:8200"
     depends_on:

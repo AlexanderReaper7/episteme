@@ -15,9 +15,7 @@ This is a list of things to maybe do, in no particular order. And serves as a pl
 - post narration with AI TTS (s2.1-pro).
 - pre TTS LLM pass for emotional tagging, pronunciation.
 - improve quizes and add more questions.
-- use uv
 - benchmarking
 - docker test? testing db?
-- bind mount ./src for automatic reload of website code changes.
 - prefix caching for system prompts?
 - 
