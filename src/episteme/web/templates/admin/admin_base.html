@@ -2,17 +2,13 @@
 
 {% block content %}
 <div class="admin-shell">
-  <aside class="admin-sidebar">
-    <p class="admin-sidebar-title">Admin</p>
-    <nav class="admin-sidebar-nav">
-      <a href="/admin" class="{{ 'active' if active == 'dashboard' else '' }}">Dashboard</a>
-      <a href="/admin/runs" class="{{ 'active' if active == 'runs' else '' }}">Pipeline runs</a>
-      <a href="/admin/jobs" class="{{ 'active' if active == 'jobs' else '' }}">Job queue</a>
-      <a href="/admin/sources" class="{{ 'active' if active == 'sources' else '' }}">Sources</a>
-      <a href="/admin/voices" class="{{ 'active' if active == 'voices' else '' }}">Voices</a>
-    </nav>
-  </aside>
-  <div class="admin-main">
+  {% include "admin/_sidebar.html" %}
+  {# hx-target here is inherited by every boosted link in the admin content, so an
+     intra-admin navigation swaps just this region (the server returns the
+     admin_content block) and the sidebar persists. Entering admin from the public
+     header is a full load (that link opts out of boosting), because the shell lives
+     in this inherited `content` block, which render_block can't emit on its own. #}
+  <div class="admin-main" id="admin-main" hx-target="#admin-main">
     {% block admin_content %}{% endblock %}
   </div>
 </div>

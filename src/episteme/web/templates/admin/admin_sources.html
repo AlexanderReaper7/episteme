@@ -47,29 +47,7 @@
       <th>name</th><th>type</th><th>mode</th><th>cred</th><th>items</th>
       <th>config</th><th>last fetch</th><th>cooldown</th><th></th>
     </tr>
-    {% for src in sources %}
-    <tr>
-      <td>
-        <span class="source-name">
-          {% if src.favicon_url %}<img class="source-favicon" src="{{ src.favicon_url }}" alt="" loading="lazy" onerror="this.remove()">{% endif %}
-          {{ src.name }}{% if not src.enabled %} <span class="bad">off</span>{% endif %}
-        </span>
-        {% if src.feed_url %}<br><a class="mono source-feed" href="{{ src.feed_url }}" target="_blank" rel="noopener">{{ src.feed_url }}</a>{% endif %}
-      </td>
-      <td>{{ src.type }}</td>
-      <td>{{ src.http_mode }}</td>
-      <td>{{ '%.2f' | format(src.credibility_rating) }}</td>
-      <td>{{ src.item_count }}</td>
-      <td>{{ ui.kv_chips(src.config_extra) }}</td>
-      <td>{{ src.last_fetched_at | dt }}</td>
-      <td class="bad">{% if src.cooldown_until and src.cooldown_until > stats.now %}{{ src.cooldown_until | dt }}{% endif %}</td>
-      <td>
-        <form method="post" action="/admin/sources/{{ src.id }}/toggle">
-          <button type="submit">{{ 'disable' if src.enabled else 'enable' }}</button>
-        </form>
-      </td>
-    </tr>
-    {% endfor %}
+    {% for src in sources %}{% with now = stats.now %}{% include "admin/_source_row.html" %}{% endwith %}{% endfor %}
   </table>
 </section>
 {% endblock %}

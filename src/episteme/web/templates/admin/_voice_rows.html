@@ -1,0 +1,32 @@
+{% import "admin/_macros.html" as ui %}
+{# The catalog <tbody>. Returned on its own by create/toggle/delete (hx-target
+   #voice-rows) so a mutation swaps just the rows — a reorder or delete can move the
+   default, so the whole body re-renders. Each row carries its own edit payload in
+   `data-edit` (tojson escapes <>&' so it's safe in the single-quoted attribute) so the
+   editor prefills from the clicked row with no page-level state; drag-reorder and
+   edit-prefill are wired via delegation in admin_voices.js, so swapped-in rows work
+   without rebinding. #}
+<tbody id="voice-rows">
+{% for v in voices %}
+  <tr class="voice-row" draggable="true" data-voice-id="{{ v.id }}" data-edit='{{ edits[v.id] | tojson }}'>
+    <td class="voice-drag-handle" title="Drag to reorder" aria-hidden="true">⠿</td>
+    <td class="voice-sort-cell">{{ loop.index0 }}</td>
+    <td class="voice-label-cell">
+      <span class="voice-label-name">{{ v.label }}</span>
+      <span class="voice-default-tag" {% if v.id != default_voice %}hidden{% endif %}>default</span>
+    </td>
+    <td class="mono">{{ v.id }}</td>
+    <td>{{ v.provider }}{% if v.provider_voice_id and v.provider_voice_id != v.id %} <span class="muted mono">→ {{ v.provider_voice_id }}</span>{% endif %}</td>
+    <td>{{ ui.kv_chips(v.params) }}</td>
+    <td><span class="voice-state-chip {{ 'is-on' if v.enabled else 'is-off' }}">{{ 'enabled' if v.enabled else 'off' }}</span></td>
+    <td class="voice-row-actions">
+      <button type="button" class="voice-edit-btn">edit</button>
+      <button hx-post="/admin/voices/{{ v.id }}/toggle"
+              hx-target="#voice-rows" hx-swap="outerHTML">{{ 'disable' if v.enabled else 'enable' }}</button>
+      <button hx-post="/admin/voices/{{ v.id }}/delete"
+              hx-target="#voice-rows" hx-swap="outerHTML"
+              hx-confirm="Delete voice {{ v.label }}?" class="danger">delete</button>
+    </td>
+  </tr>
+{% endfor %}
+</tbody>

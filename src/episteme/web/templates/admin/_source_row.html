@@ -1,0 +1,26 @@
+{% import "admin/_macros.html" as ui %}
+{# One source row. Rendered inside the table on the page, and returned on its own by
+   the enable/disable toggle (hx-target="closest tr") so a state change swaps just this
+   row — no full reload. `now` is the cutoff for an active cooldown. #}
+<tr>
+  <td>
+    <span class="source-name">
+      {% if src.favicon_url %}<img class="source-favicon" src="{{ src.favicon_url }}" alt="" loading="lazy" onerror="this.remove()">{% endif %}
+      {{ src.name }}{% if not src.enabled %} <span class="bad">off</span>{% endif %}
+    </span>
+    {% if src.feed_url %}<br><a class="mono source-feed" href="{{ src.feed_url }}" target="_blank" rel="noopener">{{ src.feed_url }}</a>{% endif %}
+  </td>
+  <td>{{ src.type }}</td>
+  <td>{{ src.http_mode }}</td>
+  <td>{{ '%.2f' | format(src.credibility_rating) }}</td>
+  <td>{{ src.item_count }}</td>
+  <td>{{ ui.kv_chips(src.config_extra) }}</td>
+  <td>{{ src.last_fetched_at | dt }}</td>
+  <td class="bad">{% if src.cooldown_until and src.cooldown_until > now %}{{ src.cooldown_until | dt }}{% endif %}</td>
+  <td>
+    <button hx-post="/admin/sources/{{ src.id }}/toggle"
+            hx-target="closest tr" hx-swap="outerHTML">
+      {{ 'disable' if src.enabled else 'enable' }}
+    </button>
+  </td>
+</tr>

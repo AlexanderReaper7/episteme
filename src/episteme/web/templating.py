@@ -1,23 +1,91 @@
 """Shared Jinja2 environment + filters for all HTML routes (feed and admin)."""
 
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import markdown as md
 import nh3
+from fastapi import Request
+from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
+from jinja2_fragments import BlockNotFoundError, render_block
 from markupsafe import Markup
 
+from ..config import settings
 from ..models import Story
 
 BASE_DIR = Path(__file__).parent
 
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 
+# Expose the admin UI macros as a global so `ui.status_badge(...)` works in any
+# render path — including render_block (below), which renders a single block in
+# isolation and therefore never runs a template's top-level `{% import %}`.
+templates.env.globals["ui"] = templates.env.get_template("admin/_macros.html").module
+
+# htmx's `HX-Target` (the swap target's element id) tells us which Jinja block the
+# boosted navigation wants, so we render only that block instead of the whole
+# document. `#main-content` is the top-level outlet (base.html); `#admin-main` is the
+# inner admin outlet (the sidebar persists across intra-admin swaps).
+_BLOCK_FOR_TARGET = {"main-content": "content", "admin-main": "admin_content"}
+
+
+def render(request: Request, template: str, context: dict, status_code: int = 200):
+    """Render a full page, or — for a boosted htmx navigation — only the targeted
+    block as a fragment. The fragment carries a `<title>` so htmx keeps the tab
+    title in sync (`hx-push-url` handles the address bar). Non-htmx requests and
+    hard refreshes fall through to a normal full-document response, so direct hits,
+    bookmarks, and the tests' full renders are unchanged."""
+    if request.headers.get("HX-Request") == "true":
+        block = _BLOCK_FOR_TARGET.get(request.headers.get("HX-Target", ""))
+        if block:
+            ctx = {"request": request, **context}
+            try:
+                # `render_block` only resolves blocks defined in the leaf template.
+                # A block that lives in an inherited layout (the admin shell's
+                # `content`) isn't one this page can emit as a fragment — fall back
+                # to the full document rather than a half page. In practice the
+                # navigation paths never hit this (see admin_base.html), so it is
+                # pure defense.
+                title = render_block(templates.env, template, "title", **ctx)
+                body = render_block(templates.env, template, block, **ctx)
+                return HTMLResponse(
+                    f"<title>Episteme{title}</title>\n{body}", status_code=status_code
+                )
+            except BlockNotFoundError:
+                pass
+    return templates.TemplateResponse(
+        request, template, context, status_code=status_code
+    )
+
+
+def _display_tz() -> ZoneInfo | None:
+    """The configured display timezone, or None to render raw UTC. Resolved once at
+    import; an unknown name falls back to UTC rather than 500-ing every page."""
+    if not settings.display_timezone:
+        return None
+    try:
+        return ZoneInfo(settings.display_timezone)
+    except (ZoneInfoNotFoundError, ValueError):
+        return None
+
+
+_DISPLAY_TZ = _display_tz()
+
 
 def _format_dt(value: datetime | None) -> str:
-    return value.strftime("%Y-%m-%d %H:%M") if value else ""
+    # Stored timestamps are tz-aware UTC; a naive one is assumed UTC. Convert to the
+    # configured local zone for display so wall-clock matches the user's clock (the
+    # comparison logic elsewhere stays UTC — this is presentation only).
+    if not value:
+        return ""
+    if _DISPLAY_TZ is not None:
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=UTC)
+        value = value.astimezone(_DISPLAY_TZ)
+    return value.strftime("%Y-%m-%d %H:%M")
 
 
 def _banner_image(media_refs: list | None) -> str | None:

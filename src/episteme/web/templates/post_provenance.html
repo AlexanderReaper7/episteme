@@ -9,15 +9,7 @@
   <section class="admin-card admin-card-wide">
     <h2>{{ post.title or "Aggregate card (story " ~ story.id ~ ")" }}</h2>
     <table class="admin-table">
-      <tr><th>post</th><td>
-        #{{ post.id }} · {{ post.kind }} · {{ post.status }}
-        · generated {{ post.generated_at | dt }}
-        {% if post.archived_at %} · archived {{ post.archived_at | dt }}{% endif %}
-        {% if post.pinned %} · <strong>pinned</strong> (never auto-pruned){% endif %}
-        · <button hx-post="/api/posts/{{ post.id }}/pin?value={{ 'false' if post.pinned else 'true' }}"
-                  hx-swap="none" hx-on::after-request="location.reload()">
-            {{ "unpin" if post.pinned else "pin" }}</button>
-      </td></tr>
+      <tr><th>post</th>{% include "admin/_post_pin_cell.html" %}</tr>
       {% if story.posts | length > 1 %}
       <tr><th>versions</th><td>
         {% for p in story.posts %}

@@ -16,7 +16,7 @@ from .admin import _group_calls
 from .admin import router as admin_router
 from .api import api_post_llm_calls, api_story
 from .api import router as api_router
-from .templating import BASE_DIR, templates
+from .templating import BASE_DIR, render, templates
 
 
 class RevalidateStaticFiles(StaticFiles):
@@ -165,7 +165,7 @@ async def feed(request: Request):
         fallback = None
         if not page["posts"]:
             fallback = await _items_page(session)
-    return templates.TemplateResponse(
+    return render(
         request,
         "feed.html",
         {"feed": page, "fallback": fallback},
@@ -190,7 +190,7 @@ async def post_view(request: Request, post_id: int):
             raise HTTPException(status_code=404)
         voices = await list_voices(session)
         default_voice = await default_voice_id(session, settings.tts_default_voice)
-    return templates.TemplateResponse(
+    return render(
         request,
         "post.html",
         {
@@ -215,7 +215,7 @@ async def post_provenance(request: Request, post_id: int):
     story = await api_story(story_id)
     post = next(p for p in story["posts"] if p["id"] == post_id)
     calls = await api_post_llm_calls(post_id, full=True)
-    return templates.TemplateResponse(
+    return render(
         request,
         "post_provenance.html",
         {

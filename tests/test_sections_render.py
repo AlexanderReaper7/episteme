@@ -53,18 +53,27 @@ def test_all_section_types_render():
     assert "https://s.org/1" in html and "https://m.org/1" in html        # citation tails
 
 
-def test_renderer_scripts_load_only_when_needed():
-    prose_only = _render([{"type": "prose", "text": "just text"}])
-    assert "vega" not in prose_only and "mermaid.min.js" not in prose_only
-    assert "post.js" not in prose_only
-
+def test_sections_expose_hydration_markers_not_inline_scripts():
+    # Rich sections are no longer wired up by per-page <script> tags; the persistent
+    # app.js hydrates them on htmx:load, lazy-loading vega/mermaid only when it sees
+    # the markers below. So the page must carry the markers and must NOT inline the
+    # heavy vendor scripts (that would defeat both boosted swaps and lazy loading).
     with_chart = _render([{"type": "chart", "spec": {"mark": "bar"}}])
-    assert "vega.min.js" in with_chart and "vega-embed.min.js" in with_chart
-    assert "mermaid.min.js" not in with_chart and "post.js" in with_chart
+    assert "section-chart" in with_chart and "data-spec=" in with_chart
+    assert "vega.min.js" not in with_chart and "post.js" not in with_chart
+
+    with_diagram = _render([{"type": "diagram", "mermaid": "flowchart LR; A --> B",
+                             "caption": "c"}])
+    assert 'class="mermaid"' in with_diagram
+    assert "mermaid.min.js" not in with_diagram
 
     with_quiz = _render([{"type": "quiz", "question": "q", "choices": ["a", "b"],
                           "answer_index": 1, "explanation": "e"}])
-    assert "post.js" in with_quiz and "vega.min.js" not in with_quiz
+    assert "section-quiz" in with_quiz and 'data-answer="1"' in with_quiz
+
+    prose_only = _render([{"type": "prose", "text": "just text"}])
+    assert "section-chart" not in prose_only and "section-quiz" not in prose_only
+    assert "vega" not in prose_only and "mermaid" not in prose_only
 
 
 def test_video_without_embeddable_url_falls_back_to_link():

@@ -14,6 +14,9 @@ import pytest
 from episteme.tts import (
     Voice,
     build_script,
+    flatten_params,
+    param_schema_for,
+    parse_params,
     pick_default,
     script_hash,
     synthesize,
@@ -261,3 +264,43 @@ def test_pick_default_empty_catalog_is_none():
 def test_voice_ref_id_defaults_to_id():
     assert _voice("a", 0).ref_id == "a"
     assert Voice(id="a", label="A", provider_voice_id="prov-1").ref_id == "prov-1"
+
+
+# --- provider param schema: parse + flatten (pure) -------------------------------
+
+
+def test_parse_params_builds_nested_bag_from_dotted_form_keys():
+    form = {"temperature": "0.8", "top_p": "", "prosody.speed": "0.95", "prosody.volume": "0"}
+    params = parse_params("fish", form.get)
+    assert params == {"temperature": 0.8, "prosody": {"speed": 0.95, "volume": 0.0}}
+    assert "top_p" not in params  # blanks omitted
+
+
+def test_parse_params_ignores_keys_outside_provider_schema():
+    form = {"temperature": "0.7", "bogus": "9", "prosody.pitch": "3"}
+    assert parse_params("fish", form.get) == {"temperature": 0.7}
+
+
+def test_parse_params_unknown_provider_is_empty():
+    assert parse_params("nope", {"temperature": "0.7"}.get) == {}
+
+
+def test_parse_params_skips_non_numeric_number_fields():
+    assert parse_params("fish", {"temperature": "abc"}.get) == {}
+
+
+def test_flatten_params_dots_nested_keys():
+    flat = flatten_params({"temperature": 0.7, "prosody": {"speed": 0.95, "volume": 0}})
+    assert flat == {"temperature": 0.7, "prosody.speed": 0.95, "prosody.volume": 0}
+
+
+def test_flatten_params_roundtrips_with_parse():
+    original = {"temperature": 0.7, "prosody": {"speed": 0.95}}
+    flat = flatten_params(original)
+    assert parse_params("fish", lambda k: str(flat[k]) if k in flat else "") == original
+
+
+def test_param_schema_for_fish_covers_the_fish_keys():
+    keys = {f.key for f in param_schema_for("fish")}
+    assert {"temperature", "top_p", "prosody.speed", "prosody.volume"} <= keys
+    assert param_schema_for("unknown") == []

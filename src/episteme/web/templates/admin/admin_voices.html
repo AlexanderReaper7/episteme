@@ -7,35 +7,21 @@
 <h1 class="admin-title">Voices</h1>
 
 <section class="admin-card admin-card-wide">
-  <h2>Catalog</h2>
+  <div class="admin-card-head">
+    <h2>Catalog</h2>
+    <span class="muted admin-form-hint" style="margin:0">
+      Drag rows to reorder — the top voice is the default. Edit prefills the form below.
+    </span>
+  </div>
   {% if voices %}
-  <table class="admin-table">
-    <tr>
-      <th>#</th><th>label</th><th>id</th><th>provider</th>
-      <th>params</th><th>state</th><th></th>
-    </tr>
-    {% for v in voices %}
-    <tr>
-      <td>{{ v.sort_order }}</td>
-      <td>
-        {{ v.label }}
-        {% if v.id == default_voice %}<span class="voice-default-tag">default</span>{% endif %}
-      </td>
-      <td class="mono">{{ v.id }}</td>
-      <td>{{ v.provider }}{% if v.provider_voice_id and v.provider_voice_id != v.id %} <span class="muted mono">→ {{ v.provider_voice_id }}</span>{% endif %}</td>
-      <td>{{ ui.kv_chips(v.params) }}</td>
-      <td class="{{ 'ok' if v.enabled else 'muted' }}">{{ 'enabled' if v.enabled else 'off' }}</td>
-      <td class="voice-row-actions">
-        <form method="post" action="/admin/voices/{{ v.id }}/toggle">
-          <button type="submit">{{ 'disable' if v.enabled else 'enable' }}</button>
-        </form>
-        <form method="post" action="/admin/voices/{{ v.id }}/delete"
-              onsubmit="return confirm('Delete voice {{ v.label }}?');">
-          <button type="submit" class="danger">delete</button>
-        </form>
-      </td>
-    </tr>
-    {% endfor %}
+  <table class="admin-table voice-table" id="voice-table">
+    <thead>
+      <tr>
+        <th></th><th>#</th><th>label</th><th>id</th><th>provider</th>
+        <th>params</th><th>state</th><th></th>
+      </tr>
+    </thead>
+    {% include "admin/_voice_rows.html" %}
   </table>
   {% else %}
   <p class="muted">No voices yet — add one below.</p>
@@ -43,24 +29,33 @@
 </section>
 
 <section class="admin-card admin-card-wide">
-  <h2>Add / update voice</h2>
+  <div class="admin-card-head">
+    <h2 id="voice-form-heading">Add voice</h2>
+    <a href="#" id="voice-form-reset" hidden>+ new voice (clear form)</a>
+  </div>
   <p class="muted admin-form-hint">
     The <strong>id</strong> is the catalog key — for the Fish provider it is the Fish
     <code>reference_id</code>. Submitting an existing id overwrites that voice.
-    Generation params are stored provider-agnostically; blank fields are omitted.
+    Generation params are provider-specific and stored provider-agnostically;
+    blank fields are omitted.
   </p>
-  <form method="post" action="/admin/voices" class="voice-form">
+  <form hx-post="/admin/voices" hx-target="#voice-rows" hx-swap="outerHTML"
+        class="voice-form" id="voice-form">
     <div class="voice-form-grid">
       <label>id (reference_id)
-        <input name="id" required placeholder="c39a76f685cf4f8f…">
+        <input name="id" id="voice-field-id" required placeholder="c39a76f685cf4f8f…">
       </label>
       <label>label
         <input name="label" required placeholder="David Attenborough">
       </label>
       <label>provider
-        <input name="provider" value="fish">
+        <select name="provider" id="voice-field-provider">
+          {% for p in providers %}
+          <option value="{{ p }}" {% if p == default_provider %}selected{% endif %}>{{ p }}</option>
+          {% endfor %}
+        </select>
       </label>
-      <label>provider_voice_id <span class="muted">(optional)</span>
+      <label><span>provider_voice_id <span class="muted">(optional)</span></span>
         <input name="provider_voice_id" placeholder="defaults to id">
       </label>
       <label>sort_order
@@ -71,25 +66,15 @@
       </label>
     </div>
     <fieldset class="voice-form-params">
-      <legend>Generation params <span class="muted">(all optional)</span></legend>
-      <div class="voice-form-grid">
-        <label>temperature
-          <input name="temperature" type="number" step="0.05" min="0" placeholder="0.7">
-        </label>
-        <label>top_p
-          <input name="top_p" type="number" step="0.05" min="0" max="1" placeholder="0.7">
-        </label>
-        <label>prosody.speed
-          <input name="speed" type="number" step="0.05" placeholder="1.0">
-        </label>
-        <label>prosody.volume
-          <input name="volume" type="number" step="1" placeholder="0">
-        </label>
-      </div>
+      <legend>Generation params <span class="muted">(provider-specific, all optional)</span></legend>
+      <div class="voice-form-grid" id="voice-params"></div>
     </fieldset>
     <div class="voice-form-actions">
-      <button type="submit" class="primary">Save voice</button>
+      <button type="submit" class="primary" id="voice-submit">Save voice</button>
     </div>
   </form>
 </section>
+
+<script type="application/json" id="voice-param-schemas">{{ param_schemas | tojson }}</script>
+<script src="/static/admin_voices.js"></script>
 {% endblock %}

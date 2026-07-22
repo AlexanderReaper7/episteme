@@ -11,6 +11,9 @@ dependencies = [
     "fastapi>=0.139",
     "uvicorn[standard]>=0.51",
     "jinja2>=3.1",
+    # Renders a single named Jinja block (with full inheritance) for htmx fragment
+    # responses — see web/templating.py:render. Pure-Python, only depends on jinja2.
+    "jinja2-fragments>=1.0",
     "sqlalchemy[asyncio]>=2.0",
     "alembic>=1.18",
     "asyncpg>=0.31",
@@ -36,6 +39,10 @@ dependencies = [
     # transitively by fish-audio-sdk — declared here because we import them.
     "httpx-ws>=0.7",
     "ormsgpack>=1.5",
+    # zoneinfo needs an IANA tz database; Windows ships none, so the display_timezone
+    # lookup (web/templating.py) would raise there without this. Linux images have a
+    # system db, but pinning it keeps dev (Windows) and container behaviour identical.
+    "tzdata>=2025.1",
 ]
 
 [dependency-groups]

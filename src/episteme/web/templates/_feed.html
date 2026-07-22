@@ -78,6 +78,7 @@
 <div class="load-sentinel"
      hx-get="/partials/feed?cursor_at={{ next_cursor.at | urlencode }}&cursor_id={{ next_cursor.id }}"
      hx-trigger="revealed"
+     hx-target="this"
      hx-swap="outerHTML">
   <span class="loading">loading…</span>
 </div>

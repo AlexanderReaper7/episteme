@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     stalled_job_recovery_cron: str = "*/5 * * * *"
     stalled_job_heartbeat_seconds: float = 60.0
     feed_page_size: int = 20
+    # Timestamps are stored and compared in UTC everywhere; this is a *display-only*
+    # override so the admin/provenance pages render local wall-clock instead of UTC
+    # (web/templating.py `dt` filter). Any IANA name; empty string keeps raw UTC.
+    display_timezone: str = "Europe/Stockholm"
     http_timeout_seconds: float = 20.0
     http_user_agent: str = "Episteme/0.1 (personal news aggregator)"
     # Some publishers put a bot-detector in front of feeds their robots.txt

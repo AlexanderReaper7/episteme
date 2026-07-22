@@ -57,23 +57,3 @@
 </article>
 {% endif %}
 {% endblock %}
-
-{% block scripts %}
-{% if post.kind != "aggregate" and tts_configured and voices %}
-  <script src="/static/narrate.js"></script>
-{% endif %}
-{% if post.kind != "aggregate" and post.sections %}
-  {% set types = post.sections | map(attribute="type") | list %}
-  {% if "chart" in types %}
-  <script src="/static/vendor/vega.min.js"></script>
-  <script src="/static/vendor/vega-lite.min.js"></script>
-  <script src="/static/vendor/vega-embed.min.js"></script>
-  {% endif %}
-  {% if "diagram" in types %}
-  <script src="/static/vendor/mermaid.min.js"></script>
-  {% endif %}
-  {% if "quiz" in types or "chart" in types or "diagram" in types %}
-  <script src="/static/post.js"></script>
-  {% endif %}
-{% endif %}
-{% endblock %}

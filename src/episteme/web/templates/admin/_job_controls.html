@@ -1,0 +1,13 @@
+{# Job-queue action bar. Returned on its own by pause/resume (hx-target="#job-controls")
+   so toggling the pause state swaps just this bar — no full reload — and the handler
+   fires an `HX-Trigger: refreshQueue` that the #queue table listens for. #}
+<p id="job-controls">
+  <button hx-post="/admin/defer/ingest_all" hx-target="#queue" hx-swap="innerHTML">ingest now</button>
+  <button hx-post="/admin/defer/run_pipeline" hx-target="#queue" hx-swap="innerHTML">run pipeline now</button>
+  {% if status.pipeline.paused %}
+  <button hx-post="/admin/pipeline/resume" hx-target="#job-controls" hx-swap="outerHTML">resume pipeline</button>
+  <span class="bad">paused</span>
+  {% else %}
+  <button hx-post="/admin/pipeline/pause" hx-target="#job-controls" hx-swap="outerHTML">pause + unload</button>
+  {% endif %}
+</p>

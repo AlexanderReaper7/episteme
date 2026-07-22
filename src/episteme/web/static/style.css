@@ -678,6 +678,15 @@ main {
 }
 
 /* Voices sub-page */
+/* Keep the label and its DEFAULT badge on one line even when a long id column
+   squeezes the row. */
+.voice-label-cell {
+  white-space: nowrap;
+}
+.voice-label-cell .voice-default-tag {
+  vertical-align: middle;
+}
+
 .voice-default-tag {
   margin-left: 0.4rem;
   font-size: 0.66rem;
@@ -688,6 +697,29 @@ main {
   border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
   border-radius: 999px;
   padding: 0.05rem 0.45rem;
+}
+
+/* State as a pill, matching the DEFAULT badge shape. */
+.voice-state-chip {
+  display: inline-block;
+  font-size: 0.66rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 0.05rem 0.45rem;
+}
+
+.voice-state-chip.is-on {
+  color: var(--ok);
+  background: var(--ok-chip-bg);
+  border-color: var(--ok-chip-border);
+}
+
+.voice-state-chip.is-off {
+  color: var(--neutral-chip-fg);
+  border-color: var(--neutral-chip-border);
 }
 
 .voice-row-actions {
@@ -712,6 +744,9 @@ main {
   gap: 0.3rem;
   font-size: 0.82rem;
   color: var(--muted);
+  /* Keep the caption (e.g. "provider_voice_id (optional)") on one line; the
+     input below is a block child, so nowrap only affects the caption text. */
+  white-space: nowrap;
 }
 
 .voice-form input {
@@ -756,6 +791,40 @@ main {
 
 .admin-form-hint { margin: 0 0 1rem; font-size: 0.85rem; }
 .admin-form-hint code { word-break: break-all; }
+
+/* Provider select matches the form inputs. */
+.voice-form select {
+  background: var(--card-hover);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.4rem 0.55rem;
+  font: inherit;
+  font-size: 0.9rem;
+}
+
+.voice-form select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+}
+
+.voice-form-actions { margin-top: 1rem; }
+
+/* Drag-to-reorder catalog rows. */
+.voice-drag-handle {
+  cursor: grab;
+  color: var(--muted);
+  user-select: none;
+  width: 1.2rem;
+  text-align: center;
+  letter-spacing: -0.1em;
+}
+
+.voice-row { cursor: default; }
+.voice-row.dragging { opacity: 0.4; }
+.voice-row.dragging .voice-drag-handle { cursor: grabbing; }
+
+.voice-edit-btn { color: var(--accent); }
 
 .admin-card button.primary {
   background: color-mix(in srgb, var(--accent) 20%, var(--card-hover));

@@ -1,0 +1,12 @@
+{# The post row's cell on the provenance page. Returned on its own by the pin/unpin
+   button (hx-target="#post-pin-cell") so toggling retention swaps just this cell — no
+   full page reload. #}
+<td id="post-pin-cell">
+  #{{ post.id }} · {{ post.kind }} · {{ post.status }}
+  · generated {{ post.generated_at | dt }}
+  {% if post.archived_at %} · archived {{ post.archived_at | dt }}{% endif %}
+  {% if post.pinned %} · <strong>pinned</strong> (never auto-pruned){% endif %}
+  · <button hx-post="/admin/posts/{{ post.id }}/pin?value={{ 'false' if post.pinned else 'true' }}"
+            hx-target="#post-pin-cell" hx-swap="outerHTML">
+      {{ "unpin" if post.pinned else "pin" }}</button>
+</td>

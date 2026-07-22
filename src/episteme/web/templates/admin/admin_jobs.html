@@ -7,16 +7,7 @@
 
 <section class="admin-card admin-card-wide">
   <h2>Controls</h2>
-  <p>
-    <button hx-post="/admin/defer/ingest_all" hx-target="#queue" hx-swap="innerHTML">ingest now</button>
-    <button hx-post="/admin/defer/run_pipeline" hx-target="#queue" hx-swap="innerHTML">run pipeline now</button>
-    {% if status.pipeline.paused %}
-    <button hx-post="/admin/pipeline/resume" hx-on::after-request="location.reload()">resume pipeline</button>
-    <span class="bad">paused</span>
-    {% else %}
-    <button hx-post="/admin/pipeline/pause" hx-on::after-request="location.reload()">pause + unload</button>
-    {% endif %}
-  </p>
+  {% include "admin/_job_controls.html" %}
   <p class="stage-controls">
     <input id="stage-limit" name="limit" type="number" min="1" placeholder="limit">
     <input id="stage-story" name="story_id" type="number" min="1" placeholder="story id">
@@ -31,7 +22,9 @@
 
 <section class="admin-card admin-card-wide">
   <h2>Queue</h2>
-  <div id="queue" hx-get="/admin/partials/queue" hx-trigger="every 10s">
+  <div id="queue" hx-get="/admin/partials/queue"
+       hx-trigger="every 10s, refreshQueue from:body"
+       hx-target="this">
     {% include "admin/_admin_queue.html" %}
   </div>
 </section>

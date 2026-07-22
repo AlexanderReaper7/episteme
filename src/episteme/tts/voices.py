@@ -15,12 +15,15 @@ with (defaults to `id`).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import Voice as VoiceModel
+
+DEFAULT_PROVIDER = "fish"
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +40,95 @@ class Voice:
     def ref_id(self) -> str:
         """The id the provider is addressed with (the Fish reference_id)."""
         return self.provider_voice_id or self.id
+
+
+@dataclass(frozen=True, slots=True)
+class ParamField:
+    """One editable generation-param field in a provider's schema. `key` is the
+    dotted path into the provider-agnostic `params` bag (e.g. `prosody.speed`),
+    which is also the form input `name`, so parse/prefill stay generic."""
+
+    key: str
+    label: str
+    kind: str = "number"  # number | text
+    step: str | None = None
+    min: float | None = None
+    max: float | None = None
+    placeholder: str = ""
+    help: str = ""
+
+
+# Per-provider params schema for the catalog editor. `params` is stored
+# provider-agnostically (each provider reads the keys it understands); this
+# describes those keys so the admin page can render + parse a provider's fields
+# without the form hardcoding any single provider. A new provider adds an entry
+# here (and the code that reads its keys) — no template or handler change.
+PROVIDER_PARAM_SCHEMAS: dict[str, list[ParamField]] = {
+    "fish": [
+        ParamField("temperature", "temperature", step="0.05", min=0, placeholder="0.7",
+                   help="Randomness of the synthesis (Fish default 0.7)."),
+        ParamField("top_p", "top_p", step="0.05", min=0, max=1, placeholder="0.7",
+                   help="Nucleus sampling cutoff."),
+        ParamField("prosody.speed", "prosody.speed", step="0.05", min=0, placeholder="1.0",
+                   help="Speaking rate; 1.0 is natural, <1 slower."),
+        ParamField("prosody.volume", "prosody.volume", step="1", placeholder="0",
+                   help="Loudness offset in dB; 0 leaves it unchanged."),
+    ],
+}
+
+
+def param_schema_for(provider: str) -> list[ParamField]:
+    """The editable param fields for a provider (empty for an unknown one)."""
+    return PROVIDER_PARAM_SCHEMAS.get(provider, [])
+
+
+def _set_dotted(target: dict, path: str, value: object) -> None:
+    parts = path.split(".")
+    for part in parts[:-1]:
+        nxt = target.get(part)
+        if not isinstance(nxt, dict):
+            nxt = {}
+            target[part] = nxt
+        target = nxt
+    target[parts[-1]] = value
+
+
+def parse_params(provider: str, get_value: Callable[[str], str | None]) -> dict:
+    """Build the params bag from a form-value getter, driven by the provider's
+    schema. `get_value(key)` returns the raw submitted string for a (dotted) key;
+    blanks are omitted and numeric fields coerced. Keys outside the schema are
+    ignored, so a provider can never store params it doesn't understand."""
+    params: dict = {}
+    for spec in param_schema_for(provider):
+        raw = (get_value(spec.key) or "").strip()
+        if not raw:
+            continue
+        value: object = raw
+        if spec.kind == "number":
+            try:
+                value = float(raw)
+            except ValueError:
+                continue
+        _set_dotted(params, spec.key, value)
+    return params
+
+
+def flatten_params(params: dict | None) -> dict[str, object]:
+    """Flatten a nested params bag to dotted keys mirroring `ParamField.key`
+    (`{'prosody': {'speed': 1.0}}` → `{'prosody.speed': 1.0}`) so the editor can
+    prefill each field by its dotted name."""
+    out: dict[str, object] = {}
+
+    def _walk(node: dict, prefix: str) -> None:
+        for key, value in node.items():
+            dotted = f"{prefix}{key}"
+            if isinstance(value, dict):
+                _walk(value, dotted + ".")
+            else:
+                out[dotted] = value
+
+    _walk(params or {}, "")
+    return out
 
 
 def _to_voice(row: VoiceModel) -> Voice:
@@ -124,3 +216,16 @@ async def delete_voice(session: AsyncSession, voice_id: str) -> None:
     if row is not None:
         await session.delete(row)
         await session.commit()
+
+
+async def reorder_voices(session: AsyncSession, ordered_ids: list[str]) -> None:
+    """Set each voice's `sort_order` to its position in `ordered_ids` (index 0 →
+    sort_order 0), so the first id becomes the lowest sort_order and therefore
+    the effective default (see `pick_default`). Ids not present are left alone.
+    Commits."""
+    rows = {r.id: r for r in (await session.execute(select(VoiceModel))).scalars()}
+    for index, voice_id in enumerate(ordered_ids):
+        row = rows.get(voice_id)
+        if row is not None:
+            row.sort_order = index
+    await session.commit()

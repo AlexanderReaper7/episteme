@@ -1,0 +1,14 @@
+<aside class="admin-sidebar">
+  <p class="admin-sidebar-title">Admin</p>
+  {# Boosted nav (inherited from <body>), retargeted to #admin-main so only the inner
+     region swaps and this sidebar stays in the DOM (no repaint / flash). The server
+     returns just the admin_content block. Active state is synced client-side in
+     app.js, since the sidebar isn't reloaded for the server to restamp it. #}
+  <nav class="admin-sidebar-nav" hx-target="#admin-main">
+    <a href="/admin" class="{{ 'active' if active == 'dashboard' else '' }}">Dashboard</a>
+    <a href="/admin/runs" class="{{ 'active' if active == 'runs' else '' }}">Pipeline runs</a>
+    <a href="/admin/jobs" class="{{ 'active' if active == 'jobs' else '' }}">Job queue</a>
+    <a href="/admin/sources" class="{{ 'active' if active == 'sources' else '' }}">Sources</a>
+    <a href="/admin/voices" class="{{ 'active' if active == 'voices' else '' }}">Voices</a>
+  </nav>
+</aside>
