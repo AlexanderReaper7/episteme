@@ -48,6 +48,7 @@ DEFERRABLE_TASKS: dict[str, tuple[str, frozenset[str]]] = {
     "ingest_source": ("episteme.ingest_source", frozenset({"source_id"})),
     "run_pipeline": ("episteme.run_pipeline", frozenset()),
     "backup_database": ("episteme.backup_database", frozenset()),
+    "recover_stalled_jobs": ("episteme.recover_stalled_jobs", frozenset()),
     "embed": ("episteme.pipeline_stage", frozenset({"limit"})),
     "cluster": ("episteme.pipeline_stage", frozenset({"limit"})),
     "triage": ("episteme.pipeline_stage", frozenset({"limit", "story_id"})),

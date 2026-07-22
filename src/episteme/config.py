@@ -6,6 +6,14 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql://episteme:episteme@localhost:5432/episteme"
     ingest_cron: str = "*/30 * * * *"
+    # Stalled-job recovery: a redeploy SIGKILLs the worker, and procrastinate only
+    # writes a job's terminal row when the worker *finishes* it — so an in-flight
+    # job is stranded in `doing` forever, with nothing in a plain worker to sweep
+    # it (this is how ingest_source job 1165 stuck on the 2026-07-18 redeploy). A
+    # periodic sweep requeues such jobs. Detection is heartbeat-based: the live
+    # worker beats every 10s, so the 60s threshold can never catch a running job.
+    stalled_job_recovery_cron: str = "*/5 * * * *"
+    stalled_job_heartbeat_seconds: float = 60.0
     feed_page_size: int = 20
     http_timeout_seconds: float = 20.0
     http_user_agent: str = "Episteme/0.1 (personal news aggregator)"

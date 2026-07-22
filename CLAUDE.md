@@ -10,7 +10,6 @@ overnight into generated articles plus a Google-News-style aggregation stream.
 
 **Read [episteme-architecture.md](episteme-architecture.md) first** — it is the authoritative
 spec (data model, pipeline stages, feed-composition rules, roadmap phases, decided constraints).
-`episteme-architecture.OLD.md` is a superseded v1 kept for reference only.
 
 ## Current state (update this section as phases land)
 
@@ -267,6 +266,18 @@ uv lock                                     # re-resolve after editing dependenc
 - **Jobs**: procrastinate (Postgres-backed queue, no broker). Worker and web are the
   same image with different entrypoints. Periodic tasks via `@app.periodic(cron=...)`,
   crons configurable through settings (`config.py` reads env / `.env`).
+  **Stalled-job recovery** (`worker/maintenance.py`, since 2026-07-21): procrastinate
+  writes a job's terminal event only when the worker *finishes* it, so a redeploy
+  SIGKILL strands the in-flight job in `doing` forever (this is how ingest_source
+  job 1165 stuck on the 07-18 redeploy — worker killed mid-fetch, attempts stays 0).
+  A plain worker has nothing that sweeps these, so a periodic `recover_stalled_jobs`
+  (`stalled_job_recovery_cron`, default every 5 min) requeues them and prunes the
+  dead workers behind them. Detection is heartbeat-based via
+  `job_manager.get_stalled_jobs` (the live worker beats every 10s, so the 60s
+  `stalled_job_heartbeat_seconds` threshold can never catch a running job; NULL
+  worker_id — pre-heartbeat orphans — counts as stalled). Requeue is safe because
+  ingest is idempotent and pipeline stages re-pick unprocessed rows. Also
+  deferrable manually: `POST /api/jobs/defer/recover_stalled_jobs`.
 - **Schema management is Alembic** (since 2026-07-20; replaced bootstrap.py's
   hand-written `RENAME_MIGRATIONS`/`ADDITIVE_MIGRATIONS` DDL lists, whose end
   state is collapsed into the baseline revision `794b362d6e01`). Migrations live

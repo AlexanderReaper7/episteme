@@ -5,7 +5,7 @@ This is a list of things to maybe do, in no particular order. And serves as a pl
 >[!WARNING]
 >AI agents should not write here nor implement any of these TODOs without explicit approval from the human operator.
 >
->But they can be used to inform the design of the system but must be explicitly mentioned and asked for approval when they do influence desicions.
+>But they can be used to inform the design of the system but must be explicitly mentioned and asked for approval when they do influence decicions.
 
 ---
 
@@ -25,3 +25,4 @@ This is a list of things to maybe do, in no particular order. And serves as a pl
 - voice provider custom params schema for nice admin page voice catalog editing.
 - continuos narration doesnt auto start when loaded next post, but it should.
 - voice catalog reordering - drag and drop - item at the top becomes default.
+- make sure source request delay is truly global - agent tool use, pipeline, etc.
