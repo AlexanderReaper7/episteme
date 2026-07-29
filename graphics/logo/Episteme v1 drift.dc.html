@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+  html,body{margin:0;height:100%;background:transparent}
+  :where(x-dc,[data-dc-root],#root){display:block;height:100%}
+  a{color:#A9CBF0}
+  a:hover{color:#CFE1F7}
+</style>
+</helmet>
+<div style="position:relative;width:100%;height:100%;min-height:560px;background:transparent;overflow:hidden">
+  <canvas ref="{{ setCanvas }}" style="position:absolute;inset:0;width:100%;height:100%;display:block"></canvas>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:760,&quot;height&quot;:760},&quot;warp&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:55,&quot;min&quot;:0,&quot;max&quot;:100,&quot;step&quot;:5,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Weave&quot;,&quot;unit&quot;:&quot;%&quot;},&quot;wellSize&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:0.34,&quot;min&quot;:0.12,&quot;max&quot;:0.7,&quot;step&quot;:0.02,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Weave&quot;},&quot;cols&quot;:{&quot;editor&quot;:&quot;int&quot;,&quot;default&quot;:5,&quot;min&quot;:3,&quot;max&quot;:24,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Weave&quot;},&quot;rows&quot;:{&quot;editor&quot;:&quot;int&quot;,&quot;default&quot;:16,&quot;min&quot;:8,&quot;max&quot;:40,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Weave&quot;},&quot;drift&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:0.12,&quot;min&quot;:0,&quot;max&quot;:0.6,&quot;step&quot;:0.02,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Motion&quot;},&quot;elong&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:1.15,&quot;min&quot;:0.8,&quot;max&quot;:1.8,&quot;step&quot;:0.05,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Beacon&quot;},&quot;front&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:0.18,&quot;min&quot;:0,&quot;max&quot;:0.45,&quot;step&quot;:0.01,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Beacon&quot;},&quot;weaveColor&quot;:{&quot;editor&quot;:&quot;color&quot;,&quot;default&quot;:&quot;#86AAD4&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Color&quot;},&quot;accent&quot;:{&quot;editor&quot;:&quot;color&quot;,&quot;default&quot;:&quot;#A9CBF0&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Color&quot;},&quot;beaconColor&quot;:{&quot;editor&quot;:&quot;color&quot;,&quot;default&quot;:&quot;#C6D4E6&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Color&quot;}}">
+class Component extends DCLogic {
+  componentDidMount() {
+    this.start = performance.now();
+    this.t = 0;
+    const loop = (now) => {
+      this.t = (now - this.start) / 1000;
+      this.draw();
+      this._raf = requestAnimationFrame(loop);
+    };
+    this._raf = requestAnimationFrame(loop);
+  }
+  componentWillUnmount() { cancelAnimationFrame(this._raf); }
+
+  renderVals() {
+    return { setCanvas: (el) => { this.canvas = el; } };
+  }
+
+  cfg() {
+    const p = this.props || {};
+    return {
+      warp: p.warp ?? 55,
+      cols: Math.max(3, Math.round(p.cols ?? 5)),
+      rows: Math.max(8, Math.round(p.rows ?? 16)),
+      drift: p.drift ?? 0.12,
+      wellSize: p.wellSize ?? 0.34,
+      elong: p.elong ?? 1.15,
+      front: p.front ?? 0.18,
+      weave: p.weaveColor ?? '#86AAD4',
+      accent: p.accent ?? '#A9CBF0',
+      beacon: p.beaconColor ?? '#C6D4E6',
+    };
+  }
+
+  rgb(hex) {
+    let h = (hex || '').trim();
+    if (h[0] === '#') h = h.slice(1);
+    if (h.length === 3) h = h.split('').map(c => c + c).join('');
+    const n = parseInt(h || '888888', 16);
+    return `${(n >> 16) & 255},${(n >> 8) & 255},${n & 255}`;
+  }
+
+  draw() {
+    const c = this.canvas;
+    if (!c) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const rect = c.getBoundingClientRect();
+    const w = rect.width, h = rect.height;
+    if (!w || !h) return;
+    if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) {
+      c.width = Math.round(w * dpr);
+      c.height = Math.round(h * dpr);
+    }
+    const ctx = c.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+
+    const k = this.cfg();
+    const weave = this.rgb(k.weave);
+    const accent = this.rgb(k.accent);
+    const beacon = this.rgb(k.beacon);
+
+    const cx = w / 2;
+    const octoCY = h * 0.44;
+    const H = Math.min(h, w) * 0.20 * k.elong;
+    const W = H * 0.40;
+
+    // five points — apexes, two equator vertices, and a front vertex below the equator
+    const T = [cx, octoCY - H];
+    const B = [cx, octoCY + H];
+    const L = [cx - W, octoCY];
+    const R = [cx + W, octoCY];
+    const F = [cx, octoCY + H * k.front];
+
+    // the plane's vanishing edge sits between the equator and the tip, so the
+    // weave can never rise into the octahedron's upper half
+    const horizonY = octoCY + H * 0.15;
+    const massX = B[0], massY = B[1];        // point of influence: the bottom tip
+
+    // receding ground plane
+    const zCam = 0.85;
+    const rowGap = 1 / k.rows;
+    const proj = (Z) => 1 / (Z + zCam);
+    const pNear = proj(0), pFar = proj(1);
+    const S = (w * 0.62) / pNear;
+    const planeY = (p) => horizonY + (h - horizonY) * ((p - pFar) / (pNear - pFar));
+    const scroll = (this.t * k.drift) % rowGap;
+
+    // depth at which the plane passes the bottom tip — the mass sits there
+    const ttTip = (massY - horizonY) / (h - horizonY);
+    const pTip = pFar + ttTip * (pNear - pFar);
+    const Zm = 1 / pTip - zCam;
+
+    // Smooth, strictly monotonic well: Z' = Z + a·s·f(u), f(u) = -u·e^(-u²).
+    // |f'| ≤ 1, so a < 1 guarantees rows can never cross or reverse order.
+    const s = k.wellSize;
+    const a = Math.min(0.9, (k.warp / 100) * 0.9);
+    const pull = (u) => -u * Math.exp(-u * u);
+
+    // start three rows in FRONT of the near plane so the lattice's near
+    // boundary is always off-canvas — the field has no visible origin
+    const pts = [], alphas = [];
+    for (let i = -3; i <= k.rows; i++) {
+      const Z0 = i * rowGap + scroll;
+      const u = (Z0 - Zm) / s;
+      const Z = Z0 + a * s * pull(u);
+      const near = Math.exp(-u * u);            // influence envelope
+      const p = proj(Z);
+      const tt = (p - pFar) / (pNear - pFar);
+      const baseY = planeY(p);
+      const row = [];
+      for (let j = -k.cols; j <= k.cols; j++) {
+        const wx0 = j / k.cols;
+        const v = wx0 / 0.55;
+        const wx = wx0 + a * 0.55 * pull(v) * near;   // draw strands inward toward the mass
+        row.push([cx + wx * p * S, baseY]);
+      }
+      pts.push(row);
+      alphas.push(Math.max(0, Math.min(1, tt * 1.6)));
+    }
+
+    // mass glow, centred on the tip
+    const wellR = Math.min(w, h) * 0.34;
+    const glow = ctx.createRadialGradient(massX, massY, 0, massX, massY, wellR);
+    glow.addColorStop(0, `rgba(${accent},0.16)`);
+    glow.addColorStop(1, `rgba(${accent},0)`);
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 0, w, h);
+
+    const strands = (front) => {
+      ctx.lineCap = 'round';
+      // the front pass takes the few rows whose strands actually cross the
+      // lower body — between the front vertex and the bottom tip
+      let crossed = 0;
+      for (let i = pts.length - 1; i >= 0 && front; i--) {
+        const midY = pts[i][k.cols][1];
+        if (midY <= F[1] || midY >= B[1]) continue;
+        if (++crossed > 4) break;
+        const a = Math.min(0.95, alphas[i] + 0.2);
+        ctx.beginPath();
+        for (let j = 0; j < pts[i].length; j++) {
+          const [x, y] = pts[i][j];
+          j ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+        }
+        ctx.strokeStyle = `rgba(${weave},${a})`;
+        ctx.lineWidth = 0.8 + alphas[i] * 1.5;
+        ctx.stroke();
+      }
+      if (front) return;
+      for (let i = 0; i < pts.length; i++) {
+        const a = alphas[i];
+        if (a <= 0.01) continue;
+        ctx.beginPath();
+        for (let j = 0; j < pts[i].length; j++) {
+          const [x, y] = pts[i][j];
+          j ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+        }
+        ctx.strokeStyle = `rgba(${weave},${a * 0.85})`;
+        ctx.lineWidth = 0.5 + a * 1.45;
+        ctx.stroke();
+      }
+      for (let j = 0; j < pts[0].length; j++) {
+        ctx.beginPath();
+        for (let i = 0; i < pts.length; i++) {
+          const [x, y] = pts[i][j];
+          i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+        }
+        const g = ctx.createLinearGradient(0, horizonY, 0, h);
+        g.addColorStop(0, `rgba(${weave},0)`);
+        g.addColorStop(1, `rgba(${weave},0.8)`);
+        ctx.strokeStyle = g;
+        ctx.lineWidth = 0.9;
+        ctx.stroke();
+      }
+    };
+
+    // base pass: everywhere EXCEPT the octahedron's silhouette, so nothing
+    // shows through the semi-transparent facets and the mass reads as solid
+    const silhouette = () => {
+      ctx.moveTo(T[0], T[1]); ctx.lineTo(R[0], R[1]);
+      ctx.lineTo(B[0], B[1]); ctx.lineTo(L[0], L[1]); ctx.closePath();
+    };
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, w, h);
+    silhouette();
+    ctx.clip('evenodd');
+    strands(false);
+    ctx.restore();
+
+    // four facets — depth from opacity steps only, one fill color, light from upper right
+    const facet = (a, b, c2, alpha) => {
+      ctx.beginPath();
+      ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.lineTo(c2[0], c2[1]);
+      ctx.closePath();
+      ctx.fillStyle = `rgba(${beacon},${alpha})`;
+      ctx.fill();
+    };
+    facet(T, F, R, 0.92);   // upper right — lit
+    facet(T, F, L, 0.50);   // upper left
+    facet(F, R, B, 0.62);   // lower right
+    facet(F, L, B, 0.28);   // lower left — deepest shade
+
+    // silhouette + interior seams
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(T[0], T[1]); ctx.lineTo(R[0], R[1]); ctx.lineTo(B[0], B[1]);
+    ctx.lineTo(L[0], L[1]); ctx.closePath();
+    ctx.strokeStyle = `rgba(${accent},0.5)`;
+    ctx.lineWidth = 1.1;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(T[0], T[1]); ctx.lineTo(F[0], F[1]); ctx.lineTo(B[0], B[1]);
+    ctx.moveTo(L[0], L[1]); ctx.lineTo(F[0], F[1]); ctx.lineTo(R[0], R[1]);
+    ctx.strokeStyle = `rgba(${accent},0.3)`;
+    ctx.lineWidth = 0.9;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(L[0], L[1]); ctx.lineTo(T[0], T[1]); ctx.lineTo(R[0], R[1]);
+    ctx.strokeStyle = `rgba(${accent},0.7)`;
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
+
+    // near strands pass in front of the lower body — embedded, not placed on top
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(L[0], L[1]); ctx.lineTo(F[0], F[1]); ctx.lineTo(R[0], R[1]);
+    ctx.lineTo(B[0], B[1]); ctx.closePath();
+    ctx.clip();
+    strands(true);
+    ctx.restore();
+  }
+}
+</script>
+</body>
+</html>

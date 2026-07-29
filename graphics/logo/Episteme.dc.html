@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+  html,body{margin:0;height:100%;background:transparent}
+  :where(x-dc,[data-dc-root],#root){display:block;height:100%}
+  a{color:#A9CBF0}
+  a:hover{color:#CFE1F7}
+</style>
+</helmet>
+<div style="position:relative;width:100%;height:100%;min-height:560px;background:transparent;overflow:hidden">
+  <canvas ref="{{ setCanvas }}" style="position:absolute;inset:0;width:100%;height:100%;display:block"></canvas>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:760,&quot;height&quot;:760},&quot;warp&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:55,&quot;min&quot;:0,&quot;max&quot;:100,&quot;step&quot;:5,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Forces&quot;,&quot;unit&quot;:&quot;%&quot;},&quot;wellSize&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:0.34,&quot;min&quot;:0.12,&quot;max&quot;:0.7,&quot;step&quot;:0.02,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Forces&quot;},&quot;gravPull&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:0.5,&quot;min&quot;:0,&quot;max&quot;:1.5,&quot;step&quot;:0.05,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Forces&quot;},&quot;exclusion&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:10,&quot;min&quot;:0,&quot;max&quot;:40,&quot;step&quot;:1,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Forces&quot;,&quot;unit&quot;:&quot;px&quot;},&quot;massVar&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:0.35,&quot;min&quot;:0,&quot;max&quot;:1,&quot;step&quot;:0.05,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Forces&quot;},&quot;chargeVar&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:0.35,&quot;min&quot;:0,&quot;max&quot;:1,&quot;step&quot;:0.05,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Forces&quot;},&quot;cols&quot;:{&quot;editor&quot;:&quot;int&quot;,&quot;default&quot;:5,&quot;min&quot;:3,&quot;max&quot;:24,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Weave&quot;},&quot;rows&quot;:{&quot;editor&quot;:&quot;int&quot;,&quot;default&quot;:16,&quot;min&quot;:8,&quot;max&quot;:40,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Weave&quot;},&quot;weaveColor&quot;:{&quot;editor&quot;:&quot;color&quot;,&quot;default&quot;:&quot;#86AAD4&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Weave&quot;},&quot;rippleAmp&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:1,&quot;min&quot;:0,&quot;max&quot;:2.5,&quot;step&quot;:0.1,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Motion&quot;},&quot;rippleRate&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:1,&quot;min&quot;:0,&quot;max&quot;:3,&quot;step&quot;:0.1,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Motion&quot;},&quot;rippleSpeed&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:0.17,&quot;min&quot;:0.04,&quot;max&quot;:0.5,&quot;step&quot;:0.01,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Motion&quot;},&quot;albedo&quot;:{&quot;editor&quot;:&quot;color&quot;,&quot;default&quot;:&quot;#9AA2AC&quot;,&quot;options&quot;:[&quot;#9AA2AC&quot;,&quot;#8C8C8C&quot;,&quot;#A79E93&quot;,&quot;#6E7681&quot;],&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Obelisk&quot;},&quot;roughness&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:0.75,&quot;min&quot;:0,&quot;max&quot;:1,&quot;step&quot;:0.05,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Obelisk&quot;},&quot;sheen&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:0.06,&quot;min&quot;:0,&quot;max&quot;:0.6,&quot;step&quot;:0.02,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Obelisk&quot;},&quot;lightAz&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:0.9,&quot;min&quot;:-1.4,&quot;max&quot;:1.4,&quot;step&quot;:0.05,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Obelisk&quot;},&quot;edge&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:0.25,&quot;min&quot;:0,&quot;max&quot;:1,&quot;step&quot;:0.05,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Obelisk&quot;},&quot;elong&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:1.15,&quot;min&quot;:0.8,&quot;max&quot;:1.8,&quot;step&quot;:0.05,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Obelisk&quot;},&quot;front&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:0.18,&quot;min&quot;:0,&quot;max&quot;:0.45,&quot;step&quot;:0.01,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Obelisk&quot;}}">
+class Component extends DCLogic {
+  componentDidMount() {
+    this.start = performance.now();
+    this.t = 0;
+    this.ripples = [];
+    this.nextSpawn = 0.3;
+    const loop = (now) => {
+      this.t = (now - this.start) / 1000;
+      this.pump();
+      this.draw();
+      this._raf = requestAnimationFrame(loop);
+    };
+    this._raf = requestAnimationFrame(loop);
+  }
+  componentWillUnmount() { cancelAnimationFrame(this._raf); }
+
+  renderVals() {
+    return { setCanvas: (el) => { this.canvas = el; } };
+  }
+
+  cfg() {
+    const p = this.props || {};
+    return {
+      warp: p.warp ?? 55,
+      wellSize: p.wellSize ?? 0.34,
+      cols: Math.max(3, Math.round(p.cols ?? 5)),
+      rows: Math.max(8, Math.round(p.rows ?? 16)),
+      elong: p.elong ?? 1.15,
+      front: p.front ?? 0.18,
+      rippleAmp: p.rippleAmp ?? 1,
+      rippleRate: p.rippleRate ?? 1,
+      rippleSpeed: p.rippleSpeed ?? 0.17,
+      weave: p.weaveColor ?? '#86AAD4',
+      albedo: p.albedo ?? '#9AA2AC',
+      roughness: p.roughness ?? 0.75,
+      sheen: p.sheen ?? 0.06,
+      lightAz: p.lightAz ?? 0.9,
+      edge: p.edge ?? 0.25,
+      gravPull: p.gravPull ?? 0.5,
+      exclusion: p.exclusion ?? 10,
+      massVar: p.massVar ?? 0.35,
+      chargeVar: p.chargeVar ?? 0.35,
+    };
+  }
+
+  // blue-noise origin: Mitchell's best-candidate — of N throws, keep the one
+  // farthest from recent origins, so perturbation covers the field evenly
+  // instead of clumping the way uniform random does
+  pickOrigin() {
+    const recent = this.ripples.slice(-7);
+    let best = null, bestD = -1;
+    for (let i = 0; i < 14; i++) {
+      const wx = Math.random() * 2.7 - 1.35;
+      const z = Math.random() * 1.15 - 0.2;
+      let d = Infinity;
+      for (const r of recent) d = Math.min(d, Math.hypot((wx - r.wx) * 0.85, z - r.z));
+      if (!recent.length) d = Math.random();
+      if (d > bestD) { bestD = d; best = { wx, z }; }
+    }
+    return best;
+  }
+
+  pump() {
+    const k = this.cfg();
+    if (k.rippleRate > 0 && this.t > this.nextSpawn) {
+      const o = this.pickOrigin();
+      this.ripples.push({
+        wx: o.wx,
+        z: o.z,
+        t0: this.t,
+        amp: 0.65 + Math.random() * 0.7,
+        life: 3.4 + Math.random() * 2.2,
+      });
+      this.nextSpawn = this.t + (0.45 + Math.random() * 1.15) / k.rippleRate;
+    }
+    this.ripples = this.ripples.filter(r => this.t - r.t0 < r.life);
+  }
+
+  // signed height of the fabric at a plane coordinate: dispersing wave packets.
+  // sigma is floored well above the render sample pitch so every crest is resolvable
+  field(wx, Z, k) {
+    let sum = 0;
+    for (const R of this.ripples) {
+      const age = this.t - R.t0;
+      if (age < 0) continue;
+      const r = Math.hypot((wx - R.wx) * 0.85, Z - R.z);
+      const crest = k.rippleSpeed * age;
+      const sigma = 0.1 + 0.06 * age;
+      const q = (r - crest) / sigma;
+      if (q * q > 10) continue;
+      sum += R.amp * Math.exp(-q * q) * (1 - age / R.life) * (0.34 / (0.34 + crest)) * Math.cos(q * 1.7);
+    }
+    return sum;
+  }
+
+  rgb(hex) {
+    let h = (hex || '').trim();
+    if (h[0] === '#') h = h.slice(1);
+    if (h.length === 3) h = h.split('').map(c => c + c).join('');
+    const n = parseInt(h || '888888', 16);
+    return `${(n >> 16) & 255},${(n >> 8) & 255},${n & 255}`;
+  }
+
+  draw() {
+    const c = this.canvas;
+    if (!c) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const rect = c.getBoundingClientRect();
+    const w = rect.width, h = rect.height;
+    if (!w || !h) return;
+    if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) {
+      c.width = Math.round(w * dpr);
+      c.height = Math.round(h * dpr);
+    }
+    const ctx = c.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+
+    const k = this.cfg();
+    const weave = this.rgb(k.weave);
+
+    const cx = w / 2;
+    const octoCY = h * 0.47;
+    const H = Math.min(h, w) * 0.20 * k.elong;
+    const W = H * 0.40;
+
+    const T = [cx, octoCY - H];
+    const B = [cx, octoCY + H];
+    const L = [cx - W, octoCY];
+    const R = [cx + W, octoCY];
+    const F = [cx, octoCY + H * k.front];
+
+    const horizonY = octoCY + H * 0.02;   // vanishing edge at the equator — the body sits deeper in the field
+    const massX = B[0], massY = B[1];
+
+    const zCam = 0.85;
+    const rowGap = 1 / k.rows;
+    const proj = (Z) => 1 / (Z + zCam);
+    const pNear = proj(0), pFar = proj(1);
+    const S = (w * 0.62) / pNear;
+    const planeY = (p) => horizonY + (h - horizonY) * ((p - pFar) / (pNear - pFar));
+
+    const ttTip = (massY - horizonY) / (h - horizonY);
+    const Zm = 1 / (pFar + ttTip * (pNear - pFar)) - zCam;
+
+    const s = k.wellSize;
+    const a = Math.min(0.9, (k.warp / 100) * 0.9);
+    const pull = (u) => -u * Math.exp(-u * u);
+    const warpZ = (Z0) => Z0 + a * s * pull((Z0 - Zm) / s);
+    const nearEnv = (Z0) => Math.exp(-Math.pow((Z0 - Zm) / s, 2));
+    const ampPx = 26 * k.rippleAmp;
+
+    // ONE continuous surface function — render sampling is independent of the
+    // lattice, so a crest narrower than a cell still draws as a smooth swell
+    // the silhouette is a rhombus, so its signed distance field is analytic
+    const gradLen = Math.hypot(1 / W, 1 / H);
+    const hash = (n) => { const v = Math.sin(n * 127.1) * 43758.5453; return v - Math.floor(v); };
+
+    const node = (wx0, Z0, mass, charge) => {
+      const Z = warpZ(Z0);
+      const p = proj(Z);
+      const y0 = planeY(p);
+      const wx = wx0 + a * 0.55 * pull(wx0 / 0.55) * nearEnv(Z0);
+      const e = this.field(wx, Z, k);
+      const yPrev = planeY(proj(warpZ(Z0 - rowGap)));
+      const yNext = planeY(proj(warpZ(Z0 + rowGap)));
+      const gap = Math.min(Math.abs(y0 - yPrev), Math.abs(yNext - y0));
+      let x = cx + wx * p * S;
+      let y = y0 + Math.max(-0.4 * gap, Math.min(0.4 * gap, e * ampPx * (p / pNear)));
+
+      // GRAVITY — long range, attractive. Each section's mass sets how hard the
+      // mass at the tip draws it in; scaled by local spacing so rows never cross
+      if (k.gravPull > 0) {
+        const dx = massX - x, dy = massY - y;
+        const dist = Math.hypot(dx, dy) || 1e-3;
+        const fall = 1 / (1 + Math.pow(dist / (Math.min(w, h) * 0.35), 2));
+        const mag = Math.min(0.35 * gap, k.gravPull * mass * fall * gap);
+        x += (dx / dist) * mag;
+        y += (dy / dist) * mag;
+      }
+
+      // EXCLUSION — short range, repulsive. Charge sets the standoff distance;
+      // any section that would enter the body is pushed back out past the shell,
+      // so the fabric drapes around it and can never overlap
+      const margin = k.exclusion * charge;
+      const u = (x - cx) / W, v = (y - octoCY) / H;
+      const d = (Math.abs(u) + Math.abs(v) - 1) / gradLen;
+      if (d < margin) {
+        const nx = (u >= 0 ? 1 : -1) / W, ny = (v >= 0 ? 1 : -1) / H;
+        const nl = Math.hypot(nx, ny) || 1;
+        const push = margin - d;
+        const soft = d < 0 ? 1 : Math.pow(1 - d / margin, 1.5);
+        x += (nx / nl) * push * soft;
+        y += (ny / nl) * push * soft;
+      }
+
+      const tt = (p - pFar) / (pNear - pFar);
+      return { x, y, e: Math.min(1, Math.abs(e)), a: Math.max(0, Math.min(1, tt * 1.6)) };
+    };
+
+    const SUB = 6;
+    const iStart = -3;
+    const stroke = (samples, from, to) => {
+      ctx.beginPath();
+      for (let i = from; i <= to; i++) {
+        const p = samples[i];
+        i === from ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y);
+      }
+      ctx.stroke();
+    };
+    // energy overlay: contiguous stretches carrying a ripple are brightened and
+    // thickened, so you watch energy travel rather than lines move
+    const energyPass = (samples, baseW) => {
+      const step = 3;
+      for (let i = 0; i < samples.length - 1; i += step) {
+        const to = Math.min(i + step, samples.length - 1);
+        let e = 0, al = 0;
+        for (let j = i; j <= to; j++) { e = Math.max(e, samples[j].e); al = Math.max(al, samples[j].a); }
+        if (e < 0.12 || al < 0.02) continue;
+        ctx.strokeStyle = `rgba(${weave},${Math.min(0.98, al * (0.35 + e * 0.75))})`;
+        ctx.lineWidth = baseW + e * 1.5;
+        stroke(samples, i, to);
+      }
+    };
+
+    const rowSamples = [];
+    for (let i = iStart; i <= k.rows; i++) {
+      const Z0 = i * rowGap;
+      const mass = 1 + k.massVar * (hash(i + 3) * 2 - 1);
+      const charge = 1 + k.chargeVar * (hash(i + 57) * 2 - 1);
+      const n = k.cols * 2 * SUB;
+      const arr = [];
+      for (let q = 0; q <= n; q++) arr.push(node(-1 + (2 * q) / n, Z0, mass, charge));
+      rowSamples.push(arr);
+    }
+    const colSamples = [];
+    for (let j = -k.cols; j <= k.cols; j++) {
+      const wx0 = j / k.cols;
+      const mass = 1 + k.massVar * (hash(j + 19) * 2 - 1);
+      const charge = 1 + k.chargeVar * (hash(j + 131) * 2 - 1);
+      const n = (k.rows - iStart) * SUB;
+      const arr = [];
+      for (let q = 0; q <= n; q++) arr.push(node(wx0, (iStart + ((k.rows - iStart) * q) / n) * rowGap, mass, charge));
+      colSamples.push(arr);
+    }
+
+    const weaveField = () => {
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      for (const arr of rowSamples) {
+        const al = arr[Math.floor(arr.length / 2)].a;
+        if (al <= 0.01) continue;
+        ctx.strokeStyle = `rgba(${weave},${al * 0.7})`;
+        ctx.lineWidth = 0.5 + al * 1.3;
+        stroke(arr, 0, arr.length - 1);
+        energyPass(arr, 0.5 + al * 1.3);
+      }
+      const g = ctx.createLinearGradient(0, horizonY, 0, h);
+      g.addColorStop(0, `rgba(${weave},0)`);
+      g.addColorStop(1, `rgba(${weave},0.75)`);
+      for (const arr of colSamples) {
+        ctx.strokeStyle = g;
+        ctx.lineWidth = 0.9;
+        stroke(arr, 0, arr.length - 1);
+        energyPass(arr, 0.9);
+      }
+    };
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, w, h);
+    ctx.moveTo(T[0], T[1]); ctx.lineTo(R[0], R[1]);
+    ctx.lineTo(B[0], B[1]); ctx.lineTo(L[0], L[1]); ctx.closePath();
+    ctx.clip('evenodd');
+    weaveField();
+    ctx.restore();
+
+    const facet = (p1, p2, p3, fill) => {
+      ctx.beginPath();
+      ctx.moveTo(p1[0], p1[1]); ctx.lineTo(p2[0], p2[1]); ctx.lineTo(p3[0], p3[1]);
+      ctx.closePath();
+      ctx.fillStyle = fill;
+      ctx.fill();
+    };
+    // shading from real 3D face normals: diffuse Lambert + a roughness-driven
+    // specular lobe. Flat per facet — solid, opaque, no fake highlight lines
+    const D = W * 0.85;
+    const V3 = {
+      T: [0, H, 0], B: [0, -H, 0], L: [-W, 0, 0], R: [W, 0, 0], F: [0, -H * k.front, D],
+    };
+    const sub = (p, q) => [p[0] - q[0], p[1] - q[1], p[2] - q[2]];
+    const crs = (p, q) => [p[1] * q[2] - p[2] * q[1], p[2] * q[0] - p[0] * q[2], p[0] * q[1] - p[1] * q[0]];
+    const nrm = (v) => { const m = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / m, v[1] / m, v[2] / m]; };
+    const el = 0.5;
+    const Lv = nrm([Math.sin(k.lightAz) * Math.cos(el), Math.sin(el), Math.cos(k.lightAz) * Math.cos(el)]);
+    const Hv = nrm([Lv[0], Lv[1], Lv[2] + 1]);
+    const gloss = 2 + 140 * Math.pow(1 - k.roughness, 3);
+    const alb = this.rgb(k.albedo).split(',').map(Number);
+    const shade = (v1, v2, v3) => {
+      let n = nrm(crs(sub(v2, v1), sub(v3, v1)));
+      if (n[2] < 0) n = [-n[0], -n[1], -n[2]];
+      const nl = Math.max(0, n[0] * Lv[0] + n[1] * Lv[1] + n[2] * Lv[2]);
+      const amb = 0.16 + 0.14 * k.roughness;
+      const diff = amb + (1 - amb) * nl;
+      const spec = k.sheen * Math.pow(Math.max(0, n[0] * Hv[0] + n[1] * Hv[1] + n[2] * Hv[2]), gloss);
+      const cl = alb.map(ch => Math.max(0, Math.min(255, Math.round(ch * diff + 255 * spec))));
+      return `rgb(${cl[0]},${cl[1]},${cl[2]})`;
+    };
+    facet(T, F, R, shade(V3.T, V3.F, V3.R));
+    facet(T, F, L, shade(V3.T, V3.F, V3.L));
+    facet(F, R, B, shade(V3.F, V3.R, V3.B));
+    facet(F, L, B, shade(V3.F, V3.L, V3.B));
+
+    if (k.edge > 0) {
+      const dk = alb.map(ch => Math.round(ch * 0.28));
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      ctx.moveTo(T[0], T[1]); ctx.lineTo(R[0], R[1]); ctx.lineTo(B[0], B[1]);
+      ctx.lineTo(L[0], L[1]); ctx.closePath();
+      ctx.strokeStyle = `rgba(${dk[0]},${dk[1]},${dk[2]},${k.edge})`;
+      ctx.lineWidth = 1.1;
+      ctx.stroke();
+    }
+
+  }
+}
+</script>
+</body>
+</html>
