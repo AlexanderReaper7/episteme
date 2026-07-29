@@ -15,6 +15,15 @@ class Settings(BaseSettings):
     stalled_job_recovery_cron: str = "*/5 * * * *"
     stalled_job_heartbeat_seconds: float = 60.0
     feed_page_size: int = 20
+    # Background-revalidation grace window (seconds) for the feed + post HTML pages
+    # (web/app.py). These pages are served `max-age=0, stale-while-revalidate=N`:
+    # every navigation revalidates against the ETag (no blind freshness window), but
+    # within N seconds of a cache entry going stale the browser may render the cached
+    # copy INSTANTLY while it revalidates in the background — so the hover-prefetch
+    # makes the click paint with no network wait, yet a changed feed/article is always
+    # re-checked and self-heals on the next navigation. Set to 0 to force a blocking
+    # revalidation on every navigation (correctness identical, just not instant).
+    html_cache_swr_seconds: int = 30
     # Timestamps are stored and compared in UTC everywhere; this is a *display-only*
     # override so the admin/provenance pages render local wall-clock instead of UTC
     # (web/templating.py `dt` filter). Any IANA name; empty string keeps raw UTC.

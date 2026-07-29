@@ -1,5 +1,6 @@
 """Shared Jinja2 environment + filters for all HTML routes (feed and admin)."""
 
+import hashlib
 import re
 from datetime import UTC, datetime
 from pathlib import Path
@@ -135,6 +136,34 @@ def _markdown(value: str) -> Markup:
     return Markup(nh3.clean(md.markdown(value)))
 
 
+# Content-hash cache for asset fingerprinting: {relpath: (mtime, hash8)}.
+_ASSET_HASHES: dict[str, tuple[float, str]] = {}
+
+
+def asset(path: str) -> str:
+    """A cache-busting URL for one static file: `/static/<path>?v=<hash8>`.
+
+    The version is a content hash (memoized, recomputed when the file's mtime
+    changes so a dev edit busts it). Because the URL changes whenever the bytes
+    do, the file can be served `immutable` (web.app.RevalidateStaticFiles keys the
+    long-lived Cache-Control off the presence of `?v=`) — a vendored-library
+    upgrade re-fingerprints on its own, avoiding the stale-forever trap that a
+    bare `immutable` on a fixed filename would cause. A missing file degrades to
+    the unversioned path (which just revalidates)."""
+    file = BASE_DIR / "static" / path
+    try:
+        mtime = file.stat().st_mtime
+    except OSError:
+        return f"/static/{path}"
+    cached = _ASSET_HASHES.get(path)
+    if cached is None or cached[0] != mtime:
+        digest = hashlib.md5(file.read_bytes()).hexdigest()[:8]
+        cached = (mtime, digest)
+        _ASSET_HASHES[path] = cached
+    return f"/static/{path}?v={cached[1]}"
+
+
+templates.env.globals["asset"] = asset
 templates.env.filters["dt"] = _format_dt
 templates.env.filters["banner_image"] = _banner_image
 templates.env.filters["story_banner"] = _story_banner

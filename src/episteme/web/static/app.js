@@ -50,6 +50,13 @@
     return out;
   }
 
+  // Resolve a vendor path to its fingerprinted URL (base.html injects the map) so
+  // lazily-loaded renderers stay immutable-cacheable; fall back to the plain path.
+  function assetUrl(path) {
+    var map = window.EPISTEME_ASSETS || {};
+    return map[path] || "/static/" + path;
+  }
+
   function loadScript(src) {
     return new Promise(function (resolve, reject) {
       if (document.querySelector('script[src="' + src + '"]')) return resolve();
@@ -144,13 +151,13 @@
     var need = [];
     if (pick(root, ".section-chart")) {
       need.push(
-        "/static/vendor/vega.min.js",
-        "/static/vendor/vega-lite.min.js",
-        "/static/vendor/vega-embed.min.js"
+        assetUrl("vendor/vega.min.js"),
+        assetUrl("vendor/vega-lite.min.js"),
+        assetUrl("vendor/vega-embed.min.js")
       );
     }
     if (pick(root, ".section-diagram")) {
-      need.push("/static/vendor/mermaid.min.js");
+      need.push(assetUrl("vendor/mermaid.min.js"));
     }
     var seq = Promise.resolve();
     need.forEach(function (src) {
@@ -221,6 +228,31 @@
       if (continuous.checked) advance();
     });
 
+    // Warm the next post while the current narration is still playing, so the
+    // continuous ("podcast") handoff has no fetch gap. Resolve its id and pull its
+    // HTML (a plain GET, so it shares the /post/{id} ETag and the browser cache) as
+    // playback nears the end; advance() reuses it. Guarded to run at most once per
+    // post; the prefetch is discarded when we actually move on (see swapTo).
+    var prefetch = null;      // {id, html} once warmed
+    var prefetching = false;  // a warm is in flight
+    player.addEventListener("timeupdate", function () {
+      if (!continuous.checked || prefetching || prefetch) return;
+      var dur = player.duration;
+      if (!dur || isNaN(dur) || !isFinite(dur)) return;
+      if (dur - player.currentTime > 15) return;
+      prefetching = true;
+      fetch("/api/posts/" + postId + "/next")
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          if (!d || !d.next_id) return;
+          return fetch("/post/" + d.next_id)
+            .then(function (r) { return r.text(); })
+            .then(function (html) { prefetch = { id: d.next_id, html: html }; });
+        })
+        .catch(function () {})
+        .then(function () { prefetching = false; });
+    });
+
     function hardNavigate(nextId) {
       window.location.href =
         "/post/" + nextId +
@@ -234,9 +266,11 @@
     // would hit. This is the one place we bypass htmx's boosted swap on purpose. The
     // URL is updated with replaceState (not pushState) so Back returns to the feed
     // htmx already has cached, rather than stranding a synthetic history entry.
-    function swapTo(nextId) {
-      return fetch("/post/" + nextId)
-        .then(function (r) { return r.text(); })
+    function swapTo(nextId, prefetchedHtml) {
+      var htmlPromise = prefetchedHtml
+        ? Promise.resolve(prefetchedHtml)
+        : fetch("/post/" + nextId).then(function (r) { return r.text(); });
+      return htmlPromise
         .then(function (html) {
           var doc = new DOMParser().parseFromString(html, "text/html");
           var newArticle = doc.querySelector(".article-page");
@@ -253,6 +287,9 @@
           history.replaceState(null, "", "/post/" + nextId);
           postId = String(nextId);
           root.dataset.postId = postId;
+          // New current post: any warm for the OLD next is now consumed/stale.
+          prefetch = null;
+          prefetching = false;
 
           loadSource();
           setStatus("");
@@ -264,6 +301,12 @@
 
     function advance() {
       setStatus("Loading next…");
+      // Use the warmed next post if we have one (no fetch gap); else resolve it now.
+      if (prefetch && prefetch.id) {
+        var warm = prefetch;
+        prefetch = null;
+        return swapTo(warm.id, warm.html);
+      }
       fetch("/api/posts/" + postId + "/next")
         .then(function (r) { return r.json(); })
         .then(function (d) {

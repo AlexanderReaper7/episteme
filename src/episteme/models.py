@@ -119,6 +119,10 @@ class Post(Base):
     topics: Mapped[list[str]] = mapped_column(JSONB, default=list)
     sections: Mapped[list[Any]] = mapped_column(JSONB, default=list)
     reading_time_minutes: Mapped[int] = mapped_column(default=1)
+    # Denormalized feed-card banner (first image among the story's items), stamped at
+    # write time so the feed renders a feature card without loading its story's items
+    # — the "derivation isn't cheap, so store the minimum" call (see web.app._feed_page).
+    banner_url: Mapped[str | None] = mapped_column(Text)
     model_used: Mapped[str | None] = mapped_column(Text)
     quality_score: Mapped[float | None] = mapped_column()  # set by the qa stage
     status: Mapped[str] = mapped_column(String(20), default="published")

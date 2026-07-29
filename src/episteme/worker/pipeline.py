@@ -242,6 +242,17 @@ def media_candidates(items: list[SourceItem]) -> dict[str, dict]:
     return candidates
 
 
+def story_banner_url(items: list[SourceItem]) -> str | None:
+    """The feed card's banner: the first image among the story's items' media_refs.
+    Denormalized onto `Post.banner_url` at write time so the feed never loads a
+    feature's items just to derive this (mirrors the template's `_story_banner`)."""
+    for item in items:
+        for ref in item.media_refs or []:
+            if ref.get("kind") == "image" and ref.get("url"):
+                return ref["url"]
+    return None
+
+
 def sanitize_media_sections(sections: list[dict], candidates: dict[str, dict]) -> list[dict]:
     """Enforce the closed set on model-authored image/video sections: drop any whose
     URL was not ingested with the story, and stamp attribution from the DB (never
@@ -521,6 +532,7 @@ async def write_posts(
             topics=outcome.draft.topics,
             sections=sections,
             reading_time_minutes=_reading_time(sections),
+            banner_url=story_banner_url(items),
             model_used=gateway.model_for("main"),
         )
         session.add(post)

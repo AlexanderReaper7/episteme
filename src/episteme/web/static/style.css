@@ -422,7 +422,14 @@ main {
 
 .section-image img {
   display: block;
-  max-width: 100%;
+  width: 100%;
+  /* Hotlinked images ship no dimensions, so the browser would reflow the article
+     when each one loads. Reserve a 16/9 box up front (near-invisible letterbox bars
+     on the OLED-black background via object-fit: contain — no cropping) to hold the
+     space and keep CLS at zero. */
+  aspect-ratio: 16 / 9;
+  object-fit: contain;
+  background: var(--banner-bg);
   border-radius: 10px;
   border: 1px solid var(--border);
 }

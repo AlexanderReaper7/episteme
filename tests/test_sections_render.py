@@ -55,17 +55,21 @@ def test_all_section_types_render():
 
 def test_sections_expose_hydration_markers_not_inline_scripts():
     # Rich sections are no longer wired up by per-page <script> tags; the persistent
-    # app.js hydrates them on htmx:load, lazy-loading vega/mermaid only when it sees
-    # the markers below. So the page must carry the markers and must NOT inline the
-    # heavy vendor scripts (that would defeat both boosted swaps and lazy loading).
+    # app.js hydrates them on htmx:load, lazy-loading vega/mermaid AT RUNTIME only when
+    # it sees the markers below. base.html always carries a `window.EPISTEME_ASSETS`
+    # map of fingerprinted vendor URLs (app.js resolves its dynamic imports through
+    # it), so the filenames appear as map VALUES on every page — that is not an eager
+    # load. The HTML-level invariant is that no heavy renderer is pulled in by a
+    # `<script src>` tag (that would defeat both boosted swaps and lazy loading).
     with_chart = _render([{"type": "chart", "spec": {"mark": "bar"}}])
     assert "section-chart" in with_chart and "data-spec=" in with_chart
-    assert "vega.min.js" not in with_chart and "post.js" not in with_chart
+    assert 'src="/static/vendor/vega' not in with_chart
+    assert "post.js" not in with_chart
 
     with_diagram = _render([{"type": "diagram", "mermaid": "flowchart LR; A --> B",
                              "caption": "c"}])
     assert 'class="mermaid"' in with_diagram
-    assert "mermaid.min.js" not in with_diagram
+    assert 'src="/static/vendor/mermaid.min.js' not in with_diagram
 
     with_quiz = _render([{"type": "quiz", "question": "q", "choices": ["a", "b"],
                           "answer_index": 1, "explanation": "e"}])
@@ -73,7 +77,9 @@ def test_sections_expose_hydration_markers_not_inline_scripts():
 
     prose_only = _render([{"type": "prose", "text": "just text"}])
     assert "section-chart" not in prose_only and "section-quiz" not in prose_only
-    assert "vega" not in prose_only and "mermaid" not in prose_only
+    # No eager renderer script tags either (the fingerprint map may still name them).
+    assert 'src="/static/vendor/vega' not in prose_only
+    assert 'src="/static/vendor/mermaid.min.js' not in prose_only
 
 
 def test_video_without_embeddable_url_falls_back_to_link():

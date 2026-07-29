@@ -21,8 +21,6 @@ This is a list of things to maybe do, in no particular order. And serves as a pl
 - no db backup was generated before migration:
   - DATABASE_URL="postgresql://episteme:change-me@127.0.0.1:5433/episteme" uv run python -m episteme.migrations new -m "add post_audio table" 2>&1 | tail -25
   - DATABASE_URL="postgresql://episteme:change-me@127.0.0.1:5433/episteme" uv run python -m episteme.migrations upgrade 2>&1 | tail -15
-- Admin page voice catalog - add edit button editing existing voice should prefill form with existing values.
 - voice provider custom params schema for nice admin page voice catalog editing.
 - continuos narration doesnt auto start when loaded next post, but it should.
-- voice catalog reordering - drag and drop - item at the top becomes default.
 - make sure source request delay is truly global - agent tool use, pipeline, etc.

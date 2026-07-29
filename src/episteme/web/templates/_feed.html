@@ -41,7 +41,9 @@
   </article>
   {% endif %}
 {% else %}
-  {% set banner = post.story | story_banner %}
+  {# Denormalized at write time (pipeline.write_posts) so the feed never loads a
+     feature's story items just to find its banner — see web.app._feed_page. #}
+  {% set banner = post.banner_url %}
   <article class="card card--feature">
     <a class="card-link" href="/post/{{ post.id }}" aria-label="{{ post.title }}"></a>
     {% if banner %}

@@ -5,14 +5,27 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
   <title>Episteme{% block title %}{% endblock %}</title>
-  <link rel="stylesheet" href="/static/style.css">
+  {# `asset()` fingerprints the URL (?v=<hash>) so it can be cached immutably and
+     re-fingerprints on any edit — see web.app.RevalidateStaticFiles. #}
+  <link rel="stylesheet" href="{{ asset('style.css') }}">
   <!-- Vendored htmx preferred; falls back to CDN until static/htmx.min.js exists. -->
-  <script src="/static/htmx.min.js"
+  <script src="{{ asset('htmx.min.js') }}"
           onerror="var s=document.createElement('script');s.src='https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js';document.head.appendChild(s);"></script>
+  <script src="{{ asset('vendor/htmx-ext-preload.min.js') }}"></script>
+  {# Fingerprinted vendor URLs for the lazily-loaded renderers (app.js resolves its
+     dynamic imports through this map so those stay immutable-cacheable too). #}
+  <script>
+    window.EPISTEME_ASSETS = {
+      "vendor/vega.min.js": "{{ asset('vendor/vega.min.js') }}",
+      "vendor/vega-lite.min.js": "{{ asset('vendor/vega-lite.min.js') }}",
+      "vendor/vega-embed.min.js": "{{ asset('vendor/vega-embed.min.js') }}",
+      "vendor/mermaid.min.js": "{{ asset('vendor/mermaid.min.js') }}"
+    };
+  </script>
   {# One persistent controller. It re-initializes narration + rich-section hydration +
      admin nav sync on every `htmx:load`, so boosted fragment swaps behave exactly like
      a full page load. `defer` runs it after parse but before htmx fires its first load. #}
-  <script src="/static/app.js" defer></script>
+  <script src="{{ asset('app.js') }}" defer></script>
 </head>
 {# Whole app is boosted: every <a>/<form> becomes an AJAX nav that swaps only
    #main-content (the top-level outlet), pushing the URL. The admin sidebar overrides
@@ -22,9 +35,15 @@
    We deliberately do NOT set hx-push-url here: it would be inherited by the mutation
    hx-post buttons (toggle/delete/pin/pause) and push their POST endpoints into the
    address bar. #}
+{# `preload` extension: prefetch a boosted link's target on hover so the click feels
+   instant. `preload="mouseover"` is inherited by descendant links; it fires the SAME
+   boosted GET htmx would (correct HX headers → cached fragment), only GETs, once per
+   element — so hx-post mutation buttons are untouched. #}
 <body hx-boost="true"
       hx-target="#main-content"
-      hx-swap="innerHTML">
+      hx-swap="innerHTML"
+      hx-ext="preload"
+      preload="mouseover">
   <header class="site-header">
     <h1><a href="/">Episteme</a></h1>
     <nav class="site-nav">

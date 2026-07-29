@@ -11,8 +11,8 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from croniter import croniter
-from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from sqlalchemy import and_, func, or_, select, text, update
 
 from ..config import settings
@@ -654,7 +654,7 @@ def _audio_is_current(row: PostAudio | None, digest: str, fmt: str, params: dict
 
 
 @router.get("/posts/{post_id}/audio/stream")
-async def api_post_audio_stream(post_id: int, voice: str | None = None):
+async def api_post_audio_stream(post_id: int, request: Request, voice: str | None = None):
     """Primary playback URL: stream the post's narration in one voice. A current
     cache file is served with Range support (seekable); otherwise it is
     synthesized live (opus over Fish's WebSocket), streamed to the client AND
@@ -686,7 +686,16 @@ async def api_post_audio_stream(post_id: int, voice: str | None = None):
     if _audio_is_current(row, digest, fmt, voice_obj.params):
         cached = audio_root / row.path
         if cached.exists():
-            return FileResponse(cached, media_type=media_type)
+            # The audio is content-addressable by script hash, so the digest is a
+            # strong validator: a replay or a seek revalidates and gets a body-less
+            # 304 instead of re-downloading the whole file. `no-cache` (store, always
+            # revalidate) keeps a QA revision from ever serving stale audio — though a
+            # revised script also changes `digest`, so this branch wouldn't be hit.
+            etag = f'"{digest}"'
+            headers = {"ETag": etag, "Cache-Control": "private, no-cache"}
+            if request.headers.get("if-none-match") == etag:
+                return Response(status_code=304, headers=headers)
+            return FileResponse(cached, media_type=media_type, headers=headers)
 
     if not settings.fish_api_key:
         raise HTTPException(503, "narration is not configured")
