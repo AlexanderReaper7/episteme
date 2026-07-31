@@ -72,3 +72,23 @@ def test_audio_is_current_requires_ready_matching_script_format_and_params():
         status="pending", path="p", script_hash="h", audio_format="opus", params={}
     )
     assert not _audio_is_current(pending, "h", "opus", {})                 # not ready
+
+
+def test_defer_args_vocabulary_bootstrap_is_two_tasks():
+    """Propose and apply are separate deferrable tasks on purpose: the proposal is
+    reviewed between them, so there is no single call that clusters and commits."""
+    assert defer_args("propose_topics") == ("episteme.propose_topics", {})
+    assert defer_args("apply_topics") == ("episteme.apply_topics", {})
+    with pytest.raises(ValueError, match="does not accept"):
+        defer_args("apply_topics", limit=5)
+
+
+def test_admin_topic_routes_are_not_shadowed():
+    """/admin/topics/proposal/discard must not be captured by the /{slug}/{action}
+    edit route — FastAPI matches in declaration order."""
+    from episteme.web.admin import router
+
+    paths = [route.path for route in router.routes]
+    assert paths.index("/admin/topics/proposal/discard") < paths.index(
+        "/admin/topics/{slug}/{action}"
+    )

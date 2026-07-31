@@ -9,5 +9,6 @@ app = procrastinate.App(
         "episteme.worker.pipeline",
         "episteme.worker.backup",
         "episteme.worker.maintenance",
+        "episteme.worker.topics",
     ],
 )

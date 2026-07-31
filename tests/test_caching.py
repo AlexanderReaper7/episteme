@@ -25,9 +25,21 @@ def _feed_etag(page, fragment=False):
     return _feed_etag_impl(page, fragment)
 
 
+_NO_FEEDBACK = {
+    "signals": {},
+    "topic_signals": {},
+    "source_signals": {},
+    "post_topics": [],
+    "post_sources": [],
+}
+
+
 def _post_page_etag(post, voices=_VOICES, default_voice="v1", tts_configured=True,
-                    fragment=False):
-    return _post_etag_impl(post, voices, default_voice, tts_configured, fragment)
+                    fragment=False, feedback_ctx=None):
+    return _post_etag_impl(
+        post, voices, default_voice, tts_configured, fragment,
+        _NO_FEEDBACK if feedback_ctx is None else feedback_ctx,
+    )
 
 
 def _item(**kw):
@@ -90,8 +102,13 @@ def _aggregate(items=None, **kw):
     return SimpleNamespace(**base)
 
 
-def _page(posts, has_more=False, next_cursor=None):
-    return {"posts": posts, "has_more": has_more, "next_cursor": next_cursor}
+def _page(posts, has_more=False, next_cursor=None, feedback_signals=None):
+    return {
+        "posts": posts,
+        "has_more": has_more,
+        "next_cursor": next_cursor,
+        "feedback_signals": feedback_signals or {},
+    }
 
 
 def _items_page(items, has_more=False, next_cursor=None):
@@ -305,3 +322,39 @@ def test_provenance_fragment_and_full_document_etags_differ():
     assert _provenance_etag(post, calls, fragment=True) != _provenance_etag(
         post, calls, fragment=False
     )
+
+
+# --- feedback state -------------------------------------------------------
+# Feedback controls render from the database, so their state is part of what a
+# page shows. Both validators have to see it, or the classic cross-page failure
+# appears: like a post on its article page, navigate back, and the feed answers
+# 304 with the button still drawn as un-pressed.
+
+
+def test_feed_etag_moves_when_a_card_gains_feedback():
+    posts = [_feature()]
+    base = _feed_etag(_page(posts))
+    liked = _feed_etag(_page(posts, feedback_signals={1: {"kinds": {"like": 9}}}))
+    assert liked != base
+    # Undo restores the previous validator exactly — nothing residual is hashed.
+    assert _feed_etag(_page(posts, feedback_signals={1: {"kinds": {}}})) == base
+
+
+def test_feed_partial_etag_moves_when_a_card_gains_feedback():
+    posts = [_feature()]
+    base = _feed_partial_etag(_page(posts))
+    liked = _feed_partial_etag(_page(posts, feedback_signals={1: {"kinds": {"save": 3}}}))
+    assert liked != base
+
+
+def test_post_etag_moves_when_the_post_gains_feedback():
+    post = _feature()
+    base = _post_page_etag(post)
+    assert _post_page_etag(post, feedback_ctx={**_NO_FEEDBACK, "signals": {"like": 4}}) != base
+    # Topic and source steering render on the article page too, so they count.
+    assert _post_page_etag(
+        post, feedback_ctx={**_NO_FEEDBACK, "topic_signals": {("astronomy", "more_topic"): 5}}
+    ) != base
+    assert _post_page_etag(
+        post, feedback_ctx={**_NO_FEEDBACK, "source_signals": {7: 6}}
+    ) != base

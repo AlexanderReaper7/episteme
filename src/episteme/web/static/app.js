@@ -9,6 +9,7 @@
 
      - narration  (was narrate.js): streaming playback + continuous "podcast" mode
      - rich hydration (was post.js): quiz / chart / diagram, vendors lazy-loaded
+     - /tune weight sliders: live readout, dirty tracking, local revert
      - admin nav sync: highlight the active sidebar link (the sidebar persists
        across intra-admin swaps, so the server can't restamp it)
 
@@ -328,6 +329,89 @@
     }
   }
 
+  /* ===================== /tune weight sliders ============================ */
+
+  // The weight list is one form committed by an explicit Save: dragging several
+  // sliders is a single editing session, so nothing posts until the reader says so.
+  //
+  //   * the live readout and the centre-anchored fill while dragging;
+  //   * `dirty` — the slugs actually moved, and the ONLY thing the server records
+  //     from. This is the load-bearing part: only the client knows which sliders
+  //     moved, because only it holds each one's rendered starting value. A server
+  //     comparing submitted values against the stored profile would record every
+  //     slider whose weight had decayed past its own rounding since the page
+  //     rendered — pinning weights nobody touched. So the list genuinely needs
+  //     JavaScript (the panel says so in a <noscript>, and the "set a topic by
+  //     name" box reaches every one of these topics without it).
+  //   * revert, which is purely local: the server was never told.
+  function initWeights(form) {
+    if (form.dataset.weightsInit) return;
+    form.dataset.weightsInit = "1";
+
+    var clamp = 1;
+    var first = form.querySelector(".weight-slider");
+    if (first) clamp = Math.abs(parseFloat(first.max)) || 1;
+    var dirtyField = form.querySelector("[data-dirty]");
+    var save = form.querySelector(".weight-save");
+    var revert = form.querySelector("[data-revert]");
+    var pending = form.querySelector("[data-pending]");
+
+    function paint(slider) {
+      var value = parseFloat(slider.value);
+      var offset = (Math.abs(value) / clamp) * 50;
+      slider.style.setProperty("--fill-from", (value >= 0 ? 50 : 50 - offset) + "%");
+      slider.style.setProperty("--fill-to", (value >= 0 ? 50 + offset : 50) + "%");
+      slider.style.setProperty(
+        "--fill-color",
+        value >= 0 ? "var(--accent)" : "var(--bad-muted)"
+      );
+      var out = form.querySelector('output[for="' + slider.id + '"]');
+      if (out) out.textContent = (value > 0 ? "+" : "") + value.toFixed(1);
+    }
+
+    function refresh() {
+      var dirty = [];
+      form.querySelectorAll(".weight-slider").forEach(function (slider) {
+        // Compared as NUMBERS, not strings: the browser sanitizes a range input's
+        // value onto its step grid and drops a trailing zero, so a slider rendered
+        // as value="-2.0" reads back "-2" and would look moved on first paint —
+        // every whole-numbered weight arriving pre-dirty.
+        var moved =
+          Math.abs(
+            parseFloat(slider.value) - parseFloat(slider.dataset.initial)
+          ) > 1e-9;
+        slider.closest(".weight-row").classList.toggle("is-dirty", moved);
+        if (moved) dirty.push(slider.name.replace(/^w:/, ""));
+      });
+      if (dirtyField) dirtyField.value = dirty.join(",");
+      if (save) save.disabled = dirty.length === 0;
+      if (revert) revert.hidden = dirty.length === 0;
+      if (pending) {
+        pending.textContent = dirty.length
+          ? dirty.length + " unsaved change" + (dirty.length === 1 ? "" : "s")
+          : "";
+      }
+    }
+
+    form.addEventListener("input", function (e) {
+      if (!e.target.classList.contains("weight-slider")) return;
+      paint(e.target);
+      refresh();
+    });
+
+    if (revert) {
+      revert.addEventListener("click", function () {
+        form.querySelectorAll(".weight-slider").forEach(function (slider) {
+          slider.value = slider.dataset.initial;
+          paint(slider);
+        });
+        refresh();
+      });
+    }
+
+    refresh();
+  }
+
   /* ========================== admin nav ================================= */
 
   // The boosted admin sidebar persists across intra-admin swaps, so its active link
@@ -346,6 +430,7 @@
   function onLoad(root) {
     root = root || document;
     pickAll(root, ".post-audio[data-post-id]").forEach(initNarration);
+    pickAll(root, "form[data-weight-form]").forEach(initWeights);
     hydrateRich(root);
     if (document.querySelector(".admin-sidebar-nav")) syncNav();
   }

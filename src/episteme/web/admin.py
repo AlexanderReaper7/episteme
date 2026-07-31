@@ -14,7 +14,8 @@ from fastapi.responses import HTMLResponse
 
 from ..config import settings
 from ..db import SessionLocal
-from ..models import Source
+from ..models import AppState, Source
+from ..recommend import topics
 from ..tts import (
     DEFAULT_PROVIDER,
     PROVIDER_PARAM_SCHEMAS,
@@ -39,6 +40,10 @@ from .api import (
     api_sources,
     api_sources_stats,
     api_status,
+    api_topic_merge,
+    api_topic_rename,
+    api_topics,
+    api_topics_proposal_discard,
 )
 from .templating import render, templates
 
@@ -227,6 +232,51 @@ async def admin_voices_delete(request: Request, voice_id: str):
     async with SessionLocal() as session:
         await delete_voice(session, voice_id)
     return templates.TemplateResponse(request, "admin/_voice_rows.html", await _voices_ctx())
+
+
+async def _topics_ctx() -> dict:
+    """Vocabulary + the pending bootstrap proposal, if one is awaiting review.
+    `get_proposal` returns None once applied, so the applied-summary record is
+    read separately — the page reports the last apply as well as a pending one."""
+    async with SessionLocal() as session:
+        state = await session.get(AppState, topics.PROPOSAL_KEY)
+        proposal = (state.value if state else None) or None
+    return {
+        "vocabulary": await api_topics(),
+        "proposal": proposal,
+        "jobs": await api_jobs(limit=20),
+    }
+
+
+@router.get("/topics", response_class=HTMLResponse)
+async def admin_topics(request: Request):
+    return render(request, "admin/admin_topics.html", {"active": "topics", **await _topics_ctx()})
+
+
+# Declared before the /{slug}/{action} route below, which would otherwise match
+# it first (slug="proposal", action="discard") — FastAPI resolves in declaration
+# order, so the literal path has to come first.
+@router.post("/topics/proposal/discard", response_class=HTMLResponse)
+async def admin_topics_discard(request: Request):
+    await api_topics_proposal_discard()
+    return render(request, "admin/admin_topics.html", {"active": "topics", **await _topics_ctx()})
+
+
+@router.post("/topics/{slug}/{action}", response_class=HTMLResponse)
+async def admin_topics_edit(request: Request, slug: str, action: str):
+    """Rename or merge a vocabulary entry, then re-render the whole table: both
+    operations rewrite referencing rows, so every entry's use count can move."""
+    form = await request.form()
+    value = (form.get("value") or "").strip()
+    if not value:
+        raise HTTPException(400, "value is required")
+    if action == "rename":
+        await api_topic_rename(slug, label=value)
+    elif action == "merge":
+        await api_topic_merge(slug, into=value)
+    else:
+        raise HTTPException(404, f"Unknown action {action!r}")
+    return templates.TemplateResponse(request, "admin/_topic_rows.html", await _topics_ctx())
 
 
 @router.post("/posts/{post_id}/pin", response_class=HTMLResponse)

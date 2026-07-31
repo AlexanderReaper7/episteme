@@ -1,0 +1,223 @@
+{# The profile, as the reader sees it. Everything below is DERIVED from the
+   feedback log — there is no hidden state — so "rebuild" is always safe and
+   "undo" is exact rather than approximate. #}
+<div id="tune-panel">
+  <section class="tune-card">
+    <h2>Tell the feed what you want</h2>
+    <p class="muted">
+      Plain words. This is the most expressive control here — it can do things the
+      buttons can't, like "more deep-sea biology, less speculative AI hype, and
+      never anything about crypto".
+    </p>
+    <form class="tune-form" hx-post="/tune/statement" hx-target="#tune-panel"
+          hx-swap="outerHTML" hx-disabled-elt="find button">
+      <textarea name="text" rows="3" required
+                placeholder="{{ profile.intent_statement or 'What do you want more of? Less of? How technical should it be?' }}"></textarea>
+      <button type="submit">Apply</button>
+    </form>
+    {% if echo %}
+    <p class="tune-echo" role="status">{{ echo }}</p>
+    {% endif %}
+    {% if error %}
+    <p class="tune-error" role="alert">{{ error }}</p>
+    {% endif %}
+    {% if profile.intent_statement %}
+    <p class="muted tune-last">Last statement: “{{ profile.intent_statement }}”</p>
+    {% endif %}
+  </section>
+
+  <section class="tune-card">
+    <div class="tune-card-head">
+      <h2>What the feed thinks you like</h2>
+      <button type="button" class="tune-rebuild" hx-post="/tune/rebuild"
+              hx-target="#tune-panel" hx-swap="outerHTML"
+              title="Replay the feedback log from scratch">rebuild</button>
+    </div>
+    <p class="muted">
+      Drag any slider. A dragged value is <em>absolute</em> — it replaces whatever
+      the log had added up to, instead of nudging it — on a scale of
+      −{{ '%g' | format(clamp) }} to +{{ '%g' | format(clamp) }}, and 0 forgets the
+      topic. Move as many as you like; nothing is recorded until you save. The feed
+      keeps learning from there, and each change is a signal like any other, so you
+      can undo it below.
+    </p>
+    {% if saved %}
+    <p class="tune-echo" role="status">
+      Saved {{ saved }} weight{{ '' if saved == 1 else 's' }}.
+    </p>
+    {% endif %}
+    {% if topic_rows %}
+    {# One form for the whole list: the reader's unit of work is an editing session,
+       not a slider. Fields are `w:<slug>` — the topic's permanent identity, so a
+       rename can't redirect a drag onto a different topic — and `dirty` (set by
+       app.js) names the sliders actually moved, so an untouched one never pins a
+       weight. Which sliders moved is knowable only on the client, so this list
+       genuinely needs JavaScript; the "set a topic by name" box below does not and
+       can reach every one of these topics. #}
+    <noscript>
+      <p class="muted">
+        The sliders need JavaScript to save. Use “set a topic by name” below —
+        the name of any topic listed here works, and the weight it sets is the
+        same absolute value.
+      </p>
+    </noscript>
+    <form class="weight-form" data-weight-form hx-post="/tune/weights"
+          hx-target="#tune-panel" hx-swap="outerHTML"
+          hx-disabled-elt="find .weight-save">
+      <input type="hidden" name="dirty" value="" data-dirty>
+      <ul class="weight-list">
+        {% for slug, label, weight in topic_rows %}
+        <li class="weight-row" data-slug="{{ slug }}">
+          <label class="weight-name" for="w-{{ slug }}">{{ label }}</label>
+          {# Centre-anchored: the fill grows right for pull and left for push, so a
+             sign change is visible as direction, not just a minus sign. app.js
+             repaints it while dragging; the server-rendered style is what a
+             no-JavaScript load shows. #}
+          <input type="range" class="weight-slider" id="w-{{ slug }}"
+                 name="{{ 'w:' ~ slug }}" value="{{ '%.1f' | format(weight) }}"
+                 min="-{{ clamp }}" max="{{ clamp }}" step="0.1"
+                 data-initial="{{ '%.1f' | format(weight) }}"
+                 style="--fill-from: {{ (50 if weight >= 0 else 50 - (weight | abs) / clamp * 50) | round(2) }}%;
+                        --fill-to: {{ (50 + weight / clamp * 50 if weight >= 0 else 50) | round(2) }}%;
+                        --fill-color: var({{ '--accent' if weight >= 0 else '--bad-muted' }});">
+          <output class="weight-value" for="w-{{ slug }}">{{ '%+.1f' | format(weight) }}</output>
+        </li>
+        {% endfor %}
+      </ul>
+      <div class="weight-actions">
+        <button type="submit" class="weight-save" disabled>Save changes</button>
+        <button type="button" class="weight-revert" data-revert hidden>revert</button>
+        <span class="weight-pending muted" role="status" data-pending></span>
+      </div>
+    </form>
+    {% else %}
+    <p class="muted">
+      Nothing learned yet. Say something above, use the buttons on any post, or set
+      a topic by hand below — the feed stays in date order until it has something to
+      go on.
+    </p>
+    {% endif %}
+
+    <form class="weight-add" hx-post="/tune/topic" hx-target="#tune-panel"
+          hx-swap="outerHTML" hx-disabled-elt="find button">
+      <input type="text" name="topic" list="tune-vocabulary" required
+             aria-label="topic to set" placeholder="set a topic by name…"
+             autocomplete="off">
+      <input type="number" name="weight" value="2.0" step="0.1"
+             min="-{{ clamp }}" max="{{ clamp }}" aria-label="weight to set">
+      <button type="submit">set</button>
+    </form>
+    {# Suggestions, not a constraint: a name that isn't in the vocabulary yet is
+       resolved the same way a model-emitted tag is (folded into a near match, or
+       added), so the weight lands on the key the scorer actually reads. #}
+    <datalist id="tune-vocabulary">
+      {% for label in vocabulary %}<option value="{{ label }}"></option>{% endfor %}
+    </datalist>
+    {% if topic_error %}
+    <p class="tune-error" role="alert">{{ topic_error }}</p>
+    {% endif %}
+
+    <h3>Hard blocks</h3>
+    <p class="muted">
+      These remove content from the feed entirely, rather than ranking it lower — a
+      blocked word hides every post whose title or text contains it. Unlike a
+      weight, a block never fades. Unblocking takes effect immediately.
+    </p>
+    {% if profile.blocked_keywords or profile.blocked_sources %}
+    <span class="kv-chips block-chips">
+      {% for keyword in profile.blocked_keywords %}
+      <span class="kv-chip"><span class="kv-chip-k">keyword</span><span class="kv-chip-v">{{ keyword }}</span>
+        <button type="button" class="chip-remove" title="unblock “{{ keyword }}”"
+                aria-label="unblock {{ keyword }}"
+                hx-post="/tune/unblock?keyword={{ keyword | urlencode }}"
+                hx-target="#tune-panel" hx-swap="outerHTML">×</button>
+      </span>
+      {% endfor %}
+      {% for source_id in profile.blocked_sources %}
+      <span class="kv-chip"><span class="kv-chip-k">source</span><span class="kv-chip-v">{{ sources.get(source_id, source_id) }}</span>
+        <button type="button" class="chip-remove"
+                title="unblock {{ sources.get(source_id, source_id) }}"
+                aria-label="unblock {{ sources.get(source_id, source_id) }}"
+                hx-post="/tune/unblock?source_id={{ source_id }}"
+                hx-target="#tune-panel" hx-swap="outerHTML">×</button>
+      </span>
+      {% endfor %}
+    </span>
+    {% else %}
+    <p class="muted">Nothing is blocked.</p>
+    {% endif %}
+
+    {# Two controls, not one form with two meanings: the request never has to guess
+       whether a word or an outlet was intended. #}
+    <div class="block-add">
+      <form hx-post="/tune/block" hx-target="#tune-panel" hx-swap="outerHTML"
+            hx-disabled-elt="find button">
+        <input type="text" name="keyword" required autocomplete="off"
+               aria-label="word to block" placeholder="block a word…">
+        <button type="submit">block</button>
+      </form>
+      {% if blockable_sources %}
+      {# No form wrapper: htmx posts a named select's own value, and an empty
+         "block an outlet…" is never submitted because only `change` fires it. #}
+      <select name="source_id" aria-label="outlet to block"
+              hx-post="/tune/block" hx-trigger="change"
+              hx-target="#tune-panel" hx-swap="outerHTML">
+        <option value="" selected>block an outlet…</option>
+        {% for source in blockable_sources %}
+        <option value="{{ source.id }}">{{ source.name }}</option>
+        {% endfor %}
+      </select>
+      {% endif %}
+    </div>
+    {% if block_error %}
+    <p class="tune-error" role="alert">{{ block_error }}</p>
+    {% endif %}
+
+    <p class="muted tune-meta">
+      Replayed from {{ profile.event_count }} signal{{ '' if profile.event_count == 1 else 's' }}.
+      {% if profile.liked_centroid %}What you liked shapes ranking beyond topics too.{% endif %}
+    </p>
+  </section>
+
+  <section class="tune-card">
+    <h2>Recent signals</h2>
+    <p class="muted">
+      The complete record of what the profile was built from. Remove any of them and
+      the profile is recomputed as if it never happened.
+    </p>
+    {% if events %}
+    <ul class="signal-list">
+      {% for event in events %}
+      <li class="signal-row">
+        <span class="signal-kind signal-kind--{{ event.kind }}">{{ event.kind.replace('_', ' ') }}</span>
+        <span class="signal-what">
+          {% if event.kind == "nl_feedback" %}
+            “{{ event.nl_text | truncate(120) }}”
+          {% elif event.kind == "set_topic" %}
+            {# Signals record a topic's slug; show the vocabulary's current
+               spelling, falling back to the slug's own words. #}
+            {{ topic_labels.get(event.topic, event.topic) }} <span class="signal-value">{{ '%+.1f' | format(event.value) if event.value is not none else '?' }}</span>
+          {% elif event.keyword %}
+            “{{ event.keyword }}”
+          {% elif event.topic %}
+            {{ topic_labels.get(event.topic, event.topic) }}
+          {% elif event.kind == "hide_source" %}
+            {% for source_id in event.source_ids %}{{ sources.get(source_id, source_id) }}{% endfor %}
+          {% elif event.post_id and posts.get(event.post_id) %}
+            <a href="/post/{{ event.post_id }}">{{ posts[event.post_id].title or "cluster card" }}</a>
+          {% else %}
+            <span class="muted">post {{ event.post_id }}</span>
+          {% endif %}
+        </span>
+        <time>{{ event.created_at | dt }}</time>
+        <button type="button" class="signal-undo" hx-post="/feedback/{{ event.id }}/undo"
+                hx-target="#tune-panel" hx-swap="outerHTML"
+                title="Remove this signal and replay">undo</button>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="muted">No signals recorded yet.</p>
+    {% endif %}
+  </section>
+</div>

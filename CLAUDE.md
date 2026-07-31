@@ -148,11 +148,196 @@ spec (data model, pipeline stages, feed-composition rules, roadmap phases, decid
   with `attempt_id IS NULL` for the same reason. Post 247's data was repaired
   in place (job 1822's 7 calls unstamped, tagged `repair-job1822-...`).
 
+- **Phase 4 first push built AND live-verified (2026-07-29)** — the
+  recommendation system. Four parts, each independently verifiable: (a) canonical
+  **topic vocabulary** (`topics` table + `recommend/topics.py`), resolved in code
+  from whatever triage/the writer emit, bootstrapped from existing free-text tags
+  by a **two-phase** propose/apply job (`/admin/topics` renders the proposal for
+  review — nothing is applied by the job that computes it); (b) **feedback log
+  canonical, profile derived** — `interest_profile` is a cache rebuilt by
+  replaying `feedback`, never mutated, so undo is exact and the half-life/weights
+  can be retuned retroactively; each event carries its own embedding + topic
+  snapshot so replay never depends on mutable (or pruned) rows; reader-facing at
+  `/tune`, controls on every card and article; (c) **scoring** — seven `Scorer`
+  implementations behind a registry, `Post.affinity_score` stored with a
+  `score_components` breakdown, feed ordered by `tanh(affinity/scale) +
+  age_in_tau_units` against a FIXED epoch (bounded and symmetric so soft signals
+  reorder rather than bury, and pure-per-row so keyset pagination stays sound);
+  (d) **write-side** — hard blocks filter (one predicate in `recommend/blocks.py`
+  shared by the feed and the write queue), the write queue is ordered by triage
+  quality plus a bounded affinity term, and triage/writer get a qualitative
+  reader digest. Deferred by decision: implicit dwell/scroll signals, the "why am
+  I seeing this" chip, diversity/serendipity quotas, OpenAlex authority.
+  **Activated 2026-07-30** — migration `9ef644e53753` applied, vocabulary
+  proposed/reviewed/applied, feed ranking live. (The activation sequence, for
+  reference: migration → `propose_topics` → review `/admin/topics` →
+  `apply_topics` → interest statement at `/tune`. Before it runs, the vocabulary
+  grows organically per story and the feed ranks on freshness alone — NULL
+  `affinity_score` reads as neutral.)
+  **Live run (2026-07-29)**: migration applied via the compose `migrate`
+  one-shot (pre-migration dump written first); feedback → replay → profile →
+  score → reordered feed verified end-to-end in the browser (339 posts scored,
+  668 rank inversions, max 19.3h — inside the 2·τ=72h bound the formula
+  guarantees); undo verified exact through both the API and `/tune`. Three
+  defects were found live and fixed, each with a regression test:
+  1. *Keyword blocks emptied the feed of aggregates.* `NULL ILIKE …` is NULL,
+     not false, so `~or_(exists, title.ilike, summary.ilike)` went NULL for
+     every aggregate card (their content columns ARE NULL) and `WHERE` dropped
+     it — one blocked keyword hid 278 of 339 posts, silently.
+     `blocks.py` now wraps the post-level columns in `COALESCE(col, '')`.
+  2. *Cluster naming misnamed 86% of the vocabulary.* Asked to name 734
+     clusters in one call, the fast model held index alignment for 98, slipped
+     one, and never recovered — the {quantum physics, quantum mechanics}
+     cluster came back named "roman history". A wrong index is a well-formed
+     response, so nothing caught it. `_name_clusters` now sends only
+     MULTI-MEMBER clusters (a singleton's canonical name is its one member —
+     and the singletons were 656 of the 734 that made the listing unmanageable),
+     in batches of `NAMING_BATCH`, and rejects any name sharing no word with its
+     cluster (`_plausible_name`), falling back to the most-frequent member.
+  3. *NL feedback under-read hard refusals.* "I never want to see anything about
+     crypto" produced a down-rank, not a block, and "keep it technical" set no
+     difficulty. `FEEDBACK_INTENT_SYSTEM` now states the triggers as concretely
+     as the cautions (a refusal is recorded as BOTH a block and a less-topic).
+  **Manual profile editing (built + live-verified 2026-07-30)** — `/tune` is
+  directly manipulable: drag the topic sliders, and add/remove hard blocks.
+  1. *Weights are sliders committed by Save.* Dragging several is ONE editing
+     session, so nothing posts until the reader says so: the whole list is one form
+     (`POST /tune/weights`, fields `w:<slug>`), `app.js` paints the live readout +
+     centre-anchored fill and tracks which sliders moved, and `revert` is purely
+     local (no request). A dragged value is **absolute**: `set_topic` (kind added
+     with `feedback.value`, migration `2813f1a15b8e`) REPLACES whatever the log had
+     accumulated for that topic rather than adding a step; 0 forgets it. Each topic
+     is still its own event (undo stays per-topic) but the batch is one transaction
+     and ONE replay — `rebuild` is a full replay, so per-slider rebuilds would
+     replay the log N times to reach the state the last one produces anyway.
+     Two properties differ from every other signal, both deliberate: a set **does
+     not decay** (the panel must still read 4.0 next month — a control whose value
+     drifts on its own is a control that lies; same reasoning as `hide_source`), and
+     it is an **anchor, not a lock** (later likes/steering still move the weight
+     from there; only the history *before* the edit is discarded). `set_topic` is
+     NOT in `feedback.TOPIC_KINDS` — that tuple drives the paired more/less button
+     state on cards. A "set a topic by name" box (datalist of the whole vocabulary,
+     free text still allowed via `topics.resolve`) is the only way to reach a topic
+     with no slider yet.
+     **Only moved sliders are recorded** (`web/feedback.py:changed_weights`): the
+     browser posts all of them, and `dirty` (from app.js, which holds each slider's
+     rendered starting value) says which changed. app.js's comparison must be
+     NUMERIC — a browser sanitizes a range value onto its step grid and drops the
+     trailing zero, so a slider rendered at `-2.0` reads back `"-2"`. *This bit live
+     on the first load: string comparison marked four untouched whole-numbered
+     sliders dirty before anyone touched them.* The slider list **requires JS** and
+     says so in a `<noscript>` (2026-07-30, code review): there was a documented
+     no-JS fallback comparing submitted values against the stored profile, but it
+     was unreachable (the template always posts `dirty=""`) and it was also the
+     wrong rule — stored weights decay past the slider's rounding on their own, so
+     it would have recorded sliders nobody touched. An absent `dirty` now records
+     nothing; the "set a topic by name" box works without JS and reaches every
+     topic. Regression tests in test_feedback_render.py.
+  2. *Hard blocks are add/removable.* `block_keyword` / `unblock_keyword` (new
+     kinds; `feedback.keyword`, migration `bed89c48b376`) plus an outlet picker and
+     an × on every chip. Unblocking a **keyword** is a counter-event, folded in time
+     order, because a keyword block can come from a natural-language refusal —
+     deleting that statement to lift the block would also delete the topic weights
+     it set. Unblocking a **source** instead DELETES the `hide_source` events: a
+     source block has no other origin, so that is an exact undo, and it keeps the
+     per-post hide button truthful (it renders as pressed from the event's
+     existence, so a counter-event would leave it claiming the outlet is hidden).
+     `profile.normalize_keyword` is the single definition of a keyword's identity —
+     if a block from a statement and an unblock from a chip normalized differently
+     the × would silently do nothing.
+     `feedback.keyword` is deliberately not the `topic` column: a keyword is matched
+     literally against title/summary, a topic is slugified into the vocabulary, and
+     one future mix-up there turns a down-rank into a content-removing block.
+  *Live-verified 2026-07-30 in the browser* (real clicks/drags, not curl): clean
+  dirty state on load; centre-click → 0.0 with fill/readout/Save reacting; two
+  sliders dragged → `Saved 2 weights.`, exactly 2 events, the 4 untouched sliders
+  unchanged and eventless, one coalesced rescore job; revert restored all six with
+  zero requests; keyword block/unblock (removing the statement-imposed `crypto`
+  block left the statement AND its −crypto weight intact); outlet blocked → chip +
+  gone from the picker → unblocked → `hide_source` event deleted, offered again.
+  **Rescore coalescing (user-approved, built 2026-07-30)** — every feedback write
+  used to call `defer_rescore()` unconditionally, so N clicks enqueued N
+  full-corpus rescores (8 observed in one session). `defer_rescore` now schedules
+  the pass `rescore_debounce_seconds` out (default 20, `0` disables) under
+  procrastinate's `queueing_lock`: its partial unique index (one `todo` row per
+  lock) makes the DATABASE refuse the duplicate, so there is no application-side
+  bookkeeping to drift. Leading-edge and fixed-width — the window starts at the
+  first signal and is never extended, so continued clicking cannot starve the
+  rescore — and the lock frees the moment a worker picks the job up, so a signal
+  arriving mid-pass (which that pass may already have read past) correctly queues
+  the next one. Nothing user-visible waits on it: `rebuild` has already committed
+  the profile; only the stored `affinity_score` ordering lags, by at most the
+  window. *Verified live 2026-07-30: 3 Like clicks in the browser → 3 feedback
+  rows → exactly 1 score job; 3 undos → 1 more.*
+
+  **Live topic-vocabulary run (2026-07-30)**: 860 raw labels → 749 canonical
+  topics (82 multi-member clusters, 667 singletons), applied after a pre-apply
+  `pg_dump`. Every story/post topic array rewritten, zero raw variants left in
+  the DB or rendered in the feed; `quantum-physics` correctly absorbed
+  `quantum-mechanics`/`quantum` (the cluster that the pre-fix run named "roman
+  history"). Naming cost fell from 1 call / 570 s / 14 199 output tokens to
+  4 calls / 24.7 s / 2050. **The 0.86 `topic_bootstrap_threshold` is right, not
+  too strict** — an earlier guess that the weak collapse meant a bad threshold
+  was wrong: the top singletons are `deep-sea biology`, `public health`,
+  `archaeology`, `neuroscience`, `genetics`, `ecology`, `physics` — genuinely
+  distinct fields, not near-duplicates. The distribution is Zipfian (484 of 749
+  used exactly once; the top 80 cover 65.6% of all tag uses), which is why
+  `topic_vocabulary_prompt_limit=80` is adequate. Lowering the threshold would
+  start fusing distinct fields.
+
+  **Code-review pass (2026-07-30, fixed + regression-tested, NOT yet live-verified)**
+  — eight findings against the Phase 4 diff. The two structural ones first:
+  1. *A topic's `slug` is now its permanent identity.* Weights were keyed by
+     `slugify(label)` while `rename` moved the label and not the slug, so a rename
+     discarded the topic's learned weight and left the row unreachable by
+     `_by_slug` for its own new label (next emission → duplicate row). **Chosen
+     with the user for forward compatibility with a related-labels graph** — the
+     idea being finer-grained preferences where disliking "blue" also weakly
+     dislikes "color" and "ocean". Edges need stable nodes: a key derived from the
+     current label re-keys the node and dangles every edge on the first spelling
+     correction. So: `slug` is assigned once and never moves; `rename` changes
+     `label` only and adds `slugify(new_label)` to `aliases` so the new wording
+     resolves back; `merge` (which genuinely ends an identity) repoints
+     `feedback.topic` / `topics_snapshot` / `parsed_intent[].topic` at the
+     survivor and the API route rebuilds + rescores after it. Feedback rows store
+     SLUGS (`topics.resolve_slugs`); `Candidate.topic_slugs` replaced
+     `Candidate.topics`, resolved via one `topics.slug_index` per pass;
+     `profile.replay` keeps `slugify` as an idempotent NORMALIZER (a slug
+     slugifies to itself), which is also why no data migration was needed — rows
+     written before this land on exactly the key they always did.
+  2. *`resolve` is not positionally aligned with its input* (it dedups and drops),
+     and `record_nl` zipped against it — "less crypto, more quantum computing"
+     could be recorded as its own inverse, into the canonical `parsed_intent`.
+     `topics.resolve_entries` (raw label → row) is now the primitive; `resolve` /
+     `resolve_slugs` are views of it.
+  Then: `_as_llm_error` now also covers the response PARSE (a 200 that isn't the
+  JSON we expect was the one route still escaping `except LLMError`);
+  `backfill_embeddings` is wired — automatic at the top of the `embed` stage when
+  `pending_embeddings()` says there is something to do (that stage is what has
+  just proved the endpoint is up), plus a manual
+  `/api/jobs/defer/backfill_topic_embeddings`; `profile.describe` no longer reads
+  "Prefers technical depth" out of an all-negative difficulty distribution (one
+  dislike used to do it) and takes an optional slug→label map; blocked keywords
+  are LIKE-escaped (`%` in a keyword emptied the feed AND the write queue, `_`
+  over-matched); the feed's keyset cursor is taken from the SQL `rank` column
+  instead of Python's `math.tanh`, so the comparison never spans two libms.
+
 ## Commands
 
 ```sh
 docker compose up --build -d          # full stack: db (pgvector), migrate (one-shot), web, worker
 curl http://127.0.0.1:8200/health     # web app: http://127.0.0.1:8200
+
+# ONLY `web` bind-mounts ./src (with uvicorn --reload). The WORKER runs the code
+# baked into the image, so `docker compose restart worker` re-runs the OLD code —
+# any change under src/episteme/{worker,recommend,llm,ingest,research}/ needs:
+docker compose build worker && docker compose up -d worker
+# This is silent and expensive to learn the hard way: on 2026-07-30 two ~10-minute
+# propose_topics runs were spent "verifying" a fix the worker did not have. Verify
+# after rebuilding, not before:
+docker compose exec -T worker python -c "import importlib; print(hasattr(importlib.import_module('episteme.llm.gateway'), '_as_llm_error'))"
+# (import the MODULE — `from episteme.llm import gateway` gives the singleton
+# instance re-exported by llm/__init__, so hasattr on it is a false negative.)
 
 # Trigger jobs immediately (otherwise: ingestion cron */30, pipeline cron 03:00)
 curl -X POST http://127.0.0.1:8200/api/jobs/defer/ingest_all      # or run_pipeline
@@ -164,6 +349,31 @@ curl -X POST "http://127.0.0.1:8200/api/jobs/defer/write?limit=2"        # embed
 curl -X POST "http://127.0.0.1:8200/api/jobs/defer/write?story_id=284"   # rewrite (archives old post)
 curl -X POST "http://127.0.0.1:8200/api/jobs/defer/qa?post_id=8"         # re-review even if scored
 curl -X POST "http://127.0.0.1:8200/api/jobs/defer/ingest_source?source_id=4"
+
+# Recommendation (Phase 4). Topic vocabulary is bootstrapped in TWO phases —
+# propose writes a reviewable proposal, apply commits it and rewrites every
+# story/post topic array. Read /admin/topics between them.
+curl -X POST http://127.0.0.1:8200/api/jobs/defer/propose_topics
+curl http://127.0.0.1:8200/api/topics/proposal        # or read /admin/topics
+curl -X POST http://127.0.0.1:8200/api/jobs/defer/apply_topics
+# Entries created while the embed endpoint was down have no vector, so nothing can
+# ever fold into them. The `embed` stage heals them automatically; this forces it.
+curl -X POST http://127.0.0.1:8200/api/jobs/defer/backfill_topic_embeddings
+# Feedback + profile. The profile is DERIVED: every write here replays the whole
+# feedback log, so undo is exact and retuning config reinterprets all history.
+curl -X POST "http://127.0.0.1:8200/api/feedback?kind=like&post_id=247"
+curl -X POST "http://127.0.0.1:8200/api/feedback/nl?text=more+deep-sea+biology"
+# Hand-set one topic weight. ABSOLUTE: replaces the accumulated weight, doesn't
+# nudge it; 0 forgets the topic. Same control as the sliders on /tune.
+curl -X POST "http://127.0.0.1:8200/api/feedback?kind=set_topic&topic=astronomy&weight=4"
+# Hard keyword blocks. unblock_keyword is a counter-event, not a deletion, so it
+# also lifts a block a natural-language statement imposed (see the Phase 4 notes).
+curl -X POST "http://127.0.0.1:8200/api/feedback?kind=block_keyword&keyword=crypto"
+curl -X POST "http://127.0.0.1:8200/api/feedback?kind=unblock_keyword&keyword=crypto"
+curl -X DELETE http://127.0.0.1:8200/api/feedback/12   # exact undo + replay
+curl http://127.0.0.1:8200/api/profile                 # /tune is the HTML view
+curl -X POST http://127.0.0.1:8200/api/profile/rebuild # after retuning weights
+curl -X POST http://127.0.0.1:8200/api/jobs/defer/score # rescore the whole feed
 
 # Pause/resume (resource governor lever): pause persists a flag in app_state; the
 # worker stops at the next unit boundary (story/post/batch) and unloads the decode
@@ -222,6 +432,15 @@ uv lock                                     # re-resolve after editing dependenc
   (`llm/schemas.py` is the contract; `agent.request_validated` is the in-conversation
   variant). Embeddings are truncated to `EMBEDDING_DIM` (1024)
   and re-normalized so any ≥1024-dim embedding model works without schema changes.
+  **`LLMError` is the gateway's whole error contract** — transport failures are
+  wrapped into it (`_as_llm_error`, since 2026-07-30), because every caller writes
+  its degradation against `except LLMError` and a raw `httpx.ReadTimeout` would be
+  the one failure mode that bypasses all of them. *Origin: the router stalled a
+  600s timeout swapping the fast model in; the raw timeout blew through
+  `_name_clusters`' handler — which exists precisely so a naming failure degrades
+  to member names — and failed the whole job.* Timeouts against a single-GPU box
+  that loads models on demand are ordinary; design for them. Measured swap cost:
+  ~100s typical, up to 600s worst case (see [handoff-llama-control.md](handoff-llama-control.md) §7).
 - **Pipeline** (`worker/pipeline.py`): embed → cluster (pgvector cosine, 5-day window,
   incremental centroids) → triage (fast model: write/aggregate/skip per story) → write
   (main-model agentic loop per story — research tools + demote authority + final
@@ -236,6 +455,25 @@ uv lock                                     # re-resolve after editing dependenc
   with the fetch log (closed set: the model contributes judgment about which fetched
   pages were relevant — dead-end fetches stay out — but only fetch-log membership
   puts a URL on the page; the log stores final post-redirect URLs).
+- **Recommendation** (`recommend/`, spec §8) has one organizing rule: **the
+  `feedback` table is canonical and everything else is derived from it.**
+  `interest_profile` is a cache produced by `profile.replay(events, now)` — a
+  pure function — and rebuilt in full on every write; there is deliberately no
+  incremental "apply this event" path, because that is exactly what would let the
+  cache disagree with what the reader did. Undo is therefore exact (delete the
+  row, replay) and changing a half-life or signal weight reinterprets the entire
+  history rather than leaving a profile trained under the old constants. Each
+  event carries its own payload (embedding + topic/source snapshot) so replay
+  never reads mutable state: stories keep absorbing items and posts are
+  eventually pruned, and "what I reacted to" is not "what that story is now"
+  (`feedback.post_id` is ON DELETE SET NULL for the same reason).
+  `topics` is the canonical vocabulary the weights are keyed against — resolved
+  in code from whatever a model emits, never trusted from the prompt.
+  `scorers.py` is the plugin surface (one implementation + a `scorer_weight_<name>`
+  config line); scores are stored on the post while **freshness is applied in the
+  feed query**, so ranking never rewrites rows as time passes. `blocks.py` holds
+  the single definition of what a hard block excludes, shared by the feed and the
+  write queue so the two can't drift.
 - **Observability** (`llm/observe.py`): every gateway call is persisted to `llm_calls`
   (request/response, tokens, timing; embeds log batch size only) — the gateway is
   the single choke point, so instrumentation there covers everything including
@@ -311,9 +549,13 @@ uv lock                                     # re-resolve after editing dependenc
   raises `FetchError` on >=400). See the HTTP-transport-modes note above for
   `http_mode`/impersonation. Never `docker compose down -v` casually — re-ingesting
   re-fetches every article from every source.
-- **Two-tier feed** (spec §8): generated articles first, "you're caught up" divider,
-  then infinite-scroll aggregation stream (htmx `revealed` sentinels swap in
-  `/partials/*` pages). Falls back to raw source items until the pipeline has output.
+- **Feed** — spec §8 describes a two-tier design (daily selection, "you're caught up"
+  divider, aggregation stream below it); **as built it is a single ranked stream** of
+  every published post, features and aggregate cards interleaved as equal units and
+  ordered by `web/app.py:_rank_expr`. The divider, diversity and serendipity quotas
+  are deferred (Phase 4 note in the spec), so don't go looking for them in the code.
+  Infinite scroll is htmx `revealed` sentinels swapping in `/partials/*` pages.
+  Falls back to raw source items until the pipeline has output.
   **All feed content is a post** (decided 2026-07-18): aggregate cluster cards are
   identity-only `Post` rows (`kind="aggregate"`, content columns NULL — the card
   renders from the story's items at read time). Triage mints the card on an

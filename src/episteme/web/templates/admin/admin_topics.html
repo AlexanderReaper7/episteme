@@ -1,0 +1,105 @@
+{% extends "admin/admin_base.html" %}
+
+{% block title %} • Topics{% endblock %}
+
+{% block admin_content %}
+<h1 class="admin-title">Topics</h1>
+
+<section class="admin-card admin-card-wide">
+  <div class="admin-card-head">
+    <h2>Vocabulary</h2>
+    <span class="muted admin-form-hint" style="margin:0">
+      The closed set the interest profile learns weights over. Triage is shown this
+      list and picks from it; anything it invents is folded in by similarity, or
+      added as a new entry.
+    </span>
+  </div>
+  <table class="admin-table">
+    <thead>
+      <tr><th>topic</th><th class="num">uses</th><th>aliases</th><th></th><th></th></tr>
+    </thead>
+    {% include "admin/_topic_rows.html" %}
+  </table>
+</section>
+
+{% if vocabulary.unresolved %}
+<section class="admin-card admin-card-wide">
+  <h2>Unclaimed labels</h2>
+  <p class="muted admin-form-hint">
+    Topic labels in use on stories or posts that no vocabulary entry claims. These
+    are what the bootstrap still has to fold in — an empty list is the healthy
+    steady state.
+  </p>
+  <span class="kv-chips">
+    {% for label, uses in vocabulary.unresolved %}
+    <span class="kv-chip"><span class="kv-chip-k">{{ label }}</span><span class="kv-chip-v">{{ uses }}</span></span>
+    {% endfor %}
+  </span>
+</section>
+{% endif %}
+
+<section class="admin-card admin-card-wide">
+  <h2>Bootstrap</h2>
+  <p class="muted admin-form-hint">
+    Two phases on purpose. <strong>Propose</strong> clusters every free-text topic
+    already in the database and writes a proposal — it changes nothing else.
+    <strong>Apply</strong> creates the vocabulary rows and rewrites the topic array
+    on every story and post through it. Read the proposal before applying: a bad
+    clustering pass is far easier to reject here than to unpick afterwards.
+  </p>
+  <p class="stage-controls">
+    <button hx-post="/admin/defer/propose_topics" hx-target="#queue" hx-swap="innerHTML">
+      propose vocabulary
+    </button>
+    {% if proposal and proposal["clusters"] %}
+    <button hx-post="/admin/defer/apply_topics" hx-target="#queue" hx-swap="innerHTML"
+            hx-confirm="Apply this proposal? It creates the vocabulary and rewrites the topics of every story and post.">
+      apply proposal
+    </button>
+    <button hx-post="/admin/topics/proposal/discard" hx-target="#admin-main"
+            hx-confirm="Discard the proposal?">discard</button>
+    {% endif %}
+  </p>
+
+  {% if proposal and proposal["clusters"] %}
+  <p class="muted admin-form-hint">
+    Proposed {{ proposal.proposed_at | dt }} — {{ proposal["clusters"] | length }} topics
+    from {{ proposal.raw_label_count }} raw labels.
+  </p>
+  <table class="admin-table">
+    <thead><tr><th>proposed topic</th><th class="num">uses</th><th>absorbs</th></tr></thead>
+    <tbody>
+      {% for cluster in proposal["clusters"] %}
+      <tr>
+        <td class="mono">{{ cluster.label }}</td>
+        <td class="num">{{ cluster.uses }}</td>
+        <td>
+          <span class="kv-chips">
+            {% for member in cluster.members %}
+            <span class="kv-chip"><span class="kv-chip-v">{{ member }}</span></span>
+            {% endfor %}
+          </span>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% elif proposal and proposal.applied_at %}
+  <p class="muted">
+    Last applied {{ proposal.applied_at | dt }} — {{ proposal.topics_created }} topics
+    created, {{ proposal.rows_rewritten }} rows rewritten.
+  </p>
+  {% else %}
+  <p class="muted">No proposal awaiting review.</p>
+  {% endif %}
+</section>
+
+<section class="admin-card admin-card-wide">
+  <h2>Queue</h2>
+  <div id="queue" hx-get="/admin/partials/queue"
+       hx-trigger="every 10s, refreshQueue from:body"
+       hx-target="this">
+    {% include "admin/_admin_queue.html" %}
+  </div>
+</section>
+{% endblock %}

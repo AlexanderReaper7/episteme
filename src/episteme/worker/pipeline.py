@@ -7,9 +7,11 @@ deferrable for testing.
 """
 
 import logging
+import math
 import re
 import time
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -24,6 +26,7 @@ from ..llm.observe import llm_context
 from ..llm.prompts import SUMMARIZE_SYSTEM, TRIAGE_SYSTEM, WRITER_AGENT_SYSTEM
 from ..llm.schemas import SourceSummary, TriageResult
 from ..models import LlmCall, PipelineRun, Post, PostAudio, SourceItem, Story
+from ..recommend import blocks, profile, scorers, scoring, topics
 from ..tts import build_script, default_voice_id, get_voice, script_hash, synthesize_to_file
 from ..tts.store import upsert_post_audio as _upsert_post_audio
 from .app import app
@@ -58,6 +61,20 @@ def update_centroid(centroid: list[float], count: int, embedding: list[float]) -
 
 
 async def embed_new_items(session: AsyncSession, limit: int | None = None) -> int:
+    # Heal the vocabulary first. `topics.resolve` runs during triage and creates
+    # entries without an embedding when the embed endpoint is down, and a
+    # NULL-embedding entry is invisible to `_nearest` — nothing can ever fold
+    # into it, so every later phrasing of the same topic mints another row. This
+    # stage is the one place that has just established the endpoint IS up
+    # (`gateway.is_available` gates it), so it is where the debt gets paid. The
+    # count query is the guard: in the healthy steady state this costs one
+    # indexed COUNT and does nothing.
+    if await topics.pending_embeddings(session):
+        try:
+            await topics.backfill_embeddings(session)
+        except LLMError as exc:
+            log.warning("Topic embedding backfill skipped: %s", exc)
+
     query = (
         select(SourceItem).where(SourceItem.embedding.is_(None)).order_by(SourceItem.id)
     )
@@ -152,6 +169,14 @@ async def triage_stories(
         if limit is not None:
             query = query.limit(limit)
     stories = (await session.execute(query)).scalars().all()
+    # The vocabulary is read once per stage, not per story: it only grows as
+    # stories are triaged, and a story that coins a topic is not required to see
+    # it within the same batch — `topics.resolve` folds the next occurrence in
+    # regardless of what the prompt showed.
+    vocabulary = await topics.vocabulary_for_prompt(session)
+    reader = profile.describe(
+        await profile.load(session), labels=await topics.slug_labels(session)
+    )
     triaged = 0
     for story in stories:
         if await pause_requested(session):
@@ -159,17 +184,26 @@ async def triage_stories(
             break
         items = await _story_items(session, story)
         digest = _story_digest(items)
+        prompt = f"Story items:\n\n{digest}"
+        if reader:
+            prompt += f"\n\nThe reader:\n{reader}"
+        if vocabulary:
+            prompt += "\n\nExisting topics (reuse the exact wording where one fits):\n"
+            prompt += ", ".join(vocabulary)
         try:
             with llm_context(stage="triage", story_id=story.id):
                 result = await gateway.complete_json(
-                    "fast", TRIAGE_SYSTEM, f"Story items:\n\n{digest}", TriageResult
+                    "fast", TRIAGE_SYSTEM, prompt, TriageResult
                 )
         except LLMError as exc:
             log.warning("Triage failed for story %d: %s", story.id, exc)
             continue
         story.triage_decision = result.decision
         story.triage_reason = result.reason
-        story.topics = result.topics
+        # Closed-set enforcement in code, not trust in the prompt: whatever the
+        # model emitted is mapped onto the canonical vocabulary before it is
+        # stored, so interest weights are never learned against drifting spellings.
+        story.topics = await topics.resolve(session, result.topics)
         story.rank_score = result.quality_score
         story.status = {
             "write": "triaged",
@@ -354,12 +388,19 @@ def _reading_time(sections: list[dict]) -> int:
     return max(1, round(words / 220))
 
 
-def _writer_seed(condensed: list[str], candidates: dict[str, dict]) -> str:
+def _writer_seed(
+    condensed: list[str], candidates: dict[str, dict], reader: str = ""
+) -> str:
     seed = (
         "Source items for this story (trusted feed). Research to deepen the story — "
         "fetch these URLs to recover links they contain, search for primary sources — "
         "then you will write the post:\n\n" + "\n\n---\n\n".join(condensed)
     )
+    if reader:
+        # Who this is being written for — pitch and framing, never subject matter
+        # (the system prompt draws that line). Empty for a cold profile, so the
+        # writer isn't handed a description of nobody.
+        seed += f"\n\nWho you are writing for:\n{reader}"
     if candidates:
         media_lines = "\n".join(
             f"- {info['kind']}: {url} (from {info['attribution']})"
@@ -421,6 +462,68 @@ async def _demote(session: AsyncSession, story: Story, reason: str) -> None:
     await ensure_aggregate_post(session, story)
 
 
+async def _rank_write_queue(
+    session: AsyncSession, candidates: Sequence[Story], profile_state
+) -> list[Story]:
+    """Order the write queue by editorial quality blended with reader affinity.
+
+    The nightly budget is finite, so this decides which stories get a main-model
+    hour and which wait — the highest-leverage place the profile acts, because it
+    changes what gets *made*, not just what gets shown.
+
+    Derived, not stored: no `Story.affinity_score` column exists, because the
+    value is only ever needed for the few seconds this queue is being ordered and
+    would otherwise be one more thing to keep from going stale. `rank_score` (the
+    model's own ~0-10 judgment) stays untouched and authoritative on its own
+    terms; affinity is a bounded addition on top, so a story the reader has no
+    stated opinion about is ranked exactly as triage ranked it.
+
+    The affinity term is squashed through `tanh` for the same reason the feed's
+    ranking is (`web.app._rank_expr`): raw affinity is unbounded, and unbounded it
+    would swamp a 0-10 quality scale outright — subject matter deciding what gets
+    written regardless of whether the story is any good. Bounded, the knob states
+    its own limit: affinity may move a story at most
+    `write_queue_affinity_weight` points of quality, never more.
+    """
+    if not candidates or not profile_state.event_count:
+        return list(candidates)
+    source_rows = (
+        await session.execute(
+            select(SourceItem.story_id, SourceItem.source_id)
+            .where(SourceItem.story_id.in_([story.id for story in candidates]))
+            .distinct()
+        )
+    ).all()
+    by_story: dict[int, list[int]] = {}
+    for row in source_rows:
+        by_story.setdefault(row.story_id, []).append(row.source_id)
+
+    weight = settings.write_queue_affinity_weight
+    slugs = await topics.slug_index(session)
+    scored = []
+    for story in candidates:
+        candidate = scorers.Candidate(
+            post_id=0,
+            embedding=list(story.centroid) if story.centroid is not None else None,
+            topic_slugs=[
+                topics.slug_for(label, slugs) for label in (story.topics or [])
+            ],
+            source_ids=by_story.get(story.id, []),
+            # Quality is already the base term below; leaving it out of the
+            # affinity here keeps it from being counted twice.
+            quality_score=None,
+        )
+        affinity, _ = scorers.score_candidate(candidate, profile_state)
+        shift = weight * math.tanh(affinity / settings.feed_affinity_scale)
+        scored.append(((story.rank_score or 0.0) + shift, story))
+    scored.sort(key=lambda pair: -pair[0])
+    log.info(
+        "Write queue ordered by quality+affinity: %s",
+        ", ".join(f"story {story.id}={total:.2f}" for total, story in scored[:5]),
+    )
+    return [story for _, story in scored]
+
+
 async def write_posts(
     session: AsyncSession, limit: int | None = None, story_id: int | None = None
 ) -> int:
@@ -435,16 +538,30 @@ async def write_posts(
     model condenses every candidate's long sources (once — the same text seeds the
     writer's research and its draft), then each story gets one main-model tool loop
     with research tools and editorial authority (write or demote)."""
+    profile_state = await profile.load(session)
     if story_id is not None:
         query = select(Story).where(Story.id == story_id)
+        stories = (await session.execute(query)).scalars().all()
     else:
-        query = (
-            select(Story)
-            .where(Story.status == "triaged", Story.triage_decision == "write")
-            .order_by(Story.rank_score.desc().nulls_last(), Story.last_item_at.desc())
-            .limit(limit if limit is not None else settings.max_writes_per_run)
-        )
-    stories = (await session.execute(query)).scalars().all()
+        # Blocked stories are excluded rather than demoted: the block is a display
+        # decision, so it must not destroy pipeline state. If the reader unblocks
+        # the outlet or keyword later, these become writable again untouched —
+        # they simply never consume main-model minutes while the block stands.
+        candidates = (
+            await session.execute(
+                select(Story)
+                .where(
+                    Story.status == "triaged",
+                    Story.triage_decision == "write",
+                    *blocks.filters(profile_state, Story.id),
+                )
+                .order_by(Story.rank_score.desc().nulls_last(), Story.last_item_at.desc())
+            )
+        ).scalars().all()
+        stories = await _rank_write_queue(session, candidates, profile_state)
+        stories = stories[: limit if limit is not None else settings.max_writes_per_run]
+
+    reader = profile.describe(profile_state, labels=await topics.slug_labels(session))
 
     # Pass 1 (fast, batched): condense long sources once per story. Each story
     # gets a generation-attempt uuid here; every call of the attempt (condense
@@ -467,7 +584,7 @@ async def write_posts(
         source_chars = sum(len(_plain_text(item)) for item in items)
         prepared[story.id] = (
             items,
-            _writer_seed(condensed, media_candidates(items)),
+            _writer_seed(condensed, media_candidates(items), reader),
             source_chars,
             attempt,
         )
@@ -529,7 +646,9 @@ async def write_posts(
             title=outcome.draft.title,
             summary=outcome.draft.summary,
             difficulty=outcome.draft.difficulty,
-            topics=outcome.draft.topics,
+            # Same closed-set enforcement as triage: the writer's topics are its
+            # own editorial call, but they enter the vocabulary through code.
+            topics=await topics.resolve(session, outcome.draft.topics),
             sections=sections,
             reading_time_minutes=_reading_time(sections),
             banner_url=story_banner_url(items),
@@ -544,6 +663,18 @@ async def write_posts(
         written += 1
         log.info("Wrote feature for story %d: %s", story.id, outcome.draft.title)
     return written
+
+
+# --- Stage 6: score --------------------------------------------------------------
+
+
+async def score_posts(
+    session: AsyncSession, limit: int | None = None, post_id: int | None = None
+) -> int:
+    """Rank published posts against the interest profile. The pass itself lives in
+    `recommend.scoring` because recording feedback defers the same work — the web
+    process must not have to import the worker to make the feed reflect a click."""
+    return await scoring.rescore(session, limit=limit, post_id=post_id)
 
 
 # --- Orchestrator ----------------------------------------------------------------
@@ -774,6 +905,9 @@ async def run_pipeline() -> None:
                 ("write", write_posts),
                 ("qa", qa_posts),  # stays on `main`, so no model swap after write
                 ("narrate", narrate_posts),  # external Fish API; self-skips if tts_enabled off
+                # Last, and no model at all: it ranks whatever the run produced,
+                # including QA's final quality scores.
+                ("score", score_posts),
             ):
                 try:
                     count = await stage(session)
@@ -818,6 +952,7 @@ STAGE_RUNNERS = {
     "write": write_posts,
     "qa": qa_posts,
     "narrate": narrate_posts,
+    "score": score_posts,
 }
 STAGE_PARAMS: dict[str, frozenset[str]] = {
     "embed": frozenset({"limit"}),
@@ -826,6 +961,7 @@ STAGE_PARAMS: dict[str, frozenset[str]] = {
     "write": frozenset({"limit", "story_id"}),
     "qa": frozenset({"limit", "post_id"}),
     "narrate": frozenset({"limit", "post_id"}),
+    "score": frozenset({"limit", "post_id"}),
 }
 
 
@@ -856,7 +992,10 @@ async def pipeline_stage(
         session.add(run)
         await session.commit()
 
-        if stage not in ("cluster", "narrate") and not await gateway.is_available():
+        # `cluster` is pure DB work, `narrate` uses the external Fish API, and
+        # `score` is arithmetic over stored vectors — none needs a local model, so
+        # none is gated on llama-server being up.
+        if stage not in ("cluster", "narrate", "score") and not await gateway.is_available():
             run.status = "skipped"
             run.error = f"LLM endpoint {settings.llm_base_url} unavailable"
             run.finished_at = datetime.now(UTC)

@@ -30,6 +30,34 @@ class LLMError(Exception):
     pass
 
 
+def _as_llm_error(exc: Exception) -> Exception:
+    """Transport failures reach callers as `LLMError`, like every other way an LLM
+    call can fail.
+
+    The gateway is the single choke point for model access, so `LLMError` is the
+    contract callers write their fallbacks against — `_name_clusters` degrades to
+    member names, triage skips the story, the nightly stage catches up. A raw
+    `httpx.ReadTimeout` slipping past that contract is not a different kind of
+    problem, only a differently-typed one, and it takes the fallback with it.
+
+    Found live (2026-07-29): the local router had to swap the fast model in, the
+    request sat the full 600s timeout without returning a byte, and the
+    `httpx.ReadTimeout` blew through `_name_clusters`' handler and failed the whole
+    `propose_topics` job — where the handler existed precisely so a naming failure
+    would degrade to member names instead. Timeouts against a single-GPU box that
+    loads models on demand are ordinary, not exceptional.
+
+    A malformed 200 is the same class of problem and is covered too: llama-server
+    can answer with a body that is not JSON, or JSON without `choices` (an error
+    object, a truncated stream, a proxy's own page). Leaving the parse outside the
+    guarded region would have left exactly one route — the response arriving but
+    being unusable — that still bypasses every `except LLMError` in the codebase.
+    """
+    if isinstance(exc, httpx.HTTPError | ValueError | KeyError | IndexError | TypeError):
+        return LLMError(f"{type(exc).__name__}: {exc}")
+    return exc
+
+
 # llama.cpp's schema→grammar converter emits bounded repetitions its own GBNF
 # parser rejects once maxLength reaches 2000 ("failed to parse grammar", HTTP 400
 # — measured: 1999 compiles, 2000 doesn't). Constraints the grammar layer cannot
@@ -90,9 +118,12 @@ class LLMGateway:
 
     async def list_models(self) -> list[dict]:
         """Raw /models rows (llama-server router mode includes load state)."""
-        response = await self._client.get("/models", timeout=5.0)
-        response.raise_for_status()
-        return response.json().get("data", [])
+        try:
+            response = await self._client.get("/models", timeout=5.0)
+            response.raise_for_status()
+            return response.json().get("data", [])
+        except Exception as exc:
+            raise _as_llm_error(exc) from exc
 
     async def endpoint_status(self) -> list[dict]:
         """Per-distinct-endpoint health for the admin dashboard: one row per URL
@@ -146,7 +177,7 @@ class LLMGateway:
                         unloaded.append(row["id"])
                     else:
                         log.warning("Unload of %s failed: %s", row["id"], response.text[:200])
-        except httpx.HTTPError as exc:
+        except (httpx.HTTPError, LLMError) as exc:
             log.warning("Model unload failed: %s", exc)
         return unloaded
 
@@ -183,6 +214,12 @@ class LLMGateway:
                 payload["response_format"] = {"type": "json_object", "schema": response_schema}
                 response = await self._client.post("/chat/completions", json=payload)
             response.raise_for_status()
+            # Parsing belongs INSIDE the guard: a 200 whose body is not the JSON
+            # we expect is a failed call like any other, and must reach callers as
+            # LLMError rather than as a JSONDecodeError nothing catches.
+            data = response.json()
+            message = data["choices"][0]["message"]
+            content = message["content"]
         except Exception as exc:
             await record_llm_call(
                 role=role,
@@ -192,9 +229,8 @@ class LLMGateway:
                 request={"messages": payload["messages"], "constrained": response_schema is not None},
                 error=str(exc),
             )
-            raise
-        data = response.json()
-        usage = data.get("usage", {})
+            raise _as_llm_error(exc) from exc
+        usage = data.get("usage") or {}
         log.info(
             "%s completion: %s prompt + %s completion tokens",
             role,
@@ -207,11 +243,11 @@ class LLMGateway:
             kind="chat",
             duration_ms=int((time.monotonic() - start) * 1000),
             request={"messages": payload["messages"], "constrained": response_schema is not None},
-            response=data["choices"][0]["message"],
+            response=message,
             prompt_tokens=usage.get("prompt_tokens"),
             completion_tokens=usage.get("completion_tokens"),
         )
-        return data["choices"][0]["message"]["content"]
+        return content
 
     async def chat_messages(
         self,
@@ -251,6 +287,9 @@ class LLMGateway:
                 payload["response_format"] = {"type": "json_object", "schema": response_schema}
                 response = await self._client.post("/chat/completions", json=payload)
             response.raise_for_status()
+            # Inside the guard for the same reason as `chat` above.
+            data = response.json()
+            message = data["choices"][0]["message"]
         except Exception as exc:
             await record_llm_call(
                 role=role,
@@ -260,9 +299,8 @@ class LLMGateway:
                 request={"messages": messages, "tools": bool(tools)},
                 error=str(exc),
             )
-            raise
-        data = response.json()
-        usage = data.get("usage", {})
+            raise _as_llm_error(exc) from exc
+        usage = data.get("usage") or {}
         log.info(
             "%s tool-chat: %s prompt + %s completion tokens",
             role,
@@ -275,11 +313,11 @@ class LLMGateway:
             kind="tool-chat",
             duration_ms=int((time.monotonic() - start) * 1000),
             request={"messages": messages, "tools": bool(tools)},
-            response=data["choices"][0]["message"],
+            response=message,
             prompt_tokens=usage.get("prompt_tokens"),
             completion_tokens=usage.get("completion_tokens"),
         )
-        return data["choices"][0]["message"]
+        return message
 
     async def complete_json(
         self,
@@ -321,6 +359,10 @@ class LLMGateway:
                 "/embeddings", json={"model": self.model_for("embed"), "input": texts}
             )
             response.raise_for_status()
+            # Inside the guard for the same reason as `chat` above — and so a
+            # dimension mismatch is recorded as the failed call it is.
+            rows = sorted(response.json()["data"], key=lambda r: r["index"])
+            vectors = [_truncate_normalize(row["embedding"]) for row in rows]
         except Exception as exc:
             await record_llm_call(
                 role="embed",
@@ -330,7 +372,7 @@ class LLMGateway:
                 request={"batch_size": len(texts)},
                 error=str(exc),
             )
-            raise
+            raise _as_llm_error(exc) from exc
         # Batch size only — 300+ full payloads a night would drown the log.
         await record_llm_call(
             role="embed",
@@ -339,8 +381,7 @@ class LLMGateway:
             duration_ms=int((time.monotonic() - start) * 1000),
             request={"batch_size": len(texts)},
         )
-        rows = sorted(response.json()["data"], key=lambda r: r["index"])
-        return [_truncate_normalize(row["embedding"]) for row in rows]
+        return vectors
 
 
 def _truncate_normalize(vector: list[float]) -> list[float]:

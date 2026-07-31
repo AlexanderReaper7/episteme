@@ -37,6 +37,11 @@
         {% for topic in story.topics %}<span class="chip">{{ topic }}</span>{% endfor %}
       </div>
       {% endif %}
+      {% with post_id = post.id,
+              signals = (feedback_signals.get(post.id) or {}).get("kinds") or {},
+              with_topics = false %}
+        {% include "_feedback.html" %}
+      {% endwith %}
     </div>
   </article>
   {% endif %}
@@ -67,6 +72,11 @@
         {% for topic in post.topics %}<span class="chip">{{ topic }}</span>{% endfor %}
       </div>
       {% endif %}
+      {% with post_id = post.id,
+              signals = (feedback_signals.get(post.id) or {}).get("kinds") or {},
+              with_topics = false %}
+        {% include "_feedback.html" %}
+      {% endwith %}
     </div>
   </article>
 {% endif %}

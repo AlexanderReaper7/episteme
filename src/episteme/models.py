@@ -125,6 +125,15 @@ class Post(Base):
     banner_url: Mapped[str | None] = mapped_column(Text)
     model_used: Mapped[str | None] = mapped_column(Text)
     quality_score: Mapped[float | None] = mapped_column()  # set by the qa stage
+    # How well this post matches the interest profile, written by the `score`
+    # stage (recommend.scorers). Deliberately WITHOUT the freshness term: that is
+    # applied in the feed query, so a post's stored score doesn't need rewriting
+    # as it ages. NULL = never scored, which the feed ranks as neutral (0).
+    affinity_score: Mapped[float | None] = mapped_column()
+    # Per-signal breakdown behind `affinity_score` — the debugging surface, and
+    # what the "why am I seeing this" explanation will read when it lands.
+    score_components: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    scored_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(String(20), default="published")
     generated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -195,6 +204,143 @@ class PostAudio(Base):
     )
 
     post: Mapped[Post] = relationship(back_populates="audios")
+
+
+class Feedback(Base):
+    """One reader signal — and the canonical record of the whole recommendation
+    system's learning.
+
+    The `InterestProfile` is a *derived cache*: it is recomputed by replaying
+    this log (see `recommend.profile.rebuild`). That is what makes undo exact
+    (delete the row, rebuild) and lets the learning rate or half-life be retuned
+    retroactively instead of leaving a mistrained profile behind.
+
+    Replay therefore may not depend on anything mutable, so each event carries
+    its own payload: `embedding` and `topics_snapshot` are what the reader was
+    reacting to *at the moment they reacted*. Stories keep absorbing items and
+    posts get rewritten and eventually pruned; "the embedding of the thing I
+    liked" is genuinely not "the embedding of that story today". `post_id` is a
+    link for the UI, not an input to replay — it goes NULL when the retention
+    prune removes an archived post, and replay is unaffected.
+
+    `nl_text` and `parsed_intent` are canonical for the same reason: the
+    `llm_calls` row holding the verbatim prompt is pruned after
+    `llm_log_retention_days`, but a natural-language statement keeps shaping the
+    profile long after that."""
+
+    __tablename__ = "feedback"
+    __table_args__ = (Index("ix_feedback_created_at", "created_at"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    # like | dislike | save | more_topic | less_topic | set_topic | hide_source
+    # | block_keyword | unblock_keyword | nl_feedback
+    kind: Mapped[str] = mapped_column(String(30))
+    post_id: Mapped[int | None] = mapped_column(
+        ForeignKey("posts.id", ondelete="SET NULL"), index=True
+    )
+    # Canonical topic SLUG for more_topic / less_topic / set_topic — the topic's
+    # permanent identity, not its current spelling, so a rename can never detach a
+    # signal from the weight it was recorded to feed. `topics_snapshot` and
+    # `parsed_intent["topics"][].topic` hold slugs for the same reason.
+    topic: Mapped[str | None] = mapped_column(Text)
+    # The number the reader typed, for set_topic: an ABSOLUTE weight, not a step.
+    # Every other signal is relative and decays; this one is a stated position, so
+    # replay treats it as an anchor that discards whatever came before it.
+    value: Mapped[float | None] = mapped_column()
+    # The blocked substring, for block_keyword / unblock_keyword. Not a `topic`:
+    # a keyword is matched literally against a post's title and summary, never
+    # canonicalized into the vocabulary, so the two must not share a column.
+    # `unblock_keyword` exists as its own event because a keyword block can
+    # originate from a natural-language statement — removing it must not require
+    # deleting that statement and the topic weights it also set.
+    keyword: Mapped[str | None] = mapped_column(Text)
+    # Sources that contributed to what was reacted to; for hide_source, the one
+    # being hidden. A snapshot like the rest of the payload — no FK.
+    source_ids: Mapped[list[int]] = mapped_column(JSONB, default=list)
+    embedding: Mapped[Any | None] = mapped_column(Vector(EMBEDDING_DIM), nullable=True)
+    topics_snapshot: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    difficulty: Mapped[str | None] = mapped_column(String(20))
+    nl_text: Mapped[str | None] = mapped_column(Text)
+    parsed_intent: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+
+
+class InterestProfile(Base):
+    """Singleton (id=1) cache of the feedback log, replayed by
+    `recommend.profile.rebuild`. Nothing here is authoritative — deleting the row
+    loses nothing but the time it takes to replay.
+
+    It is stored rather than computed per request because the scorer runs in the
+    worker and the feed reads in the web process, and because `rebuilt_at` /
+    `event_count` make staleness visible instead of implicit.
+
+    Weights are keyed by a topic's permanent SLUG — stable across a rename, unlike
+    the labels stored on stories and posts, which is why reading a weight for a
+    post goes through `recommend.topics.slug_index` — and by source id as a string
+    (JSONB keys are always strings)."""
+
+    __tablename__ = "interest_profile"
+
+    id: Mapped[int] = mapped_column(primary_key=True, default=1)
+    liked_centroid: Mapped[Any | None] = mapped_column(Vector(EMBEDDING_DIM), nullable=True)
+    disliked_centroid: Mapped[Any | None] = mapped_column(Vector(EMBEDDING_DIM), nullable=True)
+    topic_weights: Mapped[dict[str, float]] = mapped_column(JSONB, default=dict)
+    source_weights: Mapped[dict[str, float]] = mapped_column(JSONB, default=dict)
+    difficulty_weights: Mapped[dict[str, float]] = mapped_column(JSONB, default=dict)
+    blocked_keywords: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    blocked_sources: Mapped[list[int]] = mapped_column(JSONB, default=list)
+    # The reader's own words about what they want (cold start, and editable
+    # later). Stored for display; its effect reaches the profile through the
+    # feedback row that carries its parsed intent.
+    intent_statement: Mapped[str | None] = mapped_column(Text)
+    event_count: Mapped[int] = mapped_column(default=0)
+    rebuilt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class Topic(Base):
+    """The canonical topic vocabulary the interest profile learns weights over.
+
+    Topic tags are LLM free text, and free text drifts: "astrophysics",
+    "astronomy" and "space" arrive as three unrelated keys, so weights learned
+    against them are weights learned against noise. This table is the closed set;
+    `recommend.topics.resolve` maps whatever the model emits onto it in code —
+    the same "offer a closed set, enforce it outside the model" pattern already
+    used for media URLs and citations.
+
+    `slug` is the topic's PERMANENT identity: assigned once from the label the
+    entry was created with, and never moved again. Everything keyed to a topic is
+    keyed to it — interest weights now, relations between topics later — because a
+    key derived from the current label silently re-keys the topic (and dangles
+    every weight pointing at it) the first time someone corrects a spelling.
+    `recommend.topics.rename` therefore changes only `label`, and adds the new
+    spelling to `aliases` so it resolves back here.
+
+    `Story.topics` / `Post.topics` hold canonical `label` strings (not ids), so
+    templates and API payloads render them directly. A rename therefore rewrites
+    the referencing rows too — `recommend.topics.rename` does both in one
+    transaction, and it is a rare, deliberate admin action. Going from one of those
+    stored labels back to the identity its weight lives under is
+    `recommend.topics.slug_index` / `slug_for`, never a bare `slugify`.
+
+    `aliases` records the slugified raw phrasings that resolved here, so a repeat
+    of a known phrasing short-circuits the embedding lookup. Raw model output is
+    not lost either way: it is in the triage call's `llm_calls` row."""
+
+    __tablename__ = "topics"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    slug: Mapped[str] = mapped_column(String(80), unique=True)
+    label: Mapped[str] = mapped_column(Text)
+    # Embedded once at creation; the nearest-neighbour lookup that folds new
+    # phrasings into existing topics needs it. Nullable so a topic can still be
+    # created when the embed model is down (backfilled later).
+    embedding: Mapped[Any | None] = mapped_column(Vector(EMBEDDING_DIM), nullable=True)
+    aliases: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
 
 class Voice(Base):

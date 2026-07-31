@@ -76,12 +76,20 @@ def _display_tz() -> ZoneInfo | None:
 _DISPLAY_TZ = _display_tz()
 
 
-def _format_dt(value: datetime | None) -> str:
+def _format_dt(value: datetime | str | None) -> str:
     # Stored timestamps are tz-aware UTC; a naive one is assumed UTC. Convert to the
     # configured local zone for display so wall-clock matches the user's clock (the
     # comparison logic elsewhere stays UTC — this is presentation only).
     if not value:
         return ""
+    if isinstance(value, str):
+        # Timestamps inside JSONB payloads (app_state records, API dicts) are ISO
+        # strings, and templates shouldn't have to care which side of that line a
+        # value came from. An unparseable string renders as itself.
+        try:
+            value = datetime.fromisoformat(value)
+        except ValueError:
+            return value
     if _DISPLAY_TZ is not None:
         if value.tzinfo is None:
             value = value.replace(tzinfo=UTC)

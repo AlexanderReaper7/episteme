@@ -20,6 +20,49 @@ class TriageResult(BaseModel):
     reason: str = Field(max_length=500)
 
 
+class TopicIntent(BaseModel):
+    topic: str = Field(max_length=60, description="Lowercase topic name")
+    direction: Literal["more", "less"]
+    strength: float = Field(
+        default=1.0, ge=0.0, le=2.0, description="1.0 = a normal request, 2.0 = emphatic"
+    )
+
+
+class ProfileIntent(BaseModel):
+    """A free-text statement about what the reader wants, turned into profile
+    changes. Persisted on the feedback row (`parsed_intent`), which makes it the
+    canonical record: the profile is replayed from feedback, and replaying must
+    never need a second LLM call to reinterpret the same sentence."""
+
+    topics: list[TopicIntent] = Field(default_factory=list, max_length=12)
+    blocked_keywords: list[str] = Field(
+        default_factory=list,
+        max_length=10,
+        description="Only for an explicit hard refusal ('never show me X')",
+    )
+    difficulty: Literal["introductory", "intermediate", "technical"] | None = Field(
+        default=None, description="Only if the reader stated a depth preference"
+    )
+    echo: str = Field(
+        max_length=300,
+        description="One sentence back to the reader confirming what was understood",
+    )
+
+
+class TopicName(BaseModel):
+    index: int = Field(ge=0, description="Index of the cluster being named")
+    label: str = Field(max_length=60, description="Lowercase canonical topic name")
+
+
+class TopicVocabulary(BaseModel):
+    """Names for the clusters of existing free-text topic tags found in the
+    database (recommend.topics.propose_vocabulary). Indices the model omits or
+    invents are ignored — the cluster's most frequent member is the fallback —
+    so this output shapes wording, never structure."""
+
+    topics: list[TopicName]
+
+
 class SourceSummary(BaseModel):
     summary: str = Field(
         description="3-5 sentences preserving key facts, numbers, and named entities"

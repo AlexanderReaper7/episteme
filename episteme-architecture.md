@@ -146,7 +146,10 @@ MediaAsset      — id, article_id?, source_item_id?, kind (image|video-embed|ch
                   remote_url, attribution, last_verified_at,
                   cached_path (nullable — unused for now; enables opt-in caching later)
 Feedback        — id, article_id?, kind (like|dislike|more_topic|less_topic|
-                  hide_source|save|report_error|nl_feedback), nl_text?,
+                  set_topic|hide_source|block_keyword|unblock_keyword|save|
+                  report_error|nl_feedback), nl_text?,
+                  value? (absolute weight, set_topic only),
+                  keyword? (literal block substring, *_keyword only),
                   parsed_intent JSON?, created_at
 ReadEvent       — article_id, opened_at, dwell_seconds, scroll_depth,
                   interactions JSON (quiz answered, chart explored, ...)
@@ -375,6 +378,25 @@ A chain of composable stages; each stage is a Procrastinate job, checkpointed in
 ### Signals
 
 - *Explicit:* like/dislike, "more/less of this topic", hide source, save, report error.
+- *Direct manipulation:* every topic weight on `/tune` is a slider, and a dragged
+  value is **absolute** — it replaces whatever the log had accumulated for that
+  topic instead of nudging it (`set_topic`, carrying `feedback.value`). Dragging
+  several is one editing session, so the list is committed by an explicit Save:
+  one transaction, one replay, but one event per topic so undo stays per-topic.
+  Nothing is written onto the profile row — the profile stays derived, so an edit
+  undoes exactly and survives a rebuild. Two properties follow from a set being a
+  *stated position* rather than a reaction to one item: it does not decay (a
+  control whose value drifts on its own is a control that lies), and it is an
+  anchor rather than a lock — later signals still move the weight from where they
+  were told to start. Setting 0 is how a topic is forgotten.
+- *Hard blocks are editable too:* keywords and outlets can be added and removed
+  on `/tune`. Removing a keyword block is a counter-event (`unblock_keyword`)
+  folded in time order, because a block can have come from a natural-language
+  refusal and lifting it must not require deleting that statement and the topic
+  weights it also set. Removing a source block instead deletes the `hide_source`
+  events behind it: they are its only origin, so that is an exact undo, and it
+  keeps the per-post hide control — which renders from the event's existence —
+  from claiming an outlet is hidden after the reader unblocked it.
 - *Natural-language feedback:* a free-text box ("less speculative AI hype, more
   deep-sea biology") parsed by the `fast` model into a structured intent — topic
   boosts/suppressions, depth shifts, keyword/source-type blocks — applied to the
@@ -396,6 +418,12 @@ unless reinforced, single interactions can't yank the profile around).
 source/paper authority (OpenAlex-informed) + freshness (half-life ~36 h)`.
 
 ### Healthy feed composition — ranking alone is not the feed. The feed has two tiers:
+
+> **As built (2026-07-30):** this subsection is the target design, not the current
+> code. Phase 4 shipped a single ranked stream — features and aggregate cards
+> interleaved as equal units, ordered by `web/app.py:_rank_expr` — and deferred the
+> divider, the diversity/serendipity quotas and the "why am I seeing this" chip
+> (see the Phase 4 note in §12). Hard blocks and the `Scorer` registry below ARE built.
 
 *Tier 1 — the daily selection (generated articles):*
 
@@ -539,6 +567,68 @@ quality gate + draft review UI, and OpenAlex source tracing
 **Phase 4 — Personalization & health**
 Feedback capture, interest profile, scoring, healthy feed composition, "why am I
 seeing this", natural-language feedback box.
+
+*First push built and live-verified 2026-07-29; activated 2026-07-30 (vocabulary
+proposed/reviewed/applied, feed ranking live). Manual profile editing on `/tune`
+landed and was verified in the browser 2026-07-30; the code-review fixes of the
+same day are regression-tested but not yet live-verified.* Scope decided with the
+user, in four parts:
+
+1. **Canonical topic vocabulary** (`topics` table, `recommend/topics.py`). Topic
+   tags were LLM free text, and weights learned against drifting spellings are
+   weights learned against noise. Triage is now *shown* the vocabulary and
+   whatever it returns is resolved in code — exact slug → recorded alias →
+   nearest embedding within `topic_match_threshold` → new entry — the same
+   closed-set-enforced-outside-the-model pattern as media and citations. Existing
+   free-text tags are folded in by a deliberately **two-phase** bootstrap
+   (`propose_topics` writes a reviewable proposal to `app_state`; `apply_topics`
+   commits it and rewrites every story/post topic array). Admin page at
+   `/admin/topics` with rename/merge.
+
+   A topic's **`slug` is its permanent identity**, assigned once and never moved:
+   everything keyed to a topic is keyed to it, so a rename is a display change
+   (the new spelling becomes an alias) and cannot orphan what was learned. This is
+   the property a future *relation* between topics depends on — weakly propagating
+   a signal about "blue" to "color" and "ocean" means edges between nodes, and a
+   node identity derived from the current label dangles every edge the first time
+   a spelling is corrected. Stories and posts store labels for display; going from
+   one back to the identity is `topics.slug_index` / `slug_for`.
+2. **Feedback log canonical, profile derived** (`feedback` +
+   `interest_profile` tables, `recommend/profile.py`). The profile is a *cache*
+   rebuilt by replaying the log, never mutated in place — which is what makes
+   undo exact, lets the half-life and signal weights be retuned retroactively,
+   and stops the cache from drifting away from what the reader actually did.
+   Replay is pure `(events, now, config) -> ProfileState`. Each event carries its
+   own payload (embedding + topic/source snapshot) because stories keep absorbing
+   items and posts are eventually pruned: "the embedding of the thing I liked" is
+   not "the embedding of that story today". Signals: like/dislike/save,
+   more/less topic, hide source, and a natural-language box parsed by the `fast`
+   model into `ProfileIntent` and echoed back for confirmation (`nl_text` +
+   `parsed_intent` are canonical on the row — `llm_calls` holds the verbatim
+   prompt but is pruned long before the statement stops mattering). Reader-facing
+   at `/tune`; controls on every card and article.
+3. **Scoring** (`recommend/scorers.py`, `score` pipeline stage). Seven signals
+   behind a `Scorer` protocol + registry, combined by `scorer_weight_<name>`
+   config — spec §11's "one implementation + a weight". `Post.affinity_score` is
+   stored (with a `score_components` breakdown); freshness is applied in the feed
+   query instead, so a score never needs rewriting as a post ages. Feed order is
+   `tanh(affinity / scale) + age_in_tau_units`: bounded and symmetric, so the knob
+   reads as "the profile may move a post at most `tau` hours of apparent
+   recency", and soft signals reorder rather than bury. Written against a fixed
+   epoch so a row's rank is a pure function of the row and keyset pagination
+   stays sound. Feedback defers a rescore immediately.
+4. **Write-side influence.** Hard blocks (`recommend/blocks.py`, one predicate
+   shared by the feed and the write queue) filter; the write queue is ordered by
+   triage quality plus a bounded affinity term, so the profile decides which
+   stories get the night's main-model budget; triage and the writer receive a
+   short qualitative reader digest (`profile.describe`) that informs pitch and
+   borderline calls but never overrides editorial categories.
+
+Deferred by decision: implicit signals (dwell/scroll — this feed optimizes
+learning value, not engagement), the "why am I seeing this" chip (the
+`score_components` column it will read already exists), diversity/serendipity
+quotas and the two-tier divider (the feed stayed a single ranked stream), and
+OpenAlex authority.
 
 **Phase 5 — More sources & polish**
 arXiv/PubMed/HN/Reddit/X/email adapters, idle-aware scheduling agent, admin panel,

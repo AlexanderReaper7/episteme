@@ -1,6 +1,7 @@
 import hashlib
 import json
-from datetime import datetime
+import math
+from datetime import UTC, datetime
 from urllib.parse import parse_qs
 
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -14,11 +15,14 @@ from starlette_compress import CompressMiddleware
 from ..config import settings
 from ..db import SessionLocal
 from ..models import Post, SourceItem, Story
+from ..recommend import blocks, feedback, profile
 from ..tts import list_voices, pick_default
 from .admin import _group_calls
 from .admin import router as admin_router
 from .api import api_post_llm_calls, api_story
 from .api import router as api_router
+from .feedback import post_context as feedback_context
+from .feedback import router as feedback_router
 from .templating import BASE_DIR, render, templates
 
 
@@ -60,6 +64,7 @@ app.mount("/static", RevalidateStaticFiles(directory=BASE_DIR / "static"), name=
 app.mount("/media", StaticFiles(directory=settings.audio_dir, check_dir=False), name="media")
 app.include_router(api_router)
 app.include_router(admin_router)
+app.include_router(feedback_router)
 
 
 def _feed_sort_at(post: Post) -> datetime:
@@ -68,6 +73,74 @@ def _feed_sort_at(post: Post) -> datetime:
     if post.kind == "aggregate":
         return post.story.last_item_at or post.generated_at
     return post.generated_at
+
+
+# The instant the freshness term is measured from. Any constant works — it shifts
+# every row's rank by the same amount — but a fixed one keeps the numbers small
+# and makes a cursor value comparable across requests.
+_RANK_EPOCH = datetime(2026, 1, 1, tzinfo=UTC).timestamp()
+
+
+def _rank_expr(feed_at):
+    """The feed's ordering: recency, shifted by how well the post matches the
+    interest profile.
+
+        rank = tanh(affinity / scale) + age_in_tau_units
+
+    Read it as "this post ranks as if it were up to `tau` hours newer (or older)
+    than it is". `tanh` bounds the shift to ±1 tau unit, which gives the knob a
+    meaning a person can hold: at the 36h default, the profile reorders items
+    within a day or so and the stream stays legibly chronological; raising tau
+    lets affinity reach across more days. `feed_affinity_scale` sets how quickly
+    that ceiling is approached.
+
+    The bound is also what keeps the two directions symmetric. An unbounded
+    affinity term (e.g. log-sigmoid) gives liking a small ceiling but lets a
+    strong dislike bury a post for a week — soft signals are supposed to reorder,
+    not to remove; removal is what hard blocks are for.
+
+    Two properties the infinite scroll depends on:
+
+    *Order-preserving over time.* Age enters linearly, so the passage of time
+    shifts every row by the same amount and relative order never changes on its
+    own. This is the multiplicative-exponential-decay formulation written
+    additively, and it is why the expression uses a FIXED epoch rather than
+    `now()`: a row's rank is a pure function of the row, so a cursor minted on
+    page 1 still means the same thing on page 5. (With `now()` in it, every rank
+    would shrink slightly between requests and the last row of each page would
+    re-qualify below its own cursor — visible duplicates.)
+
+    *No overflow.* The equivalent multiplicative form, `exp(age / tau)` against a
+    fixed epoch, overflows a double within a few years. This one cannot.
+
+    The one thing that CAN reorder rows mid-scroll is new feedback, which
+    rewrites `affinity_score`. That is the reader's own deliberate act, and the
+    worst case is one card appearing twice.
+    """
+    affinity = func.coalesce(Post.affinity_score, 0.0)
+    shift = func.tanh(affinity / settings.feed_affinity_scale)
+    age_term = (func.extract("epoch", feed_at) - _RANK_EPOCH) / (
+        settings.feed_freshness_tau_hours * 3600.0
+    )
+    return shift + age_term
+
+
+def _rank_value(post: Post) -> float:
+    """Python mirror of `_rank_expr`, as the reference definition of the formula
+    (`test_scoring` pins the two together) and for callers with no query to hand.
+
+    Deliberately NOT the source of the keyset cursor. `tanh` is a libm function,
+    the web container's and Postgres's are separate implementations, and they are
+    not required to agree in the last bit. The cursor is compared against
+    `_rank_expr` evaluated by Postgres, so a one-ULP disagreement would put the
+    boundary row just above its own cursor and serve it twice. `_feed_page` takes
+    the value from the query itself, where both sides come from one evaluator."""
+    affinity = post.affinity_score or 0.0
+    shift = math.tanh(affinity / settings.feed_affinity_scale)
+    age_term = (_feed_sort_at(post).timestamp() - _RANK_EPOCH) / (
+        settings.feed_freshness_tau_hours * 3600.0
+    )
+    return shift + age_term
 
 
 def _agg_banner(items) -> str | None:
@@ -100,57 +173,78 @@ async def _load_aggregate_items(session, posts: list[Post]) -> None:
     )
 
 
-async def _feed_page(session, cursor: tuple[datetime, int] | None = None) -> dict:
-    """Unified vertical stream (spec §8): one recency-ordered column of every
-    published post — generated `feature` articles and identity-only `aggregate`
-    cluster cards interleaved as equal units. Features sort by when they were
-    written; aggregates by their story's latest item (a cluster keeps surfacing
-    as new sources join it), falling back to mint time if the story has none.
+async def _feed_page(session, cursor: tuple[float, int] | None = None) -> dict:
+    """Unified vertical stream (spec §8): one column of every published post —
+    generated `feature` articles and identity-only `aggregate` cluster cards
+    interleaved as equal units, ranked by interest affinity decayed by age
+    (`_rank_expr`). Features age from when they were written; aggregates from
+    their story's latest item, so a cluster keeps surfacing as new sources join it.
 
-    Paged by keyset, not OFFSET: the stream grows at the head (features get
-    written, aggregates re-sort up as sources join), so an offset window would
-    re-serve rows that shifted down between the initial render and a `revealed`
-    fetch — visible duplicates. The cursor is the last rendered row's
-    `(feed_at, id)`; we fetch strictly below it. Because `feed_at` only ever
-    increases for a given row, a row can never cross back below the cursor, so
-    keyset here never duplicates (an aggregate that jumps to the head after
-    being shown simply isn't re-fetched)."""
+    Hard blocks are applied as filters BEFORE ranking (`_block_filters`): a
+    blocked outlet or keyword is absent, not merely last.
+
+    Paged by keyset, not OFFSET: the stream grows and re-sorts at the head, so an
+    offset window would re-serve rows that shifted down between the initial render
+    and a `revealed` fetch — visible duplicates. The cursor is the last rendered
+    row's `(rank, id)`; we fetch strictly below it. `_rank_expr` is written
+    against a fixed epoch precisely so that cursor keeps its meaning: rank is a
+    pure function of the row, so nothing drifts across the cursor as time passes.
+    Only new feedback can reorder rows mid-scroll, and that is the reader's own
+    deliberate act."""
     size = settings.feed_page_size
     feed_at = case(
         (Post.kind == "aggregate", func.coalesce(Story.last_item_at, Post.generated_at)),
         else_=Post.generated_at,
     )
+    rank = _rank_expr(feed_at)
+    profile_state = await profile.load(session)
     # Load the Story (needed for both kinds: aggregate cards render from it, and the
     # feed_at sort touches it) but NOT its items — a feature card reads its banner
     # from the denormalized `Post.banner_url`, so it never needs the story's items.
     # Only aggregate cards render from items; those are batch-loaded below, keyed by
     # story, so a feature-heavy page stops dragging in every cluster's items+sources.
+    # `rank` is selected alongside the row, not recomputed in Python afterwards:
+    # the cursor is compared against this same expression on the next request, and
+    # `tanh` is libm — the web container's and Postgres's need not agree in the
+    # last bit. A one-ULP disagreement would leave the boundary row just above its
+    # own cursor and serve it a second time. Taking the number from the evaluator
+    # that will do the comparing removes the question.
     stmt = (
-        select(Post)
+        select(Post, rank.label("rank"))
         .options(selectinload(Post.story))
         .join(Post.story)
-        .where(Post.status == "published")
-        .order_by(feed_at.desc(), Post.id.desc())
+        .where(
+            Post.status == "published",
+            *blocks.filters(
+                profile_state, Post.story_id, text_columns=(Post.title, Post.summary)
+            ),
+        )
+        .order_by(rank.desc(), Post.id.desc())
         .limit(size + 1)
     )
     if cursor is not None:
-        cur_at, cur_id = cursor
+        cur_rank, cur_id = cursor
         stmt = stmt.where(
-            or_(feed_at < cur_at, and_(feed_at == cur_at, Post.id < cur_id))
+            or_(rank < cur_rank, and_(rank == cur_rank, Post.id < cur_id))
         )
-    posts = (await session.execute(stmt)).scalars().all()
-    has_more = len(posts) > size
-    posts = posts[:size]
+    rows = (await session.execute(stmt)).all()
+    has_more = len(rows) > size
+    rows = rows[:size]
+    posts = [row.Post for row in rows]
     await _load_aggregate_items(session, posts)
     next_cursor = None
-    if has_more and posts:
-        last = posts[-1]
-        next_cursor = {"at": _feed_sort_at(last).isoformat(), "id": last.id}
+    if has_more and rows:
+        next_cursor = {"at": repr(float(rows[-1].rank)), "id": rows[-1].Post.id}
     return {
         "posts": posts,
         "has_more": has_more,
         "next_cursor": next_cursor,
         "first_page": cursor is None,
+        # One query for the page's feedback state, not one per card — the buttons
+        # render in whatever state the reader left them (feedback.signals_for_posts).
+        "feedback_signals": await feedback.signals_for_posts(
+            session, [post.id for post in posts]
+        ),
     }
 
 
@@ -261,6 +355,23 @@ def _pagination_sig(page: dict) -> tuple:
     return (page["has_more"], (page["next_cursor"] or {}).get("id"))
 
 
+def _feedback_sig(page: dict) -> list:
+    """The feedback state the cards render (which buttons are active, and the event
+    id each active one undoes). Folded into both feed validators: liking a post on
+    its article page changes how its FEED card renders, and without this the feed
+    would answer the next navigation with a stale 304 showing an inactive button."""
+    signals = page.get("feedback_signals") or {}
+    sig = []
+    for post_id in sorted(signals):
+        kinds = sorted(((signals.get(post_id) or {}).get("kinds") or {}).items())
+        # Only entries with actual signals: a post whose last signal was undone is
+        # indistinguishable from one that never had any, so both must hash alike or
+        # an undo would leave the validator permanently shifted.
+        if kinds:
+            sig.append((post_id, kinds))
+    return sig
+
+
 def _feed_etag(page: dict, fragment: bool) -> str:
     """A weak validator over the first feed page's composition, so an unchanged feed
     answers a hard refresh with a 304 and skips the re-render.
@@ -269,7 +380,12 @@ def _feed_etag(page: dict, fragment: bool) -> str:
     full document at the same URL. It's folded into the hash so a full-doc cache entry
     can never satisfy a fragment conditional request (belt-and-suspenders alongside
     `Vary: HX-Request`)."""
-    sig = [("frag", fragment), *_feed_cards_sig(page["posts"]), _pagination_sig(page)]
+    sig = [
+        ("frag", fragment),
+        *_feed_cards_sig(page["posts"]),
+        _pagination_sig(page),
+        ("fb", _feedback_sig(page)),
+    ]
     return _weak_etag(sig)
 
 
@@ -281,7 +397,9 @@ def _feed_partial_etag(page: dict) -> str:
     changed page (an aggregate gains an item, a rewritten feature drops out) never
     answers a stale 304, while an unchanged deep page revalidates as a cheap bodyless
     304 and re-scrolls within the freshness window are pure cache hits."""
-    return _weak_etag([*_feed_cards_sig(page["posts"]), _pagination_sig(page)])
+    return _weak_etag(
+        [*_feed_cards_sig(page["posts"]), _pagination_sig(page), ("fb", _feedback_sig(page))]
+    )
 
 
 def _items_partial_etag(page: dict) -> str:
@@ -385,7 +503,9 @@ async def feed(request: Request):
     return _apply_validators(response, etag) if etag else response
 
 
-def _post_page_etag(post: Post, voices, default_voice, tts_configured, fragment: bool) -> str:
+def _post_page_etag(
+    post: Post, voices, default_voice, tts_configured, fragment: bool, feedback_ctx: dict
+) -> str:
     """A weak validator for a post's page, covering everything the render reads.
 
     A FEATURE reads its own columns: a QA revision mutates `sections`/`quality_score`
@@ -416,6 +536,17 @@ def _post_page_etag(post: Post, voices, default_voice, tts_configured, fragment:
         "voices": [(v.id, v.label, v.enabled) for v in voices],
         "default_voice": default_voice,
         "tts": tts_configured,
+        # The feedback controls render from the database, so their state is part of
+        # the page: a signal recorded from the FEED card must invalidate this page
+        # too. Topic/source rows are included because the article page renders the
+        # full control set, not just like/dislike/save.
+        "feedback": [
+            sorted(feedback_ctx.get("signals", {}).items()),
+            sorted((str(key), value) for key, value in feedback_ctx.get("topic_signals", {}).items()),
+            sorted(feedback_ctx.get("source_signals", {}).items()),
+            feedback_ctx.get("post_topics"),
+            feedback_ctx.get("post_sources"),
+        ],
     }
     if post.kind == "aggregate" and post.story is not None:
         story = post.story
@@ -460,6 +591,10 @@ async def post_view(request: Request, post_id: int):
         # identical `default_voice_id` query — it calls `list_voices` internally).
         voices = await list_voices(session)
         default_voice = pick_default(voices, settings.tts_default_voice)
+        # The full control set (topics + sources, not just like/dislike/save), built
+        # by the same function the htmx swap uses so a click can't render a page the
+        # server would have rendered differently.
+        feedback_ctx = await feedback_context(session, post_id)
     tts_configured = bool(settings.fish_api_key)
 
     # Conditional GET for both post kinds AND both representations (full document +
@@ -470,7 +605,9 @@ async def post_view(request: Request, post_id: int):
     # cacheable; continuous-mode `fetch("/post/N")` (no HX headers) and hard refreshes
     # also benefit.
     is_htmx = request.headers.get("HX-Request") == "true"
-    etag = _post_page_etag(post, voices, default_voice, tts_configured, fragment=is_htmx)
+    etag = _post_page_etag(
+        post, voices, default_voice, tts_configured, is_htmx, feedback_ctx
+    )
     not_modified = _conditional_response(request, etag)
     if not_modified is not None:
         return not_modified
@@ -483,6 +620,7 @@ async def post_view(request: Request, post_id: int):
             "voices": voices,
             "default_voice": default_voice,
             "tts_configured": tts_configured,
+            **feedback_ctx,
         },
     )
     return _apply_validators(response, etag)
@@ -559,11 +697,15 @@ async def feed_partial(
     cursor_at: str | None = None,
     cursor_id: int | None = None,
 ):
-    # feed_at is never null (generated_at is NOT NULL), so a feed cursor always
-    # carries a timestamp; ignore a malformed cursor and serve the head.
+    # The cursor is the last rendered row's rank (a float, see `_rank_expr`) —
+    # `cursor_at` keeps its name so an in-flight sentinel URL from an older page
+    # doesn't 500; a malformed value just serves the head.
     cursor = None
     if cursor_at and cursor_id is not None:
-        cursor = (datetime.fromisoformat(cursor_at), cursor_id)
+        try:
+            cursor = (float(cursor_at), cursor_id)
+        except ValueError:
+            cursor = None
     async with SessionLocal() as session:
         context = await _feed_page(session, cursor=cursor)
     # Single representation (always the fragment, cursor-keyed) → no Vary: HX-Request.

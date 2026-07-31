@@ -1,0 +1,82 @@
+{# Feedback controls for one post. Self-contained and self-replacing: every
+   button swaps this whole block back in, so the rendered state always comes from
+   the database rather than from client-side bookkeeping.
+
+   `signals` is {kind: feedback_id} for signals already recorded on this post —
+   an active button posts the undo for its own event id, which is exact (the
+   profile is replayed without it), not an approximate reversal.
+
+   Sits above the card's stretched .card-link via z-index, the same way the
+   provenance link does; on the article page there is no stretched link to clear.
+
+   No counts, no streaks, no badges: these controls exist to steer the feed, not
+   to score the reader (spec §8, "no dark patterns"). #}
+<div class="feedback" id="feedback-{{ post_id }}" data-post-id="{{ post_id }}">
+  {% for kind, label, title in [
+       ("like", "Like", "More like this"),
+       ("dislike", "Dislike", "Less like this"),
+       ("save", "Save", "Keep this")] %}
+  {% set existing = signals.get(kind) %}
+  <button type="button"
+          class="feedback-btn feedback-btn--{{ kind }} {{ 'is-active' if existing else '' }}"
+          title="{{ title }}"
+          aria-pressed="{{ 'true' if existing else 'false' }}"
+          {% if existing %}
+          hx-post="/feedback/{{ existing }}/undo?post_id={{ post_id }}"
+          {% else %}
+          hx-post="/feedback?kind={{ kind }}&post_id={{ post_id }}"
+          {% endif %}
+          hx-target="#feedback-{{ post_id }}"
+          hx-swap="outerHTML">
+    {{ label }}
+  </button>
+  {% endfor %}
+
+  {% if with_topics and post_topics %}
+  <span class="feedback-sep" aria-hidden="true">·</span>
+  {# The label is what the reader reads; the slug is what the signal is filed
+     under, and posting the slug is what makes the button keep working after the
+     topic has been renamed (`topics.resolve` finds it at the exact-slug tier). #}
+  {% for topic in post_topics %}
+  {% set more_id = topic_signals.get((topic.slug, "more_topic")) %}
+  {% set less_id = topic_signals.get((topic.slug, "less_topic")) %}
+  <span class="feedback-topic">
+    <span class="feedback-topic-name">{{ topic.label }}</span>
+    <button type="button" class="feedback-btn feedback-btn--tiny {{ 'is-active' if more_id else '' }}"
+            title="More {{ topic.label }}" aria-label="More {{ topic.label }}"
+            {% if more_id %}
+            hx-post="/feedback/{{ more_id }}/undo?post_id={{ post_id }}"
+            {% else %}
+            hx-post="/feedback?kind=more_topic&post_id={{ post_id }}&topic={{ topic.slug | urlencode }}"
+            {% endif %}
+            hx-target="#feedback-{{ post_id }}" hx-swap="outerHTML">more</button>
+    <button type="button" class="feedback-btn feedback-btn--tiny {{ 'is-active' if less_id else '' }}"
+            title="Less {{ topic.label }}" aria-label="Less {{ topic.label }}"
+            {% if less_id %}
+            hx-post="/feedback/{{ less_id }}/undo?post_id={{ post_id }}"
+            {% else %}
+            hx-post="/feedback?kind=less_topic&post_id={{ post_id }}&topic={{ topic.slug | urlencode }}"
+            {% endif %}
+            hx-target="#feedback-{{ post_id }}" hx-swap="outerHTML">less</button>
+  </span>
+  {% endfor %}
+  {% endif %}
+
+  {% if with_topics and post_sources %}
+  <span class="feedback-sep" aria-hidden="true">·</span>
+  {% for source in post_sources %}
+  {% set hidden_id = source_signals.get(source.id) %}
+  <button type="button" class="feedback-btn feedback-btn--tiny {{ 'is-active' if hidden_id else '' }}"
+          title="{{ 'Show' if hidden_id else 'Hide' }} everything from {{ source.name }}"
+          {% if hidden_id %}
+          hx-post="/feedback/{{ hidden_id }}/undo?post_id={{ post_id }}"
+          {% else %}
+          hx-post="/feedback?kind=hide_source&post_id={{ post_id }}&source_id={{ source.id }}"
+          hx-confirm="Hide everything from {{ source.name }}? This removes its content from the feed, not just ranks it lower."
+          {% endif %}
+          hx-target="#feedback-{{ post_id }}" hx-swap="outerHTML">
+    {{ 'unhide' if hidden_id else 'hide' }} {{ source.name }}
+  </button>
+  {% endfor %}
+  {% endif %}
+</div>

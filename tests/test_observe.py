@@ -3,7 +3,7 @@ import json
 
 import httpx
 
-from episteme.llm.gateway import LLMGateway
+from episteme.llm.gateway import LLMError, LLMGateway
 from episteme.llm.observe import (
     _attempt_id,
     _chain_info,
@@ -147,9 +147,11 @@ async def test_gateway_records_errors(monkeypatch):
         return httpx.Response(500, text="boom")
 
     gw = LLMGateway(transport=httpx.MockTransport(handler))
+    # LLMError, not the underlying httpx.HTTPStatusError: the gateway wraps
+    # transport failures so callers' `except LLMError` fallbacks cover them.
     try:
         await gw.chat("fast", "sys", "user")
-    except httpx.HTTPStatusError:
+    except LLMError:
         pass
     assert len(records) == 1
     assert records[0]["error"]

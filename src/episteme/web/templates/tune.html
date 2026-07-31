@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+
+{% block title %} • Tune{% endblock %}
+
+{% block content %}
+<div class="tune-page">
+  <h1 class="tune-title">Tune your feed</h1>
+  <p class="muted tune-intro">
+    Nothing here is inferred from how long you looked at something. The feed only
+    learns from what you deliberately tell it — the buttons on a post, and the box
+    below.
+  </p>
+  {% include "_tune_panel.html" %}
+</div>
+{% endblock %}

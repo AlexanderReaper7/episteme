@@ -20,6 +20,8 @@ from ..db import SessionLocal
 from ..llm import gateway
 from ..models import (
     POST_SCOPED_STAGES,
+    Feedback,
+    InterestProfile,
     LlmCall,
     PipelineRun,
     Post,
@@ -28,6 +30,8 @@ from ..models import (
     SourceItem,
     Story,
 )
+from ..recommend import feedback, profile, topics
+from ..recommend.scoring import defer_rescore
 from ..tts import (
     build_script,
     default_voice_id,
@@ -49,12 +53,20 @@ DEFERRABLE_TASKS: dict[str, tuple[str, frozenset[str]]] = {
     "run_pipeline": ("episteme.run_pipeline", frozenset()),
     "backup_database": ("episteme.backup_database", frozenset()),
     "recover_stalled_jobs": ("episteme.recover_stalled_jobs", frozenset()),
+    # Vocabulary bootstrap, two-phase on purpose: propose writes a reviewable
+    # proposal, apply commits it (see recommend/topics.py).
+    "propose_topics": ("episteme.propose_topics", frozenset()),
+    "apply_topics": ("episteme.apply_topics", frozenset()),
+    # Normally automatic (the embed stage heals what an outage left behind); this
+    # is the lever for not waiting for the next run.
+    "backfill_topic_embeddings": ("episteme.backfill_topic_embeddings", frozenset()),
     "embed": ("episteme.pipeline_stage", frozenset({"limit"})),
     "cluster": ("episteme.pipeline_stage", frozenset({"limit"})),
     "triage": ("episteme.pipeline_stage", frozenset({"limit", "story_id"})),
     "write": ("episteme.pipeline_stage", frozenset({"limit", "story_id"})),
     "qa": ("episteme.pipeline_stage", frozenset({"limit", "post_id"})),
     "narrate": ("episteme.pipeline_stage", frozenset({"limit", "post_id"})),
+    "score": ("episteme.pipeline_stage", frozenset({"limit", "post_id"})),
 }
 
 
@@ -812,6 +824,211 @@ async def api_post(post_id: int):
     if post is None:
         raise HTTPException(404)
     return _post_dict(post, with_sections=True)
+
+
+# --- Feedback + interest profile --------------------------------------------------
+
+
+def _feedback_dict(event: Feedback) -> dict:
+    return {
+        "id": event.id,
+        "created_at": event.created_at.isoformat() if event.created_at else None,
+        "kind": event.kind,
+        "post_id": event.post_id,
+        "topic": event.topic,
+        "value": event.value,
+        "keyword": event.keyword,
+        "source_ids": event.source_ids or [],
+        "nl_text": event.nl_text,
+        "parsed_intent": event.parsed_intent,
+    }
+
+
+def _profile_dict(state) -> dict:
+    return {
+        "event_count": state.event_count,
+        "topic_weights": state.topic_weights,
+        "source_weights": state.source_weights,
+        "difficulty_weights": state.difficulty_weights,
+        "blocked_keywords": state.blocked_keywords,
+        "blocked_sources": state.blocked_sources,
+        "intent_statement": state.intent_statement,
+        "has_liked_centroid": state.liked_centroid is not None,
+        "has_disliked_centroid": state.disliked_centroid is not None,
+    }
+
+
+@router.post("/feedback")
+async def api_feedback(
+    kind: str,
+    post_id: int | None = Query(None, ge=1),
+    topic: str | None = None,
+    source_id: int | None = Query(None, ge=1),
+    weight: float | None = None,
+    keyword: str | None = None,
+):
+    """Record one explicit signal. The profile is rebuilt from the whole log
+    immediately, so the next feed read already reflects it.
+
+    `weight` belongs to `kind=set_topic` — the hand-edited weight from /tune,
+    which is absolute (it replaces the topic's accumulated weight) rather than a
+    step. `keyword` belongs to `block_keyword` / `unblock_keyword`. All of them are
+    events like any other, so undo works the same way."""
+    async with SessionLocal() as session:
+        try:
+            event, state = await feedback.record(
+                session,
+                kind,
+                post_id=post_id,
+                topic=topic,
+                source_id=source_id,
+                weight=weight,
+                keyword=keyword,
+            )
+        except feedback.FeedbackError as exc:
+            raise HTTPException(422, str(exc)) from None
+        return {"feedback": _feedback_dict(event), "profile": _profile_dict(state)}
+
+
+@router.post("/feedback/nl")
+async def api_feedback_nl(text: str = Query(..., min_length=1)):
+    """Natural-language feedback: parsed into structured intent by the fast model,
+    applied, and echoed back so the interpretation is confirmable."""
+    async with SessionLocal() as session:
+        try:
+            event, state, echo = await feedback.record_nl(session, text)
+        except feedback.FeedbackError as exc:
+            raise HTTPException(422, str(exc)) from None
+        return {
+            "feedback": _feedback_dict(event),
+            "echo": echo,
+            "profile": _profile_dict(state),
+        }
+
+
+@router.delete("/feedback/{feedback_id}")
+async def api_feedback_undo(feedback_id: int):
+    """Undo is exact: the event is deleted and the profile replayed without it."""
+    async with SessionLocal() as session:
+        try:
+            state = await feedback.undo(session, feedback_id)
+        except feedback.FeedbackError as exc:
+            raise HTTPException(404, str(exc)) from None
+        return {"undone": feedback_id, "profile": _profile_dict(state)}
+
+
+@router.get("/feedback")
+async def api_feedback_list(limit: int = Query(50, ge=1, le=500)):
+    async with SessionLocal() as session:
+        events = await feedback.recent(session, limit=limit)
+    return [_feedback_dict(event) for event in events]
+
+
+@router.get("/profile")
+async def api_profile():
+    """The derived profile as currently cached. `event_count` and `rebuilt_at`
+    are the staleness check — the cache is only ever a replay of /api/feedback."""
+    async with SessionLocal() as session:
+        state = await profile.load(session)
+        row = await session.get(InterestProfile, profile.PROFILE_ID)
+    return {
+        **_profile_dict(state),
+        "rebuilt_at": row.rebuilt_at.isoformat() if row and row.rebuilt_at else None,
+    }
+
+
+@router.post("/profile/rebuild")
+async def api_profile_rebuild():
+    """Force a replay — after retuning the half-life or signal weights in config,
+    which reinterprets the entire history rather than leaving it baked in."""
+    async with SessionLocal() as session:
+        state = await profile.rebuild(session)
+    return _profile_dict(state)
+
+
+# --- Topic vocabulary -------------------------------------------------------------
+
+
+@router.get("/topics")
+async def api_topics():
+    """The canonical vocabulary the interest profile learns weights over, with
+    how often each entry is actually used (dead entries are the ones to merge)."""
+    async with SessionLocal() as session:
+        entries = await topics.vocabulary(session)
+        counts = await topics.usage_counts(session)
+        proposal = await topics.get_proposal(session)
+    known = {topic.label for topic in entries}
+    return {
+        "topics": sorted(
+            (
+                {
+                    "slug": topic.slug,
+                    "label": topic.label,
+                    "aliases": topic.aliases or [],
+                    "uses": counts.get(topic.label, 0),
+                    "embedded": topic.embedding is not None,
+                }
+                for topic in entries
+            ),
+            key=lambda entry: (-entry["uses"], entry["label"]),
+        ),
+        # Labels in use that no vocabulary entry claims — i.e. what the bootstrap
+        # would still have to fold in. Empty is the healthy steady state.
+        "unresolved": sorted(
+            {label: uses for label, uses in counts.items() if label not in known}.items(),
+            key=lambda pair: (-pair[1], pair[0]),
+        ),
+        "has_proposal": proposal is not None,
+    }
+
+
+@router.get("/topics/proposal")
+async def api_topics_proposal():
+    """The pending vocabulary proposal (phase one of the bootstrap), or 404 if
+    none is awaiting review."""
+    async with SessionLocal() as session:
+        proposal = await topics.get_proposal(session)
+    if proposal is None:
+        raise HTTPException(404, "No topic vocabulary proposal awaiting review")
+    return proposal
+
+
+@router.delete("/topics/proposal")
+async def api_topics_proposal_discard():
+    async with SessionLocal() as session:
+        await topics.discard_proposal(session)
+    return {"discarded": True}
+
+
+@router.post("/topics/{slug}/rename")
+async def api_topic_rename(slug: str, label: str = Query(..., min_length=1)):
+    """Rename a vocabulary entry, rewriting every story/post that references it —
+    labels are stored, not ids, so this is the only sanctioned way to do it."""
+    async with SessionLocal() as session:
+        try:
+            rewritten = await topics.rename(session, slug, label)
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from None
+    return {"slug": slug, "label": label, "rows_rewritten": rewritten}
+
+
+@router.post("/topics/{slug}/merge")
+async def api_topic_merge(slug: str, into: str = Query(..., min_length=1)):
+    """Fold one vocabulary entry into another (aliases move, rows are rewritten,
+    the absorbed entry is deleted).
+
+    A merge ends one of the two identities, so it repoints the feedback log at the
+    survivor and the derived profile has to be replayed to see it — and every
+    stored `affinity_score` was computed against the pre-merge weights. Rename
+    needs neither: the slug it is keyed by never moves."""
+    async with SessionLocal() as session:
+        try:
+            rewritten = await topics.merge(session, slug, into)
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from None
+        await profile.rebuild(session)
+    await defer_rescore()
+    return {"slug": slug, "merged_into": into, "rows_rewritten": rewritten}
 
 
 # --- LLM calls --------------------------------------------------------------------

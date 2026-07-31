@@ -35,7 +35,20 @@ def _render(sections):
         topics=["astronomy"], sections=sections, reading_time_minutes=3,
         generated_at=datetime(2026, 7, 19, tzinfo=UTC), model_used="test-model",
     )
-    return templates.env.get_template("post.html").render(post=post)
+    # `_feedback.html` is a strict component — it renders from the database state
+    # its route supplies and has no defaults, so a caller that forgets the context
+    # fails loudly rather than silently drawing every button as un-pressed. This
+    # test is about sections, so it supplies the "no signals yet" shape.
+    return templates.env.get_template("post.html").render(
+        post=post,
+        post_id=post.id,
+        signals={},
+        topic_signals={},
+        source_signals={},
+        post_topics=post.topics,
+        post_sources=[],
+        with_topics=True,
+    )
 
 
 def test_all_section_types_render():

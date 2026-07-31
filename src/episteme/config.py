@@ -101,6 +101,80 @@ class Settings(BaseSettings):
     # picked "skip" on rich material — so this is a code-level content-volume check.
     min_write_chars: int = 1200
 
+    # --- Interest profile (recommend/profile.py) ---
+    # The profile is REPLAYED from the feedback log, so these are not "learning
+    # rates" that bake into stored state — changing any of them and rebuilding
+    # reinterprets the entire history. Tune freely.
+    # Half-life of a signal's influence: an interest fades unless reinforced, so
+    # a phase of curiosity two years ago cannot hold the feed hostage today.
+    feedback_half_life_days: float = 90.0
+    # Per-signal strength. Explicit topic steering counts for more than a single
+    # like, and a dislike is not a mirror-image of a like: this feed optimizes
+    # learning value, so it should be readier to add than to subtract.
+    feedback_like_weight: float = 1.0
+    feedback_dislike_weight: float = 0.8
+    feedback_save_weight: float = 1.5
+    feedback_topic_step: float = 2.0  # more_topic / less_topic
+    # A like/dislike also nudges the post's topics and sources, but weakly — it is
+    # a signal about one post, not a declaration about a whole subject area.
+    feedback_topic_spillover: float = 0.35
+    feedback_source_step: float = 0.3
+    # Clamp on any single topic/source weight after replay, so a run of feedback
+    # on one subject can't crowd everything else out of the feed.
+    profile_weight_clamp: float = 6.0
+
+    # --- Scoring + feed ranking (recommend/scorers.py, web/app.py) ---
+    # Each registered Scorer's weight is looked up as `scorer_weight_<name>`, so
+    # adding a signal is one implementation plus one line here (spec §11). A
+    # scorer with no weight is inert rather than an error.
+    scorer_weight_liked: float = 1.0
+    scorer_weight_disliked: float = 1.0  # magnitude; the scorer returns a negative
+    scorer_weight_topic: float = 1.0
+    scorer_weight_source: float = 0.5
+    scorer_weight_difficulty: float = 0.5
+    scorer_weight_quality: float = 0.4
+    scorer_weight_authority: float = 0.3
+    # How far the profile may move a post in the feed, in hours of apparent
+    # recency: a perfectly-matching post ranks as if it were this much newer, a
+    # badly-matching one as if it were this much older, and nothing exceeds that
+    # (see web.app._rank_expr). At 36h the profile reorders items within a day or
+    # so and the stream stays legibly chronological; raise it to let affinity
+    # reach across more days, at the cost of a feed whose head stops moving.
+    feed_freshness_tau_hours: float = 36.0
+    # Raw affinity at which that ceiling is roughly reached (tanh saturation):
+    # 2.0 means an affinity of ±4 is already ~96% of the maximum shift. Lower it
+    # to make weak preferences bite sooner.
+    feed_affinity_scale: float = 2.0
+    # The MOST reader affinity may move a story in the write queue, in points of
+    # triage's ~0-10 quality score (the term is bounded, see
+    # pipeline._rank_write_queue). At 2.0 affinity decides between comparable
+    # candidates for the night's main-model budget but can never put a weak story
+    # ahead of a strong one on subject alone. 0 disables it entirely.
+    write_queue_affinity_weight: float = 2.0
+    # Coalescing window for the rescore a feedback click triggers. Reading is
+    # bursty — a reader works down the feed liking half a dozen cards — and each
+    # signal alone would enqueue a full-corpus pass, so signals arriving within
+    # this window ride on the first one's job (see scoring.defer_rescore). The
+    # profile is rebuilt on every signal regardless; this only paces the pass that
+    # writes scores back onto posts, so the ceiling on staleness is exactly this
+    # many seconds. 0 disables coalescing.
+    rescore_debounce_seconds: int = 20
+
+    # --- Topics (canonical vocabulary; recommend/topics.py) ---
+    # Cosine similarity at which a raw model-emitted topic label is folded into an
+    # existing vocabulary entry instead of creating a new one. Higher than the
+    # story-clustering threshold on purpose: topic strings are short, so their
+    # embeddings sit closer together than document embeddings do, and a loose
+    # threshold would collapse genuinely distinct fields into one weight.
+    topic_match_threshold: float = 0.88
+    # How many vocabulary entries triage is shown (most-used first). The list is a
+    # prompt cost on every story, so it is capped; resolution still folds anything
+    # the model invents into the full vocabulary afterwards.
+    topic_vocabulary_prompt_limit: int = 80
+    # Bootstrap clustering: similarity at which two existing free-text topic labels
+    # are considered the same concept when building the initial vocabulary.
+    topic_bootstrap_threshold: float = 0.86
+
     # --- Backups (the worker owns backups; it already runs procrastinate, so no
     # separate service). Custom format (-Fc) is restore-selective via pg_restore
     # and, on PG18/PGDG pg_dump, compresses with zstd instead of the default gzip

@@ -83,6 +83,105 @@ async def test_complete_json_falls_back_to_json_object_format():
     assert result.decision == "aggregate"
 
 
+@pytest.mark.parametrize(
+    "raised",
+    [
+        httpx.ReadTimeout("timed out"),
+        httpx.ConnectError("connection refused"),
+    ],
+)
+async def test_transport_failures_reach_callers_as_llm_error(raised):
+    """Regression (found live, 2026-07-29): the router had to swap the fast model
+    in, the request sat 600s without a byte, and the raw `httpx.ReadTimeout` blew
+    straight through `_name_clusters`' `except LLMError` fallback — destroying a
+    job that had already spent ten minutes embedding and clustering.
+
+    Every caller writes its degradation against `LLMError` because the gateway is
+    the single choke point; a transport error must not be the one failure mode
+    that bypasses all of them."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise raised
+
+    with pytest.raises(LLMError):
+        await _gateway_with(handler).chat("fast", "sys", "user")
+
+
+async def test_http_status_errors_are_llm_errors_too():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, text="model loading")
+
+    with pytest.raises(LLMError):
+        await _gateway_with(handler).chat("fast", "sys", "user")
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"text": "<html>gateway timeout</html>"},          # 200, not JSON at all
+        {"json": {"error": {"message": "no slot available"}}},  # JSON, no choices
+        {"json": {"choices": []}},                          # choices, but empty
+        {"json": {"choices": [{"message": {}}]}},           # message, no content
+    ],
+    ids=["not-json", "no-choices", "empty-choices", "no-content"],
+)
+async def test_a_malformed_200_is_an_llm_error_like_any_other_failure(body):
+    """The other half of the same contract. A response that arrives but cannot be
+    read is not a different kind of problem from one that never arrives — but it
+    used to be a differently-typed one, because the parse sat outside the guarded
+    region and escaped as JSONDecodeError / KeyError / IndexError, past every
+    `except LLMError` fallback in the codebase.
+
+    llama-server produces all four of these: a proxy's own error page, an error
+    object with a 200, a truncated stream, a message with no content."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, **body)
+
+    with pytest.raises(LLMError):
+        await _gateway_with(handler).chat("fast", "sys", "user")
+
+
+async def test_a_malformed_200_is_an_llm_error_on_the_tool_path_too():
+    """The writer's agentic loop uses `chat_messages`, not `chat` — the same
+    parse, so it needs the same guard, or one stray body fails the whole run."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"error": "no slot available"})
+
+    with pytest.raises(LLMError):
+        await _gateway_with(handler).chat_messages("main", [{"role": "user", "content": "x"}])
+
+
+async def test_a_malformed_embedding_response_is_an_llm_error(monkeypatch):
+    """`_embed_labels` degrades topic resolution to slug matching on LLMError; a
+    KeyError here would instead fail whatever stage was resolving topics."""
+    from episteme.config import settings
+
+    monkeypatch.setattr(settings, "llm_model_embed", "test-embed")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"object": "list"})  # no "data"
+
+    with pytest.raises(LLMError):
+        await _gateway_with(handler).embed(["some text"])
+
+
+async def test_embed_transport_failure_is_an_llm_error(monkeypatch):
+    """The embed client is a second httpx client on a different port — it needs the
+    same wrapping, not merely the chat path."""
+    from episteme.config import settings
+
+    monkeypatch.setattr(settings, "llm_model_embed", "test-embed")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("timed out")
+
+    gateway = LLMGateway(transport=httpx.MockTransport(handler))
+    with pytest.raises(LLMError):
+        await gateway.embed(["some text"])
+
+
 async def test_embed_truncates_and_normalizes(monkeypatch):
     from episteme.config import settings
 

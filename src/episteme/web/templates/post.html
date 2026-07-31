@@ -49,6 +49,15 @@
 
   {% include "_sections.html" %}
 
+  <section class="article-feedback">
+    <h2>Was this worth your time?</h2>
+    {% include "_feedback.html" %}
+    <p class="muted">
+      Steering only — nothing is inferred from whether you opened this or how long
+      you stayed. <a href="/tune">See and edit what the feed has learned</a>.
+    </p>
+  </section>
+
   <p class="article-footnote">
     Written by a local model ({{ post.model_used }}) from the sources above.
     <a href="/">← back to feed</a>
