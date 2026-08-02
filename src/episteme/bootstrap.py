@@ -3,13 +3,16 @@ procrastinate job-queue schema, seed sources. Idempotent; run by the `migrate`
 compose service before web/worker start.
 
 Schema changes are Alembic's job (see episteme/migrations/). This module decides
-*when* to run them and what has to be true first:
+*when* to run them and what has to be true first: a database that predates
+Alembic is **adopted**, not rebuilt -- it already has the baseline schema, so it
+gets stamped rather than migrated onto it.
 
-* a database that predates Alembic is **adopted**, not rebuilt -- it already has
-  the baseline schema, so it gets stamped rather than migrated onto it;
-* anything with real data in it is **backed up before** migrations run, because
-  a migration is the one routine operation that can destroy data faster than it
-  can be noticed.
+The pre-migration backup used to live here too. It now lives in
+`migrations/prebackup.py`, fired from `env.py`, because this module is only one
+of three ways a revision gets applied and the other two -- the CLI and a bare
+`alembic upgrade` -- were migrating real data with no dump. Moved rather than
+copied: two implementations of "back up before DDL" is exactly the shape that
+drifts until one of them silently stops running.
 
 Alembic is invoked through `asyncio.to_thread`: env.py drives an async engine via
 `asyncio.run`, which cannot be nested inside the loop this module already runs on.
@@ -22,7 +25,6 @@ from alembic import command
 from alembic.script import ScriptDirectory
 from sqlalchemy import text
 
-from .config import settings
 from .db import SessionLocal, engine
 from .migrations import alembic_config
 from .seeds import seed_sources, seed_voices
@@ -92,10 +94,8 @@ async def apply_schema_migrations() -> None:
         log.info("Schema is at head (%s); nothing to migrate", head)
         return
 
-    if has_tables:
-        # Fresh databases hold nothing worth dumping; everything else does.
-        await _backup_before_migrating(current, head)
-
+    # The pre-migration dump happens inside env.py, on the connection alembic
+    # opens — see migrations/prebackup.py. Nothing to arrange here.
     log.info("Migrating schema %s -> %s", current or "empty database", head)
     await asyncio.to_thread(command.upgrade, config, "head")
     log.info("Schema migrated to %s", head)
@@ -118,40 +118,12 @@ async def _adopt_existing_database(config) -> None:
         "Found application tables but no alembic_version: adopting this database "
         "by stamping baseline %s (no DDL will run)", base,
     )
-    # Stamping writes a version row and applies no schema changes, so the review
-    # gate — which exists to stop unread DDL — has nothing to protect here.
-    config.attributes["skip_review_guard"] = True
+    # Stamping writes a version row and applies no schema changes, so neither the
+    # review gate nor the pre-migration backup — both of which exist to protect
+    # against DDL — has anything to do here.
+    config.attributes["applies_no_ddl"] = True
     await asyncio.to_thread(command.stamp, config, base)
-    config.attributes["skip_review_guard"] = False
-
-
-async def _backup_before_migrating(current: str | None, head: str | None) -> None:
-    """Dump the database before schema changes touch it.
-
-    Deliberately fail-closed: if the backup cannot be written, the migration does
-    not run and the stack does not start. A failed backup on a night when a
-    migration eats a column is precisely the situation this exists to prevent.
-    Set `backup_enabled=false` to opt out.
-    """
-    if not settings.backup_enabled:
-        log.warning(
-            "backup_enabled=false — migrating %s -> %s with no pre-migration backup",
-            current, head,
-        )
-        return
-
-    from .worker.backup import run_backup
-
-    log.info("Backing up before migrating %s -> %s", current or "empty database", head)
-    try:
-        dest = await run_backup()
-    except Exception as exc:
-        raise RuntimeError(
-            f"Pre-migration backup failed, so the migration was NOT applied: {exc}. "
-            f"Fix the backup target ({settings.backup_dir}) and retry, or set "
-            f"backup_enabled=false to migrate without one."
-        ) from exc
-    log.info("Pre-migration backup written to %s", dest)
+    config.attributes["applies_no_ddl"] = False
 
 
 async def apply_job_queue_schema() -> None:

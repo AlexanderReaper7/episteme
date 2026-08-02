@@ -570,9 +570,14 @@ docker compose exec -T db psql -U episteme -d episteme
 
 # Schema migrations (Alembic). `up` applies pending ones automatically, but ONLY
 # after the UNREVIEWED marker has been deleted by hand — see the review rule below.
+# status/new/check apply nothing, so they run from the host:
 uv run python -m episteme.migrations status
 uv run python -m episteme.migrations new -m "add posts.foo"   # DRAFT
-uv run python -m episteme.migrations upgrade
+# `upgrade` is a CONTAINER command. It dumps the database first, and pg_dump plus
+# the bind-mounted /backups live in the image, not on the host — from the host it
+# refuses with this instruction rather than migrating unprotected.
+docker compose run --rm migrate                          # bootstrap: adopt-or-upgrade + seed
+docker compose run --rm migrate python -m episteme.migrations upgrade   # migrate only
 
 # Backup: pg_dump -Fc --compress=zstd into BACKUP_DIR (host bind-mount, default
 # ./backups), pruned past backup_retention_days. Worker-owned; no scheduled cron but is a one liner to add.
@@ -714,10 +719,34 @@ uv lock                                     # re-resolve after editing dependenc
   - *Adoption*: a database with tables but no `alembic_version` is **stamped**
     with the baseline, not migrated onto it (it already has that schema). Fires
     at most once, on the pre-Alembic database.
-  - *Pre-migration backup*: applying anything to a non-empty database runs
-    `pg_dump` first and **aborts if the dump fails** — fail-closed, because a
-    migration is the one routine operation that can destroy data faster than it
-    can be noticed. `backup_enabled=false` opts out.
+  - *Pre-migration backup* (`migrations/prebackup.py`, fired from `env.py`):
+    applying anything to a non-empty database runs `pg_dump` first and **aborts
+    if the dump fails** — fail-closed, because a migration is the one routine
+    operation that can destroy data faster than it can be noticed.
+    `backup_enabled=false` opts out.
+    **It lived in `bootstrap.py` until 2026-08-02 and therefore covered one of
+    the three ways a revision gets applied.** The CLI (`cmd_upgrade` called
+    `command.upgrade` straight through) and a bare `alembic upgrade head` both
+    migrated real data with no dump — and both are documented workflows, which
+    is how the `post_audio` migration got applied unprotected. Two things made
+    it worse than a missing call: the host has **no pg_dump at all**, and
+    `backup_dir` defaults to `/backups`, a container path that resolves to
+    `C:\backups` on Windows — so the host CLI could never have produced a
+    correct dump even if it had tried. Now it sits in `env.py` beside the review
+    gate, for the reason env.py's own docstring gives for the gate: that module
+    is the only code every path into alembic runs through. Both protections
+    share one trigger, `env.applies_ddl()` (renamed from `_guard_should_run`;
+    the `skip_review_guard` config attribute is now `applies_no_ddl`, set by
+    `stamp` and by `new`, which connect but apply no DDL). Skips the dump only
+    when it can prove there is nothing to protect — no `sources` table (empty
+    database) or current revision == the resolved target (so `docker compose up`
+    at head costs nothing). An **unresolvable** target (a relative `+1`, a
+    downgrade) reads as "assume something changes" and takes the dump.
+    *Verified live 2026-08-02*: host-side pending upgrade blocked with the
+    container command (read the real revision `bed89c48b376` off the live DB);
+    host-side no-op upgrade at head still passed without dumping; the same call
+    in the container wrote a valid 15.9 MB dump (162 objects per `pg_restore
+    --list`) and pruned nothing.
 - **Politeness toward sources is a hard requirement** (spec §5). All source HTTP goes
   through `ingest/http.py:polite_get`: one global throttle (min 2s gap, ~N(3s,1s))
   applied before every request; conditional GETs (ETag/Last-Modified stored on
@@ -771,7 +800,9 @@ Reviewing means checking, at minimum:
    under a new NOT NULL column, `CREATE EXTENSION` (the baseline needed one
    added by hand), anything in a JSONB payload.
 
-Workflow (all of it is `uv run python -m episteme.migrations <cmd>`):
+Workflow. Everything that only *reads or writes files* runs from the host;
+**`upgrade` runs in the container**, because it takes a pg_dump first and
+pg_dump plus the `/backups` mount exist in the image, not on the host:
 
 ```sh
 uv run python -m episteme.migrations status              # what exists, what is unreviewed
@@ -779,8 +810,14 @@ uv run python -m episteme.migrations new -m "add x"      # autogenerate a DRAFT 
 uv run python -m episteme.migrations new --empty -m "backfill y"   # data migration, no diff
 uv run python -m episteme.migrations check <rev>         # re-run the hazard analysis
 # ... read the file, correct it, delete its UNREVIEWED line ...
-uv run python -m episteme.migrations upgrade             # or just `docker compose up`
+docker compose run --rm migrate                          # or just `docker compose up`
 ```
+
+Running `upgrade` from the host is not merely discouraged — it stops with the
+container command, because it cannot take the backup. That refusal is the whole
+point: the alternative, and what actually happened before 2026-08-02, is
+migrating real data unprotected because the safety net was in a file that
+particular entry point didn't touch.
 
 Generating a revision requires a reachable database (autogenerate diffs against
 it) but applies nothing. `--empty` needs no diff. Tests in

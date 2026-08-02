@@ -20,6 +20,3 @@ This is a list of things to maybe do, in no particular order. And serves as a pl
 - benchmarking
 - docker test? testing db?
 - prefix caching for system prompts?
-- no db backup was generated before migration:
-  - DATABASE_URL="postgresql://episteme:change-me@127.0.0.1:5433/episteme" uv run python -m episteme.migrations new -m "add post_audio table" 2>&1 | tail -25
-  - DATABASE_URL="postgresql://episteme:change-me@127.0.0.1:5433/episteme" uv run python -m episteme.migrations upgrade 2>&1 | tail -15
