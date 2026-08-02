@@ -51,15 +51,35 @@
     </figure>
 
   {% elif section.type == "quiz" %}
-    <div class="section-quiz" data-answer="{{ section.answer_index }}">
+    {# One heading for the whole check, however many questions it holds. Each
+       question is independently answerable, and nothing is scored across them —
+       the check exists to tell the reader what landed, not to grade them.
+
+       Choices render in STORED order and data-answer is the STORED index; app.js
+       permutes the buttons in the DOM on every page view. That has to happen there
+       and not here: this page is served with an ETag hashing `post.sections`, so a
+       server-side shuffle was thrown away by the first 304 (and by
+       stale-while-revalidate) and every re-read served the identical order — the one
+       thing randomising the choices exists to prevent. Each button keeps its own
+       data-index, so the marked answer follows its text through any permutation and
+       nothing has to be recomputed. `or []` keeps a hand-edited row from raising. #}
+    {% set questions = section.questions or [] %}
+    <div class="section-quiz" data-count="{{ questions | length }}">
       <h2>Check your understanding</h2>
-      <p class="quiz-question">{{ section.question }}</p>
-      <div class="quiz-choices">
-        {% for choice in section.choices %}
-        <button type="button" class="quiz-choice" data-index="{{ loop.index0 }}">{{ choice }}</button>
-        {% endfor %}
+      {% for q in questions %}
+      <div class="quiz-item" data-answer="{{ q.answer_index }}">
+        {% if questions | length > 1 %}
+        <p class="quiz-number">Question {{ loop.index }} of {{ questions | length }}</p>
+        {% endif %}
+        <p class="quiz-question">{{ q.question }}</p>
+        <div class="quiz-choices">
+          {% for choice in q.choices or [] %}
+          <button type="button" class="quiz-choice" data-index="{{ loop.index0 }}">{{ choice }}</button>
+          {% endfor %}
+        </div>
+        <p class="quiz-explanation" hidden>{{ q.explanation }}</p>
       </div>
-      <p class="quiz-explanation" hidden>{{ section.explanation }}</p>
+      {% endfor %}
     </div>
 
   {% elif section.type == "chart" %}

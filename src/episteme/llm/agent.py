@@ -1,11 +1,17 @@
-"""The writer's agentic loop — research + editorial authority on the `main` model.
+"""The agentic tool harness, and the writer loop built on it.
 
-One bounded tool loop per story (spec §7): the main model may `web_search` and
-`fetch_page` to research as it sees fit, may `demote_story` when the material
-doesn't merit a feature, and finally produces the post draft as a
-grammar-constrained turn *inside the same conversation* — so the provenance view
-renders research, judgment, and writing as one flowing exchange. Everything
-retrieved from the web is framed as UNTRUSTED DATA.
+`run_tool_loop` is the generic driver both agentic stages share: it turns the
+model, dispatches whatever tools it calls, enforces step/wall-clock budgets, and
+stops on a terminal tool. The writer (below) drives it with research tools; the
+qa stage (`worker.qa`) drives it with post-editing tools. Both end the same way —
+a grammar-constrained, pydantic-validated turn in the SAME conversation
+(`request_validated`), so the provenance view renders tools, judgment and output
+as one flowing exchange.
+
+The writer's loop (spec §7): the main model may `web_search` and `fetch_page` to
+research as it sees fit, may `demote_story` when the material doesn't merit a
+feature, and finally produces the post draft. Everything retrieved from the web is
+framed as UNTRUSTED DATA.
 
 The blast radius of a prompt injection in fetched content stays small: the only
 consequential tool is `demote_story`, which at worst sends one story to the
@@ -17,6 +23,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TypeVar
 
@@ -152,6 +159,84 @@ def _parse_args(raw) -> dict:
         return {}
 
 
+@dataclass
+class ToolReply:
+    """One tool's result, plus what it means for the loop."""
+
+    content: str  # the `role: "tool"` message body the model sees
+    stop: bool = False  # terminal tool — end the loop after this turn
+    refused: bool = False  # bounced off a budget; feeds the stuck-loop breaker
+    # An extra message appended AFTER this turn's tool results. A tool result must be
+    # a plain `role: "tool"` string, so a tool that produces something else (qa's
+    # `rerender`, which produces a screenshot) hands the image back as its own
+    # follow-up user message instead of smuggling it into the tool payload.
+    follow_up: dict | None = None
+
+
+Dispatch = Callable[[str | None, dict], Awaitable[ToolReply]]
+
+
+async def run_tool_loop(
+    messages: list[dict],
+    tools: list[dict],
+    dispatch: Dispatch,
+    *,
+    max_steps: int,
+    deadline: float,
+    role: Role = "main",
+    on_idle: Callable[[str], str | None] | None = None,
+    max_refused_turns: int = _MAX_REFUSED_TURNS,
+) -> str:
+    """Drive `messages` through a bounded tool loop, in place. Returns the model's
+    closing free text (empty when it stopped on a terminal tool).
+
+    Three independent ways out, all of them bounded: a terminal tool
+    (`ToolReply.stop`), `max_steps` turns, or `deadline` wall-clock. `on_idle` is
+    consulted when the model answers with no tool calls at all — returning a string
+    nudges it and continues, returning None accepts the answer and stops. The caller
+    is expected to do something unconditional afterwards (both stages ask for a
+    constrained final turn), so a loop that runs out of budget still produces output.
+    """
+    refused_turns = 0
+    for _ in range(max_steps):
+        if time.monotonic() > deadline:
+            log.info("tool loop hit wall-clock budget")
+            break
+        message = await gateway.chat_messages(role, messages, tools=tools)
+        messages.append(message)
+        tool_calls = message.get("tool_calls") or []
+        if not tool_calls:
+            nudge = on_idle(message.get("content") or "") if on_idle else None
+            if nudge is None:
+                return message.get("content") or ""
+            messages.append({"role": "user", "content": nudge})
+            continue
+        turn_all_refused = True
+        stop = False
+        follow_ups: list[dict] = []
+        for call in tool_calls:
+            fn = call.get("function", {})
+            reply = await dispatch(fn.get("name"), _parse_args(fn.get("arguments")))
+            if not reply.refused:
+                turn_all_refused = False
+            messages.append(
+                {"role": "tool", "tool_call_id": call.get("id", ""), "content": reply.content}
+            )
+            if reply.follow_up is not None:
+                follow_ups.append(reply.follow_up)
+            stop = stop or reply.stop
+        messages.extend(follow_ups)
+        if stop:
+            break
+        # Stuck-loop breaker: turns where EVERY tool call bounced off an exhausted
+        # budget gather nothing — after a couple of those, stop burning main-model time.
+        refused_turns = refused_turns + 1 if turn_all_refused else 0
+        if refused_turns >= max_refused_turns:
+            log.info("tool loop stuck on exhausted budgets; stopping")
+            break
+    return ""
+
+
 async def run_writer_loop(system: str, seed: str) -> WriteOutcome:
     with llm_conversation():  # calls log as one chain (delta storage, see observe)
         return await _run_writer_loop(system, seed)
@@ -163,72 +248,38 @@ async def _run_writer_loop(system: str, seed: str) -> WriteOutcome:
         {"role": "user", "content": seed},
     ]
     state = _LoopState()
-    deadline = time.monotonic() + settings.enrich_wall_clock_seconds
+
+    def on_idle(_text: str) -> str | None:
+        # The model may have narrated its next fetch instead of calling it — nudge if
+        # it stopped early AND there's still fetch budget to act on.
+        if (
+            state.nudges < _MAX_NUDGES
+            and len(state.fetch_log) < _MIN_FETCHES_BEFORE_STOP
+            and state.fetches < settings.enrich_max_fetches
+        ):
+            state.nudges += 1
+            return _NUDGE
+        return None
 
     # enrich_enabled=False is the research kill-switch (e.g. SearXNG down):
     # skip the tool loop and draft straight from the source items.
-    for _ in range(settings.enrich_max_steps if settings.enrich_enabled else 0):
-        if time.monotonic() > deadline:
-            log.info("writer loop hit wall-clock budget")
-            break
-        message = await gateway.chat_messages("main", messages, tools=TOOLS)
-        messages.append(message)
-        tool_calls = message.get("tool_calls") or []
-        if not tool_calls:
-            # The model may have narrated its next fetch instead of calling it —
-            # nudge if it stopped early AND there's still fetch budget to act on.
-            if (
-                state.nudges < _MAX_NUDGES
-                and len(state.fetch_log) < _MIN_FETCHES_BEFORE_STOP
-                and state.fetches < settings.enrich_max_fetches
-            ):
-                state.nudges += 1
-                messages.append({"role": "user", "content": _NUDGE})
-                continue
-            state.notes = message.get("content") or ""
-            break
-        turn_all_refused = True
-        finished = False
-        for call in tool_calls:
-            fn = call.get("function", {})
-            name = fn.get("name")
-            args = _parse_args(fn.get("arguments"))
-            if name == "demote_story":
-                return WriteOutcome(
-                    decision="aggregate",
-                    reason=str(args.get("reason", "")) or "writer demoted",
-                    fetch_log=state.fetch_log,
-                    gathered_chars=state.gathered_chars,
-                )
-            if name == "finish_research":
-                # The explicit "done researching" affordance. Without it, tool-tuned
-                # models reach for the only other terminal tool — story 291 called
-                # demote_story with reason "no need to demote" just to end research.
-                state.notes = str(args.get("note", "")) or state.notes
-                finished = True
-                turn_all_refused = False
-                messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": call.get("id", ""),
-                        "content": "Research phase closed.",
-                    }
-                )
-                continue
-            content = await _dispatch(name, args, state)
-            if content not in (_SEARCH_EXHAUSTED, _FETCH_EXHAUSTED):
-                turn_all_refused = False
-            messages.append(
-                {"role": "tool", "tool_call_id": call.get("id", ""), "content": content}
-            )
-        if finished:
-            break
-        # Stuck-loop breaker: turns where EVERY tool call bounced off an exhausted
-        # budget gather nothing — after a couple of those, go straight to the draft.
-        state.refused_turns = state.refused_turns + 1 if turn_all_refused else 0
-        if state.refused_turns >= _MAX_REFUSED_TURNS:
-            log.info("writer loop stuck on exhausted budgets; forcing draft")
-            break
+    notes = await run_tool_loop(
+        messages,
+        TOOLS,
+        lambda name, args: _dispatch(name, args, state),
+        max_steps=settings.enrich_max_steps if settings.enrich_enabled else 0,
+        deadline=time.monotonic() + settings.enrich_wall_clock_seconds,
+        on_idle=on_idle,
+    )
+    state.notes = notes or state.notes
+
+    if state.demoted is not None:
+        return WriteOutcome(
+            decision="aggregate",
+            reason=state.demoted,
+            fetch_log=state.fetch_log,
+            gathered_chars=state.gathered_chars,
+        )
 
     messages.append({"role": "user", "content": _DRAFT_REQUEST})
     draft = await request_validated("main", messages, PostDraft, temperature=0.4)
@@ -287,25 +338,36 @@ class _LoopState:
     searches: int = 0
     fetches: int = 0
     nudges: int = 0
-    refused_turns: int = 0  # consecutive turns where every tool call was budget-refused
     notes: str = ""
+    demoted: str | None = None  # demote_story's reason; checked after the loop
 
 
-async def _dispatch(name: str | None, args: dict, state: _LoopState) -> str:
+async def _dispatch(name: str | None, args: dict, state: _LoopState) -> ToolReply:
     """Run one tool call, enforce budgets, track the fetch log, and return the
-    (untrusted-framed) tool result string for the model."""
+    (untrusted-framed) tool result for the model."""
     try:
+        if name == "demote_story":
+            state.demoted = str(args.get("reason", "")) or "writer demoted"
+            return ToolReply("Story demoted to the aggregation stream.", stop=True)
+
+        if name == "finish_research":
+            # The explicit "done researching" affordance. Without it, tool-tuned
+            # models reach for the only other terminal tool — story 291 called
+            # demote_story with reason "no need to demote" just to end research.
+            state.notes = str(args.get("note", "")) or state.notes
+            return ToolReply("Research phase closed.", stop=True)
+
         if name == "web_search":
             if state.searches >= settings.enrich_max_searches:
-                return _SEARCH_EXHAUSTED
+                return ToolReply(_SEARCH_EXHAUSTED, refused=True)
             state.searches += 1
             results = await web_search(str(args.get("query", "")))
             lines = [f"- {r['title']} — {r['url']}\n  {r['snippet']}" for r in results]
-            return _UNTRUSTED.format(body="Search results:\n" + "\n".join(lines))
+            return ToolReply(_UNTRUSTED.format(body="Search results:\n" + "\n".join(lines)))
 
         if name == "fetch_page":
             if state.fetches >= settings.enrich_max_fetches:
-                return _FETCH_EXHAUSTED
+                return ToolReply(_FETCH_EXHAUSTED, refused=True)
             state.fetches += 1
             page = await fetch_page(str(args.get("url", "")))
             # Log the FINAL post-redirect URL — where the content actually lives.
@@ -321,8 +383,8 @@ async def _dispatch(name: str | None, args: dict, state: _LoopState) -> str:
                 f"Fetched: {url}\nTitle: {page.get('title') or '(none)'}\n\n"
                 f"Page text:\n{page['text']}\n\nOutbound links:\n" + "\n".join(link_lines)
             )
-            return _UNTRUSTED.format(body=body)
+            return ToolReply(_UNTRUSTED.format(body=body))
 
-        return f"Unknown tool: {name}"
+        return ToolReply(f"Unknown tool: {name}")
     except ResearchError as exc:
-        return f"Tool error: {exc}"
+        return ToolReply(f"Tool error: {exc}")

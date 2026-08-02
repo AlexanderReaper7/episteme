@@ -169,11 +169,6 @@ async def triage_stories(
         if limit is not None:
             query = query.limit(limit)
     stories = (await session.execute(query)).scalars().all()
-    # The vocabulary is read once per stage, not per story: it only grows as
-    # stories are triaged, and a story that coins a topic is not required to see
-    # it within the same batch — `topics.resolve` folds the next occurrence in
-    # regardless of what the prompt showed.
-    vocabulary = await topics.vocabulary_for_prompt(session)
     reader = profile.describe(
         await profile.load(session), labels=await topics.slug_labels(session)
     )
@@ -187,9 +182,6 @@ async def triage_stories(
         prompt = f"Story items:\n\n{digest}"
         if reader:
             prompt += f"\n\nThe reader:\n{reader}"
-        if vocabulary:
-            prompt += "\n\nExisting topics (reuse the exact wording where one fits):\n"
-            prompt += ", ".join(vocabulary)
         try:
             with llm_context(stage="triage", story_id=story.id):
                 result = await gateway.complete_json(
@@ -203,7 +195,9 @@ async def triage_stories(
         # Closed-set enforcement in code, not trust in the prompt: whatever the
         # model emitted is mapped onto the canonical vocabulary before it is
         # stored, so interest weights are never learned against drifting spellings.
-        story.topics = await topics.resolve(session, result.topics)
+        # `review=True` because triage is deliberately not shown the vocabulary —
+        # consolidating its wording is this call's job, not the prompt's.
+        story.topics = await topics.resolve(session, result.topics, review=True)
         story.rank_score = result.quality_score
         story.status = {
             "write": "triaged",
@@ -359,7 +353,7 @@ _SECTION_TEXT_FIELDS: dict[str, tuple[str, ...]] = {
     "key_points": ("items",),
     "image": ("caption",),
     "video": ("caption",),
-    "quiz": ("question", "choices", "explanation"),
+    "quiz": ("questions",),  # nested; _count_words recurses (ints contribute 0)
     "chart": ("caption",),
     "diagram": ("caption",),
     "timeline": ("events",),
@@ -524,6 +518,63 @@ async def _rank_write_queue(
     return [story for _, story in scored]
 
 
+def _ordered_labels(raw_labels: list[str], resolved: dict[str, str]) -> list[str]:
+    """Canonical labels for the ones that resolved, deduplicated, in the order the
+    writer emitted them — `topics.resolve`'s output shape, from a mapping this stage
+    builds in two goes."""
+    ordered: list[str] = []
+    for raw in raw_labels:
+        label = resolved.get(raw)
+        if label is not None and label not in ordered:
+            ordered.append(label)
+    return ordered
+
+
+async def _resolve_deferred_topics(
+    session: AsyncSession, deferred: list[tuple[int, list[str], dict[str, str]]]
+) -> None:
+    """Mint the writer's remaining topic labels in ONE pass, after every main-model
+    write is done.
+
+    The dedup turn behind `review=True` is a `fast` call, and `fast` shares the :5001
+    router with `main`: resolving inside the write loop swapped the main model out and
+    back per story (~100s typical, 600s worst case, each way) — against this stage's
+    own wall-clock budget and against the rule it is built on, "batched by model role
+    so the GPU never swaps mid-story".
+
+    The cost of deferring is that a post carries only its already-known topics until
+    the stage ends, and keeps them if this pass fails. That is a partial list, never a
+    wrong one, and `topics` is a cache-like projection anyway — `propose_topics` and a
+    rescore rebuild from it.
+    """
+    outstanding: list[str] = []
+    for _, raw_labels, known in deferred:
+        for raw in raw_labels:
+            # Deduplicated across posts, not just within one: two stories proposing the
+            # same new label is the common case, and `resolve_entries` keys its result
+            # by the raw label, so one entry serves both.
+            if raw not in known and raw not in outstanding:
+                outstanding.append(raw)
+    if not outstanding:
+        return
+    try:
+        entries = await topics.resolve_entries(session, outstanding, review=True)
+    except LLMError as exc:
+        # The dedup turn degrades to "no matches" on its own; this catches the
+        # embedding call behind it, which has no such fallback.
+        log.warning("Deferred topic resolution failed: %s", exc)
+        await session.rollback()
+        return
+    for post_id, raw_labels, known in deferred:
+        labels = dict(known) | {
+            raw: entries[raw].label for raw in raw_labels if raw in entries
+        }
+        post = await session.get(Post, post_id)
+        if post is not None:
+            post.topics = _ordered_labels(raw_labels, labels)
+    await session.commit()
+
+
 async def write_posts(
     session: AsyncSession, limit: int | None = None, story_id: int | None = None
 ) -> int:
@@ -534,10 +585,11 @@ async def write_posts(
     An explicit `story_id` rewrites that story regardless of its status — existing
     published posts for it are archived when the new draft lands.
 
-    Two passes, batched by model role so the GPU never swaps mid-story: first the fast
-    model condenses every candidate's long sources (once — the same text seeds the
+    Three passes, batched by model role so the GPU never swaps mid-story: first the
+    fast model condenses every candidate's long sources (once — the same text seeds the
     writer's research and its draft), then each story gets one main-model tool loop
-    with research tools and editorial authority (write or demote)."""
+    with research tools and editorial authority (write or demote), and finally the
+    topic labels those drafts introduced are minted in a single fast-model pass."""
     profile_state = await profile.load(session)
     if story_id is not None:
         query = select(Story).where(Story.id == story_id)
@@ -589,8 +641,10 @@ async def write_posts(
             attempt,
         )
 
-    # Pass 2 (main): one agentic loop per story.
+    # Pass 2 (main): one agentic loop per story. Topic minting is held back to pass 3
+    # (see `_resolve_deferred_topics`) so nothing in here can reach the fast model.
     written = 0
+    deferred_topics: list[tuple[int, list[str], dict[str, str]]] = []
     deadline = time.monotonic() + settings.write_budget_seconds
     for story in stories:
         if time.monotonic() > deadline:
@@ -623,6 +677,18 @@ async def write_posts(
             log.info("Story %d aggregated: only %d chars after research", story.id, available_chars)
             continue
 
+        # Fold onto vocabulary the DB already has — embedding tiers only, and `embed`
+        # is its own endpoint — but MINT NOTHING yet: minting is what can trigger the
+        # fast-model dedup turn, which pass 3 does once for the whole stage.
+        known_topics = {
+            raw: topic.label
+            for raw, topic in (
+                await topics.resolve_entries(
+                    session, outcome.draft.topics, allow_new=False, review=False
+                )
+            ).items()
+        }
+
         item_urls = {item.url for item in items}
         sections = sanitize_media_sections(
             [s.model_dump() for s in outcome.draft.sections], media_candidates(items)
@@ -647,8 +713,10 @@ async def write_posts(
             summary=outcome.draft.summary,
             difficulty=outcome.draft.difficulty,
             # Same closed-set enforcement as triage: the writer's topics are its
-            # own editorial call, but they enter the vocabulary through code.
-            topics=await topics.resolve(session, outcome.draft.topics),
+            # own editorial call, but they enter the vocabulary through code, and
+            # the writer is shown no vocabulary either. What is not already in the
+            # vocabulary lands in pass 3, below.
+            topics=_ordered_labels(outcome.draft.topics, known_topics),
             sections=sections,
             reading_time_minutes=_reading_time(sections),
             banner_url=story_banner_url(items),
@@ -660,8 +728,12 @@ async def write_posts(
         story.status = "written"
         await session.commit()
         await _stamp_post_calls(session, attempt, new_post_id)
+        deferred_topics.append((new_post_id, outcome.draft.topics, known_topics))
         written += 1
         log.info("Wrote feature for story %d: %s", story.id, outcome.draft.title)
+
+    # Pass 3 (fast): the one place in this stage that may swap the model.
+    await _resolve_deferred_topics(session, deferred_topics)
     return written
 
 

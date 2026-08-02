@@ -96,11 +96,17 @@ bind mount is disqualifying, `embed` is the one role worth moving; decision stil
   deterministic `min_write_chars` thin-gate kept as backstop. (b) *qa stage with
   vision* (`worker/qa.py`) — renders each unscored post via the real web app
   (`web_internal_url`), screenshots with headless Chromium (Playwright in the
-  image), main model critiques against trusted sources with bounded revise rounds;
-  sets `quality_score`, can demote; screenshots are stripped before `llm_calls`
-  persistence. **Vision needs the user to enable `--mmproj` on Qwopus in
-  models-preset.ini (stock Qwen3.6 mmproj, user-confirmed compatible) — until
-  then qa fails per-post, non-fatally.** (c) *renames landed*: role
+  image), main model critiques against trusted sources and edits (a tool loop since
+  2026-08-02); sets `quality_score`, can demote; screenshots are stripped before `llm_calls`
+  persistence. **Vision is enabled, and has been since ~2026-07-19** — `mmproj =
+  …\Qwen3.6-35B-A3B-mmproj-BF16.gguf` plus `image-min-tokens = 1024` on the Qwopus
+  section of models-preset.ini (the `fast` model carries its own). Re-confirmed by
+  direct probe 2026-08-02: a two-colour PNG through the router came back
+  "Red Blue" — correct, and in the asked-for order — and the 136-byte image cost
+  1072 prompt tokens, i.e. it really did expand to ~1024 image tokens. **Qwopus is a
+  reasoner: a 60-token cap returned EMPTY content with the entire budget spent on
+  `reasoning_content`.** Give vision calls room before concluding vision is broken.
+  (c) *renames landed*: role
   `writer`→`main` (`LLM_MODEL_MAIN`), `articles`→`posts` + `kind`
   (**post**/**feature** nomenclature), `/post/{id}`, `/api/posts` —
   the `articles`->`posts` rename is now folded into the Alembic baseline. (d) prompts carry
@@ -117,8 +123,8 @@ bind mount is disqualifying, `embed` is the one role worth moving; decision stil
   answer_index in range). (b) *Media is closed-set like citations*: the writer
   seed lists ingested `media_refs` as "Available media" (exact URLs);
   `pipeline.sanitize_media_sections` drops non-candidate URLs and stamps
-  `attribution`/`source_url` from the DB; QA revisions pass the same sanitizer
-  (`qa.apply_revision`). No MediaAsset indirection — sections store the URL
+  `attribution`/`source_url` from the DB; QA edits pass the same sanitizer
+  (`qa._validate_section`). No MediaAsset indirection — sections store the URL
   directly. (c) enrich stage folded into the writer (user decision 2026-07-19):
   rich sections come from the same agentic conversation, guidance not quotas;
   spec §7 stage 4 annotated. (d) RSS extraction now captures YouTube/Vimeo
@@ -144,7 +150,7 @@ bind mount is disqualifying, `embed` is the one role worth moving; decision stil
   (no chart/diagram). Loop exit was the stuck-budget breaker (12 fetch attempts),
   so `finish_research` itself hasn't fired live yet. Still to verify live:
   chart/diagram/quiz/timeline/glossary emission on a suitable story, video
-  sections (no video media_refs ingested yet), QA vision pass (needs `--mmproj`).
+  sections (no video media_refs ingested yet).
   Provenance quirk FIXED (2026-07-19): write-side calls now carry a
   per-generation `attempt_id` (uuid, stamped at call time via `llm_context`,
   column on `llm_calls`); `_stamp_post_calls` targets exactly that attempt, so
@@ -327,6 +333,209 @@ bind mount is disqualifying, `embed` is the one role worth moving; decision stil
   are LIKE-escaped (`%` in a keyword emptied the feed AND the write queue, `_`
   over-matched); the feed's keyset cursor is taken from the SQL `rank` column
   instead of Python's `math.tanh`, so the comparison never spans two libms.
+
+- **Quizzes: mandatory, multi-question, position-randomised (2026-08-02)** — from
+  TODO "improve quizes and add more questions", with two requirements added by the
+  user mid-work. No migration: `sections` is JSONB, so the shape change needed no
+  DDL, and the 16 pre-existing posts were rewritten in place with one SQL statement
+  (the DB is disposable before v1 — user's call, "do what is simplest").
+  - *Shape*: `QuizSection.questions: list[QuizQuestion]` (1–5) replaces the flat
+    `question`/`choices`/`answer_index`/`explanation`. One canonical storage shape,
+    so nothing downstream carries a compatibility branch. `_SECTION_TEXT_FIELDS`
+    became `("questions",)` — `_count_words` recurses, ints contribute 0.
+  - *Mandatory* (user, 2026-08-02): **every** feature carries a quiz. This has to
+    live in code, not the prompt: the JSON-Schema grammar constrains each section's
+    *shape* but cannot demand a member in a list. The writer's whole draft is checked
+    by `schemas._require_quiz` in a `PostDraft` validator, and
+    `agent.request_validated`'s repair-retry loop puts the failure straight back in
+    front of the model. **QA enforces it somewhere else on purpose** (see the QA
+    tool-harness entry below): it edits one section at a time, so the check sits on
+    the action that could break it — a delete/replace leaving no quiz is refused as a
+    tool error. Prompts match (writer: "REQUIRED … not your call"; QA: drop the bad
+    *question*, never the check).
+  - *Randomised per READ, not per write* (user, explicitly, after I built it the
+    other way). **Originally a Jinja filter; moved into `app.js` on 2026-08-02**
+    (`shuffleChoices`) because the filter was silently dead in production:
+    `_post_page_etag` hashes the canonical `post.sections`, so a re-read got a 304
+    (or a `stale-while-revalidate` hit) and the identical order — and the ETag was
+    naming two different bodies. Shuffling the choice buttons in the DOM per page
+    VIEW survives caching and reloads. Each button keeps the `data-index` it was
+    rendered with and `data-answer` stays the STORED index, so the marked answer
+    follows its text through any permutation with nothing recomputed; the served HTML
+    is deterministic again (regression-tested). The `qa` screenshot still shows an
+    ordering no reader will see, which is now irrelevant — QA reads the canonical
+    JSON. The QA prompt still forbids referring to a choice by position and the
+    writer prompt still forbids "both of the above"-style choices.
+  - *Rendering*: one "Check your understanding" heading per section, `.quiz-item`
+    per question with its own `data-answer`, "Question N of M" only when there is
+    more than one. JS state moved from the section to the item, so answering one
+    question no longer freezes the rest. **No score across the questions** — a
+    "N of M correct" tally was built and then removed on the user's instruction:
+    each question resolves on its own, the check reports what landed and never
+    grades the reader (spec §1, zero manipulative mechanics). Regression-tested
+    (`test_quiz_never_scores_the_reader`) so it does not creep back.
+  - *Live-verified 2026-08-02 in the browser*: choice order and `data-answer` both
+    moved across 8 renders of post 422 while the marked answer tracked its text
+    every time; a temporarily-2-question post answered wrong-then-right showed
+    correct/wrong colouring, per-question explanation reveal, and siblings staying
+    live; the post was restored byte-identical afterwards. Worker rebuilt and the
+    new schema confirmed inside the image. (That browser run predates the tally's
+    removal; everything it verified is independent of it.)
+  - *Not verified live*: an actual writer run producing a multi-question quiz (no
+    pipeline run since). (The old "QA revision path against the new validator" item
+    is moot — that validator is gone; see the QA tool-harness entry below.)
+
+- **QA is a tool harness, not a form submission (2026-08-02)** — from a code-review
+  pass on the quiz work. Three of its six findings turned out to be one root cause:
+  QA could only *replace the whole body*, and its only input was a screenshot. So a
+  fix to one prose paragraph obliged the model to re-emit a quiz whose `answer_index`
+  (an attribute) and `explanation` (`hidden`) are invisible in a screenshot — it had
+  to guess, and could silently flip a correct answer to a wrong one. The QA prompt
+  meanwhile told it to "judge whether the marked answer is the correct one" using
+  information it was never given.
+  - *`agent.run_tool_loop` is now the shared driver* for both agentic stages: turn the
+    model, dispatch tools, enforce step/wall-clock budgets, stop on a terminal tool.
+    The writer's research loop and QA's editing loop are two tool tables over it, and
+    the nudge/budget-refusal/stuck-loop logic exists once. `ToolReply` carries
+    `stop`/`refused`/`follow_up`; `follow_up` exists because a `role: "tool"` result
+    is a plain string and QA's `rerender` produces an image, which rides back as its
+    own user message. Writer behaviour is unchanged except that `demote_story` now
+    finishes its turn before stopping (it used to return mid-turn), which only makes
+    the transcript coherent.
+  - *QA's tools*: `replace_section` / `insert_section` / `delete_section` (by index),
+    `set_meta`, `rerender`, `finish_review`. **Scoped hard**: the index space is the
+    BODY only — the DB-built citation tail is neither listed nor addressable, and the
+    `Section` union has no citation member to forge; image/video pass the writer's
+    closed-set sanitizer; and **QA gets no network tools** (decided with the user) —
+    its grounding set is fixed at write time and a reviewer that can fetch reopens the
+    injection surface for nothing. Budgets: `qa_max_steps`/`qa_max_edits`/
+    `qa_max_screenshots`/`qa_wall_clock_seconds` replace `qa_max_rounds`.
+  - *Every mutation returns the renumbered listing*, because an insert or delete
+    shifts every index after it. Rejections (bad shape, bad index, non-candidate
+    media, last-quiz removal) are tool results the model repairs in-conversation and
+    cost no edit budget — previously one malformed section failed the entire
+    `QAReview` and burned a repair retry re-emitting an otherwise-correct body.
+  - *`QAReview` is a verdict only* (`verdict`/`quality_score`/`critique`). It used to
+    carry a replacement body, and `_require_quiz` fired on any non-None
+    `revised_sections` regardless of verdict — so a `demote` that also carried a body
+    failed validation, `request_validated` returned None, and **the demotion was
+    discarded**, leaving the post unscored and re-reviewed forever. Edits are flushed
+    before every re-render and once when the loop ends, so they stand whatever verdict
+    arrives (or doesn't).
+  - *Tool arguments are grammar-constrained too*: the `section` parameter carries the
+    real `Section` union (`schemas.section_param_schema`), with its `$defs` hoisted to
+    the tool's `parameters` object — that is the document root llama.cpp resolves
+    `#/$defs/…` against. Pydantic still validates after, same double enforcement as
+    `response_format` elsewhere.
+  - *Not verified live*: the new harness. Unit + regression tests only
+    (`test_qa.py`). **Weigh that against what it replaced**: the old whole-body QA
+    stage was NOT unverified — it had run 134 calls across 2026-07-18…08-01, scored
+    81 of 82 feature posts, and its transcripts show it doing real work (catching a
+    black-hole mass stated as 1M instead of 4M solar masses, and a wrong year for an
+    astronomical midpoint, then confirming both fixes on re-review). So this is a
+    rewrite of a working path, not the first implementation of a dead one — the
+    defects it fixes are real, but the regression risk is correspondingly higher and
+    the next pipeline run should be watched rather than assumed.
+  - *Open, pre-existing*: 5 of those 134 calls failed with a bare `400 Bad Request`
+    from llama-server (1 on 07-18, 1 on 07-19, 2 on 07-31, 1 on 08-01). Cause
+    unknown — stored request sizes are post-`_strip_images`, so they say nothing
+    about the real payload. Worth re-checking after this lands, because the new first
+    turn is LARGER (source digest + full body JSON + screenshot, where it used to be
+    digest + screenshot); if the 400s were payload-related, this makes them likelier.
+    *Partly addressed 2026-08-02: most reviews no longer carry a screenshot at all —
+    see the chart/diagram entry below.*
+
+- **`chart`/`diagram` are typed, and the QA screenshot is now conditional
+  (2026-08-02)** — from the user's question "is the screenshot needed? my thought was
+  it would review any custom section that isn't just formed from the template".
+  Answer: those sections exist, they are exactly two, and one of them was broken.
+  - *The defect.* Post 427's chart stored
+    `{"data": [...], "title": …, "x_axis": "City", "y_axis": "% Obscuration"}`. That is
+    not Vega-Lite — `data` must be `{"values": […]}`, `x_axis`/`y_axis` are not
+    properties, and there is no `mark` or `encoding`. `vegaEmbed` rejected it, the
+    figure collapsed to its caption, the caption was `""`, and the section rendered as
+    **nothing** — for two weeks, at `quality_score` 9.
+  - *Root cause: `spec: dict[str, Any]` was the one field in the entire `Section`
+    union that escaped the grammar.* Every shape-constrained field came back
+    well-formed; the one unconstrained field came back as invented syntax. So `spec`
+    is now `ChartSpec`, a typed Vega-Lite subset (marks bar/line/point/area, x/y plus
+    optional color, inline `data.values`) — grammar-constrained AND pydantic-validated
+    like everything else at this boundary, with `agent.request_validated`'s repair
+    loop putting a rejection back in front of the model. **This is why a sub-agent for
+    charts is the wrong tool** (asked and decided 2026-08-02): a second conversation
+    generates the same free-form JSON at the cost of re-prefilling the grounding set
+    the writer already holds warm, and on a 10 GB card a parallel slot *divides*
+    `--ctx-size` between KV caches. Constraining the grammar costs nothing and fixes
+    the actual cause. Same reasoning rejects context compaction here: llama.cpp's
+    prompt cache only helps on a common prefix, so a monotonically growing
+    conversation is the cheapest possible shape and any rewrite of history re-prefills
+    from the edit point.
+  - *Beyond shape*: a `ChartSpec` validator checks every encoding channel names a key
+    the rows actually have (a flawless spec still draws an empty frame if
+    `encoding.x.field` matches nothing), and `DiagramSection` requires the Mermaid
+    source to open with a recognised diagram type — Mermaid picks its parser from that
+    keyword and without one the whole figure is a syntax error. Directives (`%%{…}%%`)
+    and frontmatter are skipped first. A DSL in a string is the one thing the grammar
+    cannot constrain, which is precisely why the screenshot survives for diagrams.
+  - *The screenshot is now taken only for posts containing a chart or diagram*
+    (`qa.needs_render`), and `rerender` is only in the tool table for those reviews.
+    The other seven types render through a Jinja branch that is a total function of
+    their JSON, so the listing already says exactly what the reader sees — post 454's
+    transcript shows the model working that way by preference, quoting `answer_index`
+    and judging distractors off the JSON. Chromium now launches **lazily**: before,
+    one browser was launched per batch inside the `try` that turns any failure into
+    "QA stage unavailable", so a missing Playwright skipped even the posts needing no
+    browser. Corpus impact: 1 of 89 posts has a chart, 0 have diagrams.
+  - *Renderer fixes*: `mode: "vega-lite"` is pinned in the `vegaEmbed` call (it infers
+    the parser from `$schema`, which the generated spec has no reason to carry), and a
+    chart is fitted to the article column by a **measured pixel width**, not
+    `width: "container"` — container sizing reads the target's `offsetWidth`, which
+    measured **0** here and collapses the chart to nothing, a worse failure than the
+    200px default it was meant to fix. Caught only by checking in the browser.
+  - *Live-verified 2026-08-02 in the browser*: post 427's spec repaired in place by
+    one SQL statement deriving the new shape from the old (`data`→`data.values`,
+    `x_axis`/`y_axis`→axis titles; zero numbers retyped), validated through the new
+    `ChartSection`, and confirmed drawing — 8 bars, all city labels, `render-failed`
+    absent, SVG 736px in a 736px column, nothing clipped, no page overflow. **The
+    numbers themselves are NOT vouched for**: the post is about a European eclipse and
+    the chart lists North American cities. Re-running `qa` on 427 will now judge that
+    against the sources with a screenshot in hand.
+
+- **Code-review pass on the QA/quiz/chart work (2026-08-02, fixed +
+  regression-tested, NOT yet live-verified)** — five findings. The two that were
+  costing real time or shipping broken pages:
+  1. *The write stage swapped models per story.* `write_posts` resolved the
+     writer's topics with `review=True`, whose dedup turn is a `fast` call — and
+     `fast` shares the :5001 router with `main`, so every written post evicted the
+     main model and reloaded it (~100s typical, 600s worst case, **each way**),
+     inside the stage whose docstring promises "batched by model role so the GPU
+     never swaps mid-story", against its own `write_budget_seconds`. Now three
+     passes: the loop folds onto vocabulary the DB already has
+     (`resolve_entries(allow_new=False, review=False)` — embedding tiers, and
+     `embed` is its own endpoint), and `_resolve_deferred_topics` mints everything
+     left in ONE fast pass after the last write. The cost is that a post carries
+     only its already-known topics until the stage ends, and keeps them if that
+     pass fails — a partial list, never a wrong one. Triage's `review=True` is
+     untouched; that stage is already fast-only.
+  2. *QA could publish a figure nothing had ever rendered.* `visual` is decided
+     before the editing loop from what the WRITER left, so a chart or diagram **QA
+     itself inserted** got no screenshot, no `rerender` tool — and a score, which
+     means never re-reviewed. Post 427's blank box, reintroduced through the
+     editing path. `run_tool_loop` re-reads its `tools` list every turn, so the
+     table now grows in place (`_offer_rerender`, on the editor's own copy — the
+     module constants stay clean) and the tool result tells the model. It
+     re-prefills the prompt, since tools render ahead of the messages; that is the
+     accepted trade for a rare edit. Backstop for "added with no budget left":
+     `quality_score` stays NULL, which returns the post to the qa queue where
+     `visual` reads true from the stored sections.
+  Then: mermaid frontmatter skipped only its `---` fences, so `title:` read as the
+  diagram declaration and valid Mermaid failed the draft (the body is skipped now,
+  and an unclosed fence is its own error); `_Renderer._browser_ready` set
+  `self._playwright` *before* `chromium.launch()`, leaking one node driver per
+  failed launch since the field is overwritten on the next post; and
+  `ChartSpec._channels_match_the_data` unioned the row keys, so a field only one
+  row carries validated and drew one bar out of N — it intersects now, and says
+  which of "no row" / "only some rows" it hit.
 
 - **Host control agent + resource governor built AND live-verified (2026-08-01)** —
   the crossing of the Docker/host boundary, and the first automatic scheduling.
@@ -633,12 +842,13 @@ uv lock                                     # re-resolve after editing dependenc
   incremental centroids) → triage (fast model: write/aggregate/skip per story) → write
   (main-model agentic loop per story — research tools + demote authority + final
   constrained draft in one conversation; fast condenses long sources in a batch
-  beforehand) → qa (`worker/qa.py`: screenshot the rendered post, vision critique,
-  bounded revise rounds, sets `quality_score`). Stages are plain async
+  beforehand) → qa (`worker/qa.py`: a second agentic loop on the same driver —
+  canonical body JSON + screenshot in, section-addressed edits out, closing with a
+  constrained verdict that sets `quality_score`). Stages are plain async
   functions wrapped in procrastinate tasks; the orchestrator runs them role-batched so
   each model loads once per run. **The post `sources` / `further_reading` sections are
   always built from the DB / fetch log, never from LLM free text** — citations must
-  not be able to hallucinate, and QA revisions can only replace body sections.
+  not be able to hallucinate, and QA's index space excludes them entirely.
   `further_reading` is the writer's `further_reading_urls` selection intersected
   with the fetch log (closed set: the model contributes judgment about which fetched
   pages were relevant — dead-end fetches stay out — but only fetch-log membership

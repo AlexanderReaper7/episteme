@@ -223,9 +223,20 @@ class Settings(BaseSettings):
     # embeddings sit closer together than document embeddings do, and a loose
     # threshold would collapse genuinely distinct fields into one weight.
     topic_match_threshold: float = 0.88
-    # How many vocabulary entries triage is shown (most-used first). The list is a
-    # prompt cost on every story, so it is capped; resolution still folds anything
-    # the model invents into the full vocabulary afterwards.
+    # The dedup turn: a tagging model is never shown the vocabulary (that biased it
+    # into parroting the list's head — see recommend/topics._review_matches), so
+    # consolidation happens here instead. A label that misses the fold threshold but
+    # lands within this band of some existing entry is put to the fast model, which
+    # may only pick from the offered candidates. Below the band nothing is offered
+    # and the label becomes a new entry, exactly as before this tier existed.
+    topic_review_enabled: bool = True
+    topic_review_threshold: float = 0.62
+    topic_review_candidates: int = 5
+    # How many vocabulary entries the natural-language feedback parser is shown
+    # (most-used first) so a reader's own wording maps onto topics they already
+    # have. Deliberately NOT shown to triage or the writer: there the list is a
+    # prior on what the tags should be, and the model follows it instead of the
+    # story. The prompt cost is per call, so it is capped.
     topic_vocabulary_prompt_limit: int = 80
     # Bootstrap clustering: similarity at which two existing free-text topic labels
     # are considered the same concept when building the initial vocabulary.
@@ -249,8 +260,15 @@ class Settings(BaseSettings):
     # Requires vision on the main model (--mmproj in models-preset.ini) and headless
     # Chromium in the worker image. Failures are per-post and non-fatal.
     qa_enabled: bool = True
-    qa_max_rounds: int = 2  # review->revise->re-review cycles per post
     qa_viewport_width: int = 1100
+    # Budgets on the review's tool loop (worker/qa.py). Editing is section-addressed,
+    # so these bound the work, not the shape of a fix: a post needing eight small
+    # corrections costs eight edits, where the old whole-body revision cost one round
+    # and re-emitted everything (including the quiz it could not see).
+    qa_max_steps: int = 10  # tool-call turns before the verdict is forced
+    qa_max_edits: int = 12  # section mutations per post
+    qa_max_screenshots: int = 3  # renders per post, INCLUDING the opening one
+    qa_wall_clock_seconds: int = 300  # hard cap on one post's review
     # Where the worker reaches the web app to render posts (compose service DNS).
     web_internal_url: str = "http://web:8200"
 

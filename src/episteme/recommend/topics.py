@@ -47,8 +47,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..config import settings
 from ..llm import LLMError, gateway
 from ..llm.observe import llm_context
-from ..llm.prompts import TOPIC_NAMING_SYSTEM
-from ..llm.schemas import TopicVocabulary
+from ..llm.prompts import TOPIC_DEDUP_SYSTEM, TOPIC_NAMING_SYSTEM
+from ..llm.schemas import TopicMatches, TopicVocabulary
 from ..models import AppState, Feedback, Post, Story, Topic
 
 log = logging.getLogger("episteme.recommend.topics")
@@ -123,13 +123,87 @@ async def _nearest(session: AsyncSession, vector: list[float]) -> tuple[Topic, f
     return row.Topic, 1.0 - float(row.distance)
 
 
+async def _nearest_many(
+    session: AsyncSession, vector: list[float], limit: int
+) -> list[tuple[Topic, float]]:
+    """The `limit` closest vocabulary entries by cosine similarity, nearest first."""
+    distance = Topic.embedding.cosine_distance(vector).label("distance")
+    rows = (
+        await session.execute(
+            select(Topic, distance)
+            .where(Topic.embedding.is_not(None))
+            .order_by(distance)
+            .limit(limit)
+        )
+    ).all()
+    return [(row.Topic, 1.0 - float(row.distance)) for row in rows]
+
+
+async def _review_matches(
+    candidates: dict[str, list[Topic]],
+) -> dict[str, Topic]:
+    """Ask the fast model which proposed labels are the vocabulary entries it is
+    offered alongside them. Returns only the labels it matched.
+
+    This tier exists because the producers of topic tags are deliberately no
+    longer shown the vocabulary. They used to be, ordered most-used-first, and
+    the fast model read that list as the answer rather than as a hint: 128 of
+    999 stories ended up tagged exclusively from its first three entries —
+    a cancer-immunotherapy implant filed under "marine biology, deep-sea
+    biology, astronomy" — and because parroting a label raises its use count,
+    the head of the list kept re-electing itself. Tagging and consolidation are
+    now separate steps so the vocabulary can shape only WORDING, never which
+    subject a story is judged to be about.
+
+    The model's answer is enforced as a closed set in code (`_match_index`), and
+    an unavailable model degrades to no matches, i.e. new vocabulary entries.
+    """
+    lines = []
+    for label, topics in candidates.items():
+        offered = ", ".join(topic.label for topic in topics)
+        lines.append(f"- proposed: {label}\n  existing: {offered}")
+    prompt = "\n".join(lines)
+    try:
+        with llm_context(stage="topics"):
+            result = await gateway.complete_json(
+                "fast", TOPIC_DEDUP_SYSTEM, prompt, TopicMatches
+            )
+    except LLMError as exc:
+        log.warning("Topic dedup unavailable (%s); keeping proposed labels", exc)
+        return {}
+    # Matched by echoed STRING, never by position, and only within the candidates
+    # offered for that particular label — the model cannot introduce a topic here,
+    # only recognise one. Anything unrecognised is dropped, which reads as "no
+    # match" and creates the new entry.
+    matched: dict[str, Topic] = {}
+    for match in result.matches:
+        if match.existing is None or match.proposed in matched:
+            continue
+        offered = candidates.get(match.proposed)
+        if offered is None:
+            log.info("Topic dedup echoed unknown label %r; ignored", match.proposed)
+            continue
+        for topic in offered:
+            if topic.label == match.existing:
+                matched[match.proposed] = topic
+                log.info("Topic %r folded into %r (dedup turn)", match.proposed, topic.label)
+                break
+        else:
+            log.info(
+                "Topic dedup chose %r, not offered for %r; ignored",
+                match.existing,
+                match.proposed,
+            )
+    return matched
+
+
 def _append(labels: list[str], label: str) -> None:
     if label not in labels:
         labels.append(label)
 
 
 async def resolve_entries(
-    session: AsyncSession, labels: list[str], *, allow_new: bool = True
+    session: AsyncSession, labels: list[str], *, allow_new: bool = True, review: bool = False
 ) -> dict[str, Topic]:
     """Map each raw label onto its vocabulary row, keyed by the RAW label.
 
@@ -148,6 +222,15 @@ async def resolve_entries(
     batch can match one the first just made. With `allow_new=False` an unmatched
     label is absent from the mapping rather than extending the vocabulary — used
     where the caller wants a strictly closed set.
+
+    With `review=True` a label that misses the fold threshold, but is still near
+    some existing entry, is put to the fast model in ONE batched call before a
+    new entry is minted (`_review_matches`). Callers that PRODUCE tags for
+    storage — triage and the writer — pass it, because they are no longer shown
+    the vocabulary and so cannot consolidate their own wording. Interactive
+    callers do not: they resolve a name the reader typed, usually already
+    canonical, and an extra model call on a request path is latency the reader
+    feels.
     """
     entries: dict[str, Topic] = {}
     pending: dict[str, str] = {}  # slug -> cleaned label, deduped within the batch
@@ -167,37 +250,73 @@ async def resolve_entries(
         return entries
 
     vectors = await _embed_labels(list(pending.values()))
+
+    # Pass 1: the embedding tiers, which are cheap and decide most labels. A miss
+    # that is still in the review band is set aside rather than resolved, so the
+    # whole batch can be put to the model in a single call below.
+    review_enabled = review and settings.topic_review_enabled
+    folded: dict[str, Topic] = {}  # slug -> confidently matched entry
+    to_review: dict[str, list[Topic]] = {}  # cleaned label -> candidates offered
     for slug, cleaned in pending.items():
-        topic = None
         vector = vectors.get(cleaned)
-        if vector is not None:
+        if vector is None:
+            continue
+        near = await _nearest_many(session, vector, settings.topic_review_candidates)
+        if near and near[0][1] >= settings.topic_match_threshold:
+            topic, similarity = near[0]
+            log.info("Topic %r folded into %r (cos %.3f)", cleaned, topic.label, similarity)
+            folded[slug] = topic
+        elif review_enabled:
+            candidates = [
+                topic
+                for topic, similarity in near
+                if similarity >= settings.topic_review_threshold
+            ]
+            if candidates:
+                to_review[cleaned] = candidates
+
+    reviewed = await _review_matches(to_review) if to_review else {}
+
+    # Pass 2: assign, minting what is left. `_nearest` is consulted again only
+    # after this batch has created an entry, so a second label can still fold
+    # into one the first just minted without paying for a lookup that pass 1
+    # already did.
+    created = False
+    for slug, cleaned in pending.items():
+        topic = folded.get(slug) or reviewed.get(cleaned)
+        vector = vectors.get(cleaned)
+        if topic is None and created and vector is not None:
             near = await _nearest(session, vector)
             if near is not None and near[1] >= settings.topic_match_threshold:
                 topic, similarity = near
                 log.info(
                     "Topic %r folded into %r (cos %.3f)", cleaned, topic.label, similarity
                 )
-                if slug not in (topic.aliases or []):
-                    # Reassign rather than mutate in place: JSONB change tracking
-                    # doesn't see list mutation.
-                    topic.aliases = [*(topic.aliases or []), slug]
-        if topic is None:
+        if topic is not None:
+            # An alias makes the next occurrence of this wording a slug hit, so a
+            # fold — and above all a dedup turn — is paid for exactly once.
+            if slug not in (topic.aliases or []):
+                # Reassign rather than mutate in place: JSONB change tracking
+                # doesn't see list mutation.
+                topic.aliases = [*(topic.aliases or []), slug]
+        else:
             if not allow_new:
                 continue
             topic = Topic(slug=slug, label=cleaned, embedding=vector)
             session.add(topic)
             await session.flush()
+            created = True
         for raw in waiting[slug]:
             entries[raw] = topic
     return entries
 
 
 async def resolve(
-    session: AsyncSession, labels: list[str], *, allow_new: bool = True
+    session: AsyncSession, labels: list[str], *, allow_new: bool = True, review: bool = False
 ) -> list[str]:
     """Canonical LABELS for a batch of raw model output — what gets stored on a
     story or post, deduplicated, in the order the raw labels arrived."""
-    entries = await resolve_entries(session, labels, allow_new=allow_new)
+    entries = await resolve_entries(session, labels, allow_new=allow_new, review=review)
     resolved: list[str] = []
     for raw in labels:
         topic = entries.get(raw)
@@ -207,12 +326,12 @@ async def resolve(
 
 
 async def resolve_slugs(
-    session: AsyncSession, labels: list[str], *, allow_new: bool = True
+    session: AsyncSession, labels: list[str], *, allow_new: bool = True, review: bool = False
 ) -> list[str]:
     """Canonical SLUGS for a batch of raw labels — what gets stored on a feedback
     row, because a signal is about the topic's identity, not its current
     spelling."""
-    entries = await resolve_entries(session, labels, allow_new=allow_new)
+    entries = await resolve_entries(session, labels, allow_new=allow_new, review=review)
     resolved: list[str] = []
     for raw in labels:
         topic = entries.get(raw)

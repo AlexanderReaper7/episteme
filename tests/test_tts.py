@@ -58,8 +58,9 @@ def test_build_script_skips_quiz_and_reads_media_captions():
         title="T",
         sections=[
             {"type": "image", "url": "http://x/a.jpg", "caption": "A galaxy cluster"},
-            {"type": "quiz", "question": "Q?", "choices": ["a", "b"], "answer_index": 0,
-             "explanation": "because"},
+            {"type": "quiz", "questions": [
+                {"question": "Q?", "choices": ["a", "b"], "answer_index": 0,
+                 "explanation": "because"}]},
             {"type": "chart", "spec": {}, "caption": ""},
         ],
     )
@@ -86,8 +87,8 @@ def test_script_hash_is_stable_and_content_sensitive():
 
 
 def test_build_script_empty_when_nothing_audible():
-    post = _post(sections=[{"type": "quiz", "question": "Q", "choices": ["a", "b"],
-                            "answer_index": 0, "explanation": "e"}])
+    post = _post(sections=[{"type": "quiz", "questions": [
+        {"question": "Q", "choices": ["a", "b"], "answer_index": 0, "explanation": "e"}]}])
     assert build_script(post).strip() == ""
 
 

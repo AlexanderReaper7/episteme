@@ -27,7 +27,13 @@ class _FakeSession:
         return None
 
 
-def _stub_lookups(monkeypatch, *, by_slug=None, by_alias=None, nearest=None, vectors=None):
+def _stub_lookups(
+    monkeypatch, *, by_slug=None, by_alias=None, nearest=None, vectors=None, near_many=None
+):
+    """Stub the DB-touching tiers. `nearest` is the single best (Topic, similarity)
+    the embedding tier sees; `near_many` overrides the ranked candidate list the
+    review tier is built from, which otherwise just wraps `nearest`."""
+
     async def fake_by_slug(session, slug):
         return (by_slug or {}).get(slug)
 
@@ -37,12 +43,18 @@ def _stub_lookups(monkeypatch, *, by_slug=None, by_alias=None, nearest=None, vec
     async def fake_nearest(session, vector):
         return nearest
 
+    async def fake_nearest_many(session, vector, limit):
+        if near_many is not None:
+            return near_many[:limit]
+        return [nearest] if nearest is not None else []
+
     async def fake_embed(labels):
         return {label: [1.0, 0.0] for label in labels} if vectors is None else vectors
 
     monkeypatch.setattr(topics, "_by_slug", fake_by_slug)
     monkeypatch.setattr(topics, "_by_alias", fake_by_alias)
     monkeypatch.setattr(topics, "_nearest", fake_nearest)
+    monkeypatch.setattr(topics, "_nearest_many", fake_nearest_many)
     monkeypatch.setattr(topics, "_embed_labels", fake_embed)
 
 
@@ -153,6 +165,164 @@ async def test_empty_and_punctuation_only_labels_are_ignored(monkeypatch):
     session = _FakeSession()
     assert await topics.resolve(session, ["", "   ", "!!!"]) == []
     assert session.added == []
+
+
+# --- The dedup turn ---------------------------------------------------------------
+#
+# Producers of tags (triage, the writer) are deliberately shown NO vocabulary: when
+# they were, ordered most-used-first, the fast model read the list as the answer and
+# 128 of 999 stories came back tagged only from its first three entries. Consolidation
+# moved here instead, where the model may recognise an offered candidate but can never
+# introduce one.
+
+
+class _DedupGateway:
+    """Stands in for the fast model's dedup turn, recording what it was asked."""
+
+    def __init__(self, answer=None, error=None):
+        self.answer = answer or {"matches": []}
+        self.error = error
+        self.calls: list[str] = []
+
+    async def complete_json(self, role, system, user, schema):
+        self.calls.append(user)
+        if self.error is not None:
+            raise self.error
+        return schema.model_validate(self.answer)
+
+
+def _band(offset):
+    """A similarity inside the review band: missed the fold, close enough to ask."""
+    return settings.topic_review_threshold + offset
+
+
+async def test_dedup_turn_folds_a_label_the_embedding_tier_missed(monkeypatch):
+    existing = Topic(slug="cardiovascular-disease", label="cardiovascular disease", aliases=[])
+    _stub_lookups(monkeypatch, near_many=[(existing, _band(0.1))])
+    gateway = _DedupGateway({"matches": [
+        {"proposed": "heart disease", "existing": "cardiovascular disease"}
+    ]})
+    monkeypatch.setattr(topics, "gateway", gateway)
+    session = _FakeSession()
+
+    assert await topics.resolve(session, ["heart disease"], review=True) == [
+        "cardiovascular disease"
+    ]
+    assert session.added == []
+    # Recorded, so the next occurrence resolves at the alias tier and the dedup
+    # turn is paid for exactly once per wording.
+    assert existing.aliases == ["heart-disease"]
+
+
+async def test_dedup_turn_is_not_consulted_without_review(monkeypatch):
+    """Default off: interactive callers resolve a name the reader typed and must
+    not pay for a model call on a request path."""
+    existing = Topic(slug="cardiovascular-disease", label="cardiovascular disease", aliases=[])
+    _stub_lookups(monkeypatch, near_many=[(existing, _band(0.1))])
+    gateway = _DedupGateway()
+    monkeypatch.setattr(topics, "gateway", gateway)
+
+    assert await topics.resolve(_FakeSession(), ["heart disease"]) == ["heart disease"]
+    assert gateway.calls == []
+
+
+async def test_dedup_turn_skips_labels_with_no_near_candidate(monkeypatch):
+    """Below the band there is nothing plausible to offer, so asking would only
+    invite a wrong merge — and cost a call on every genuinely new topic."""
+    existing = Topic(slug="astronomy", label="astronomy", aliases=[])
+    _stub_lookups(monkeypatch, near_many=[(existing, settings.topic_review_threshold - 0.01)])
+    gateway = _DedupGateway()
+    monkeypatch.setattr(topics, "gateway", gateway)
+    session = _FakeSession()
+
+    assert await topics.resolve(session, ["marine biology"], review=True) == ["marine biology"]
+    assert gateway.calls == []
+    assert [t.slug for t in session.added] == ["marine-biology"]
+
+
+async def test_dedup_turn_may_only_pick_from_what_it_was_offered(monkeypatch):
+    """The closed set is enforced in code. A model naming a real topic that was
+    not a candidate for THIS label must not fold it — that is how an unrelated
+    subject would inherit the reader's weight for another."""
+    offered = Topic(slug="oncology", label="oncology", aliases=[])
+    _stub_lookups(monkeypatch, near_many=[(offered, _band(0.1))])
+    gateway = _DedupGateway({"matches": [
+        {"proposed": "immunotherapy", "existing": "marine biology"}
+    ]})
+    monkeypatch.setattr(topics, "gateway", gateway)
+    session = _FakeSession()
+
+    assert await topics.resolve(session, ["immunotherapy"], review=True) == ["immunotherapy"]
+    assert [t.slug for t in session.added] == ["immunotherapy"]
+    assert offered.aliases == []
+
+
+async def test_dedup_turn_ignores_an_echo_of_a_label_it_was_not_asked_about(monkeypatch):
+    """Matched by echoed string, never by position — an invented or slipped
+    `proposed` is dropped rather than applied to whatever sat at that index."""
+    existing = Topic(slug="astronomy", label="astronomy", aliases=[])
+    _stub_lookups(monkeypatch, near_many=[(existing, _band(0.1))])
+    gateway = _DedupGateway({"matches": [
+        {"proposed": "some other tag entirely", "existing": "astronomy"}
+    ]})
+    monkeypatch.setattr(topics, "gateway", gateway)
+    session = _FakeSession()
+
+    assert await topics.resolve(session, ["exoplanets"], review=True) == ["exoplanets"]
+    assert [t.slug for t in session.added] == ["exoplanets"]
+
+
+async def test_dedup_turn_null_answer_keeps_the_proposed_tag(monkeypatch):
+    """Narrower/broader pairs must stay separate; null is the correct answer and
+    has to survive as a new entry."""
+    existing = Topic(slug="astronomy", label="astronomy", aliases=[])
+    _stub_lookups(monkeypatch, near_many=[(existing, _band(0.1))])
+    gateway = _DedupGateway({"matches": [{"proposed": "exoplanets", "existing": None}]})
+    monkeypatch.setattr(topics, "gateway", gateway)
+    session = _FakeSession()
+
+    assert await topics.resolve(session, ["exoplanets"], review=True) == ["exoplanets"]
+    assert [t.slug for t in session.added] == ["exoplanets"]
+
+
+async def test_dedup_outage_degrades_to_new_entries(monkeypatch):
+    """Same contract as every other LLM tier here: a model that is down costs
+    consolidation, never the caller's stage."""
+    existing = Topic(slug="cardiovascular-disease", label="cardiovascular disease", aliases=[])
+    _stub_lookups(monkeypatch, near_many=[(existing, _band(0.1))])
+    monkeypatch.setattr(topics, "gateway", _DedupGateway(error=LLMError("model down")))
+    session = _FakeSession()
+
+    assert await topics.resolve(session, ["heart disease"], review=True) == ["heart disease"]
+    assert [t.slug for t in session.added] == ["heart-disease"]
+
+
+async def test_dedup_turn_asks_about_the_whole_batch_at_once(monkeypatch):
+    """One call per resolve, not one per label — triage runs this on every story."""
+    existing = Topic(slug="astronomy", label="astronomy", aliases=[])
+    _stub_lookups(monkeypatch, near_many=[(existing, _band(0.1))])
+    gateway = _DedupGateway()
+    monkeypatch.setattr(topics, "gateway", gateway)
+
+    await topics.resolve(_FakeSession(), ["exoplanets", "stellar winds"], review=True)
+    assert len(gateway.calls) == 1
+    assert "exoplanets" in gateway.calls[0] and "stellar winds" in gateway.calls[0]
+
+
+async def test_a_confident_embedding_match_never_reaches_the_model(monkeypatch):
+    """The fold threshold still decides on its own — the turn is a fallback for
+    the band below it, not a second opinion on everything."""
+    existing = Topic(slug="astronomy", label="astronomy", aliases=[])
+    _stub_lookups(
+        monkeypatch, near_many=[(existing, settings.topic_match_threshold + 0.01)]
+    )
+    gateway = _DedupGateway()
+    monkeypatch.setattr(topics, "gateway", gateway)
+
+    assert await topics.resolve(_FakeSession(), ["stellar astronomy"], review=True) == [
+        "astronomy"
+    ]
+    assert gateway.calls == []
 
 
 # --- Per-input resolution ---------------------------------------------------------

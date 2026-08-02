@@ -261,8 +261,8 @@ the design never touches article data.
     {"type": "diagram",   "mermaid": "flowchart LR; A-->B"},
     {"type": "video",     "url": "https://youtube.com/...", "caption": "...",
                           "attribution": "...", "source_url": "https://..."},
-    {"type": "quiz",      "question": "...", "choices": ["..."], "answer_index": 1,
-                          "explanation": "..."},
+    {"type": "quiz",      "questions": [{"question": "...", "choices": ["..."],
+                          "answer_index": 1, "explanation": "..."}]},
     {"type": "glossary",  "terms": [{"term": "...", "definition": "..."}]},
     {"type": "timeline",  "events": [{"date": "...", "label": "..."}]},
     {"type": "further_reading", "items": [{"title": "...", "url": "...", "outlet": "..."}]},
@@ -277,14 +277,51 @@ Rules:
   invalid sections are retried or dropped — malformed data can never reach the
   renderer.
 - `sources` is **mandatory** — every article links what it was written from.
+- `quiz` is **mandatory too** (user decision 2026-08-02): every feature ends with a
+  comprehension check of one or a few questions, so reading is always followed by a
+  chance to find out whether it landed. Enforced in code rather than by prompt
+  guidance — the JSON-Schema grammar can constrain a section's shape but not demand
+  a member in a list, so this is the only place the guarantee can actually hold. The
+  writer's whole draft is validated (`PostDraft`, bounced back through the
+  repair-retry loop); the qa stage edits section by section, so there the same
+  invariant is enforced on the *action* — a delete or replace that would leave no
+  quiz is refused as a tool error. Either way a weak question is dropped from the
+  quiz, never the quiz from the post.
+- **Answer position is randomised on every read**, not once at write time. LLMs place
+  the correct choice at a strongly non-uniform index, which would let a reader score
+  without reading the question; re-randomising also makes a re-read a real re-test.
+  It happens in `app.js` (`shuffleChoices`, per page VIEW) rather than in the
+  template: the post page carries an ETag hashing the stored sections, so a
+  server-side shuffle was discarded by the first 304 and every re-read served one
+  frozen order. The stored section keeps the writer's original order (the provenance
+  record is unaltered) and `data-answer` indexes it, so the marked answer follows its
+  text through any permutation. Neither QA's critique nor a choice's own text may
+  refer to a choice by position — QA judges the marked answer from the canonical
+  JSON it is given, not from the screenshot's ordering.
 - **Media is closed-set, like citations** (built 2026-07-19): the writer sees the
   story's ingested `media_refs` as an "available media" list and may only reference
   those exact URLs in `image`/`video` sections; code drops anything else and stamps
   `attribution`/`source_url` from the DB. QA revisions pass the same sanitizer.
   Media sections reference URLs directly (no `MediaAsset` indirection — it buys
   nothing while media is never cached; revisit if opt-in caching lands).
+- **`chart` and `diagram` are the only sections whose stored JSON is a *program***
+  (a Vega-Lite spec, Mermaid source) rather than the content itself — every other
+  type renders through a Jinja branch that is a total function of its JSON. That
+  distinction decides two things: the chart spec is **typed** (`ChartSpec`, a
+  four-mark / two-to-three-channel Vega-Lite subset) rather than `dict[str, Any]`,
+  because an untyped dict was the one field in the whole union escaping the grammar
+  and it came back as invented syntax; and the `qa` screenshot is taken **only for
+  posts containing one** (§7 stage 5). Beyond shape, a validator checks each
+  encoding channel names a key the data rows actually have — a flawless spec that
+  draws an empty frame is the failure a shape constraint cannot see — and a diagram
+  must open with a recognised Mermaid diagram type, without which the whole figure
+  is a syntax error. *Origin: post 427 stored
+  `{"data": [...], "x_axis": …, "y_axis": …}` — no `mark`, no `encoding` — served a
+  blank box for two weeks at quality_score 9.*
 - Interactive types hydrate client-side from the JSON: `quiz` via a small vanilla
-  script, `chart` via vendored Vega-Lite, `diagram` via vendored Mermaid (dark
+  script (per-question state — answering one leaves its siblings live; nothing is
+  tallied across them, because a score is a grade and this feed has no reward
+  mechanics), `chart` via vendored Vega-Lite, `diagram` via vendored Mermaid (dark
   themes, loaded only on pages containing those types; a failed render collapses
   to the caption). `timeline`/`glossary` are pure server-rendered HTML/CSS.
 - Images/video are **hotlinked, not cached** — the `image` template must degrade
@@ -322,15 +359,28 @@ A chain of composable stages; each stage is a Procrastinate job, checkpointed in
                 the writer itself in the same agentic conversation, guided not
                 quota'd; no separate enrichment pass, no mid-story model swap.
                 Media selection is closed-set from ingested media_refs, §6.)
-5. qa         — **the `main` model reviews the rendered post.** The post is rendered
-                through the real templates and screenshotted (headless Chromium is
-                already in the worker image); the vision-capable `main` model
-                critiques the result against the sources — factual grounding,
-                layout-breaking content, verbatim-summary repetition, boilerplate —
-                and may revise sections, re-render, and iterate (bounded rounds).
-                Sets quality_score; can demote to aggregate. The stock Qwen3.6
-                mmproj (already on disk) is compatible with the Qwopus writer —
-                enabling vision is a `--mmproj` line in its models-preset.ini entry.
+5. qa         — **the `main` model reviews AND edits the post**, as a second
+                agentic tool loop (same driver as the writer, `agent.run_tool_loop`).
+                It is always given the trusted sources and the post's canonical body
+                as indexed JSON, and — only when the post holds a `chart` or
+                `diagram`, the two types the browser draws (§6) — a screenshot of the
+                real rendered page plus the `rerender` tool (headless Chromium is
+                already in the worker image, launched lazily so a text-only review
+                needs no browser at all). For the other seven types a screenshot
+                shows nothing the listing did not already say, while costing a page
+                load and ~1k image tokens on the critical path of a stage that
+                already runs against the wall clock. It critiques
+                factual grounding, layout-breaking content, verbatim-summary
+                repetition and boilerplate, then fixes what is wrong with
+                section-addressed tools — replace/insert/delete one section, set
+                title/summary, re-render to look again — and closes with a
+                grammar-constrained verdict. Sets quality_score; can demote to
+                aggregate. The tools are scoped hard: the body only (the DB-built
+                citation tail is neither listed nor addressable), media through the
+                same closed-set sanitizer as the draft, and **no network tools** —
+                QA's grounding set is fixed at write time. Vision runs on the stock
+                Qwen3.6 mmproj, wired into the Qwopus preset since ~2026-07-19 and
+                re-probed 2026-08-02.
 6. publish    — quality gate (score threshold), else mark draft for manual review
 ```
 
@@ -560,7 +610,7 @@ was folded into the agentic write, §7), vendored Vega-Lite + Mermaid renderers.
 Remaining pushes: new post kinds — **micro-post** = small regularly occurring
 standalone content (e.g. "word of the day"); **minigame** = an interactive that
 makes you think and ideally teaches (canonical example: NYT Connections; distinct
-from `quiz`, which is one small comprehension check inside a feature) — plus
+from `quiz`, which is the mandatory comprehension check inside every feature) — plus
 quality gate + draft review UI, and OpenAlex source tracing
 (primary-vs-secondary source distinction in features).
 

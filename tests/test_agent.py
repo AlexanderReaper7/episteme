@@ -11,7 +11,13 @@ _DRAFT = {
     "summary": "S",
     "difficulty": "intermediate",
     "topics": ["physics"],
-    "sections": [{"type": "prose", "text": "Body"}],
+    # The quiz is mandatory (schemas._require_quiz), so a valid draft carries one.
+    "sections": [
+        {"type": "prose", "text": "Body"},
+        {"type": "quiz", "questions": [
+            {"question": "q?", "choices": ["a", "b"], "answer_index": 0,
+             "explanation": "e"}]},
+    ],
     "further_reading_urls": [],
 }
 

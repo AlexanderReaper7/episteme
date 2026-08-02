@@ -915,6 +915,22 @@ main {
   color: var(--muted);
 }
 
+/* Questions after the first are separated by a rule rather than nested cards —
+   they belong to one check, not to several. */
+.quiz-item + .quiz-item {
+  margin-top: 1.5rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--border);
+}
+
+.quiz-number {
+  margin: 0 0 0.35rem;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
 .quiz-question { font-weight: 600; }
 
 .quiz-choices {

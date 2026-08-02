@@ -342,16 +342,22 @@ def test_truncate_normalize_rejects_short_vectors():
 
 
 def test_post_draft_schema_discriminated_union():
+    # The mandatory quiz is in every fixture here so the negative cases below still
+    # fail for the reason each one is testing, not for a missing comprehension check.
+    sections = [
+        {"type": "prose", "text": "Body"},
+        {"type": "key_points", "items": ["a", "b"]},
+        {"type": "quiz", "questions": [
+            {"question": "q?", "choices": ["a", "b"], "answer_index": 0,
+             "explanation": "e"}]},
+    ]
     draft = PostDraft.model_validate(
         {
             "title": "T",
             "summary": "S",
             "difficulty": "intermediate",
             "topics": ["physics"],
-            "sections": [
-                {"type": "prose", "text": "Body"},
-                {"type": "key_points", "items": ["a", "b"]},
-            ],
+            "sections": sections,
             "further_reading_urls": ["https://cern.ch/hilumi"],
         }
     )
@@ -365,7 +371,7 @@ def test_post_draft_schema_discriminated_union():
                 "summary": "S",
                 "difficulty": "intermediate",
                 "topics": ["physics"],
-                "sections": [{"type": "prose", "text": "Body"}],
+                "sections": sections,
             }
         )
     with pytest.raises(Exception):
@@ -375,7 +381,8 @@ def test_post_draft_schema_discriminated_union():
                 "summary": "S",
                 "difficulty": "extreme",
                 "topics": ["physics"],
-                "sections": [{"type": "prose", "text": "Body"}],
+                "sections": sections,
+                "further_reading_urls": [],
             }
         )
 

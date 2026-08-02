@@ -77,28 +77,64 @@
     return true;
   }
 
+  /* Reorder one question's choice buttons in place (Fisher-Yates over the DOM).
+
+     Models put the correct choice at a strongly non-uniform position, so a fixed
+     order lets a reader score without reading the question. The shuffle lives here
+     rather than in the template because the post page is served with an ETag hashing
+     the stored sections: a server-rendered shuffle was discarded by the first 304
+     (and by stale-while-revalidate), so a re-read got the identical order. Per page
+     VIEW, it survives caching and reloads and a re-read is a real re-test.
+
+     Each button keeps the `data-index` it was rendered with, so `data-answer` stays
+     valid under any permutation and nothing is recomputed. */
+  function shuffleChoices(item) {
+    var box = item.querySelector(".quiz-choices");
+    if (!box) return;
+    var buttons = Array.prototype.slice.call(box.children);
+    for (var i = buttons.length - 1; i > 0; i--) {
+      var j = Math.floor(Math.random() * (i + 1));
+      var swap = buttons[i];
+      buttons[i] = buttons[j];
+      buttons[j] = swap;
+    }
+    buttons.forEach(function (btn) {
+      box.appendChild(btn);
+    });
+  }
+
   // Hydrate quiz/chart/diagram sections under `root`. Assumes any vendors it needs
   // (vega*, mermaid) are already loaded — hydrateRich guarantees that. Everything
   // degrades: a failed render collapses to its caption.
   function hydrateSections(root) {
     root.querySelectorAll(".section-quiz").forEach(function (quiz) {
       if (!fresh(quiz)) return;
-      var answer = parseInt(quiz.dataset.answer, 10);
-      var choices = quiz.querySelectorAll(".quiz-choice");
-      choices.forEach(function (btn) {
-        btn.addEventListener("click", function () {
-          if (quiz.classList.contains("quiz-answered")) return;
-          quiz.classList.add("quiz-answered");
-          var picked = parseInt(btn.dataset.index, 10);
-          btn.classList.add(picked === answer ? "quiz-correct" : "quiz-wrong");
-          choices.forEach(function (other) {
-            other.disabled = true;
-            if (parseInt(other.dataset.index, 10) === answer) {
-              other.classList.add("quiz-correct");
-            }
+      // Each question resolves on its own and nothing is tallied across them: the
+      // check reports what landed, it does not grade the reader (spec §1).
+      quiz.querySelectorAll(".quiz-item").forEach(function (item) {
+        var answer = parseInt(item.dataset.answer, 10);
+        // Scoped to the item, not the section: sibling questions stay live.
+        var choices = item.querySelectorAll(".quiz-choice");
+        // A question with no valid answer index stays inert rather than scoring
+        // every click as wrong. The schema validates answer_index against choices,
+        // so nothing the pipeline writes lands here — this guards hand-edited rows.
+        if (!(answer >= 0 && answer < choices.length)) return;
+        shuffleChoices(item);
+        choices.forEach(function (btn) {
+          btn.addEventListener("click", function () {
+            if (item.classList.contains("quiz-answered")) return;
+            item.classList.add("quiz-answered");
+            var picked = parseInt(btn.dataset.index, 10);
+            btn.classList.add(picked === answer ? "quiz-correct" : "quiz-wrong");
+            choices.forEach(function (other) {
+              other.disabled = true;
+              if (parseInt(other.dataset.index, 10) === answer) {
+                other.classList.add("quiz-correct");
+              }
+            });
+            var explanation = item.querySelector(".quiz-explanation");
+            if (explanation) explanation.hidden = false;
           });
-          var explanation = quiz.querySelector(".quiz-explanation");
-          if (explanation) explanation.hidden = false;
         });
       });
     });
@@ -113,8 +149,22 @@
           figure.classList.add("render-failed");
           return;
         }
+        // Vega-Lite's default plot width is a fixed 200px, which strands a chart in
+        // about a third of the article column. Fit it to the column instead.
+        // Deliberately a measured NUMBER, not width:"container": container sizing
+        // reads the target's offsetWidth, which measured 0 here and collapses the
+        // chart to nothing — a worse failure than the one being fixed. A 0 reading
+        // (hidden section, detached node) falls through to Vega's own default.
+        var available = Math.floor(figure.clientWidth);
+        if (spec.width === undefined && available > 0) {
+          spec.width = Math.max(200, Math.min(available, 900));
+          spec.autosize = spec.autosize || { type: "fit", contains: "padding" };
+        }
         window
           .vegaEmbed(figure.querySelector(".chart-target"), spec, {
+            // Pinned, not inferred: vega-embed picks its parser from the spec's
+            // $schema, and the schema the writer generates against carries none.
+            mode: "vega-lite",
             actions: false,
             theme: "dark",
             config: { background: "transparent" },
