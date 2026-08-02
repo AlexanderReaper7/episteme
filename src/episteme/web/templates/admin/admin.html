@@ -20,21 +20,61 @@
         </li>
         {% endfor %}
       </ul>
+      {# Endpoint is per role, so it belongs next to the model it serves — with
+         everything on one server the column simply repeats the same URL. #}
       <table class="admin-table">
-        <tr><th>role</th><th>model</th></tr>
-        {% for role, model in status.llm.roles.items() %}
-        <tr><td>{{ role }}</td><td class="mono">{{ model }}</td></tr>
+        <tr><th>role</th><th>model</th><th>endpoint</th></tr>
+        {% for role, cfg in status.llm.roles.items() %}
+        <tr>
+          <td>{{ role }}</td>
+          <td class="mono">{{ cfg.model }}</td>
+          <td class="mono">{{ cfg.url }}</td>
+        </tr>
         {% endfor %}
       </table>
       {% if status.llm.models %}
       <table class="admin-table">
-        <tr><th>loaded model</th><th>state</th></tr>
+        <tr>
+          <th>loaded model</th><th>state</th>
+          {% if status.llm.endpoints | length > 1 %}<th>endpoint</th>{% endif %}
+        </tr>
         {% for m in status.llm.models %}
-        <tr><td class="mono">{{ m.id }}</td><td>{{ m.status }}</td></tr>
+        <tr>
+          <td class="mono">{{ m.id }}</td><td>{{ m.status }}</td>
+          {% if status.llm.endpoints | length > 1 %}<td class="mono">{{ m.endpoint }}</td>{% endif %}
+        </tr>
         {% endfor %}
       </table>
       {% endif %}
     </section>
+
+    {# Only rendered when a host agent is configured. With LLM_HOST_AGENT_URL
+       empty the dashboard is exactly what it was before this feature existed —
+       the agent is optional infrastructure, not a dependency. #}
+    {% if status.llm.host_agent.enabled %}
+    <section class="admin-card admin-card-wide">
+      <div class="admin-card-head">
+        <h2>llama.cpp backend</h2>
+        <span class="muted mono">{{ status.llm.host_agent.url }}</span>
+      </div>
+      {# The action handlers render _backend.html standalone with `backend` and
+         `pipeline` in their own context; here both come off the status payload. #}
+      {% set backend = status.llm.host_agent %}
+      {% set pipeline = status.pipeline %}
+      {% include "admin/_backend.html" with context %}
+      {# hx-target="this" is load-bearing: .admin-main sets hx-target="#admin-main"
+         and htmx inherits it, so without this each placeholder replaces the whole
+         page with its own fragment. #}
+      <div hx-get="/admin/partials/backend-resources" hx-trigger="load"
+           hx-target="this" hx-swap="outerHTML">
+        <p class="muted" style="font-size: 0.82rem;">measuring GPU…</p>
+      </div>
+      <div hx-get="/admin/partials/backend-log" hx-trigger="load"
+           hx-target="this" hx-swap="outerHTML">
+        <p class="muted" style="font-size: 0.82rem;">loading log…</p>
+      </div>
+    </section>
+    {% endif %}
 
     <section class="admin-card">
       <h2>Content</h2>

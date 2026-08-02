@@ -6,7 +6,10 @@
   <button hx-post="/admin/defer/run_pipeline" hx-target="#queue" hx-swap="innerHTML">run pipeline now</button>
   {% if status.pipeline.paused %}
   <button hx-post="/admin/pipeline/resume" hx-target="#job-controls" hx-swap="outerHTML">resume pipeline</button>
-  <span class="bad">paused</span>
+  {# Say WHO paused it. A pipeline that stopped on its own is indistinguishable
+     from a broken one unless the panel names the resource governor as the cause. #}
+  <span class="bad">paused{% if status.pipeline.reason == 'resource' %} — GPU busy{% endif %}</span>
+  {% if status.pipeline.since %}<span class="muted">since {{ status.pipeline.since | dt }}</span>{% endif %}
   {% else %}
   <button hx-post="/admin/pipeline/pause" hx-target="#job-controls" hx-swap="outerHTML">pause + unload</button>
   {% endif %}

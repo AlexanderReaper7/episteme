@@ -182,6 +182,137 @@ async def test_embed_transport_failure_is_an_llm_error(monkeypatch):
         await gateway.embed(["some text"])
 
 
+@pytest.fixture
+def endpoints(monkeypatch):
+    """A known-empty endpoint topology: every role on the shared default URL.
+    Tests opt into a split by setting one role's override."""
+    from episteme.config import settings
+
+    monkeypatch.setattr(settings, "llm_base_url", "http://shared.test/v1")
+    monkeypatch.setattr(settings, "llm_main_base_url", "")
+    monkeypatch.setattr(settings, "llm_fast_base_url", "")
+    monkeypatch.setattr(settings, "llm_embed_base_url", "")
+    monkeypatch.setattr(settings, "llm_model_embed", "test-embed")
+    return settings
+
+
+def test_roles_collapse_onto_one_endpoint_when_they_share_a_url(endpoints):
+    """Which roles share a server is config; with no overrides that is all of them,
+    and they must share ONE client — a per-role client pool would double-probe and
+    double-connect to a single llama-server."""
+    gateway = _gateway_with(lambda r: httpx.Response(200, json={"data": []}))
+    assert gateway.endpoints() == {"http://shared.test/v1": ["main", "fast", "embed"]}
+    assert gateway.client_for("main") is gateway.client_for("embed")
+
+
+def test_trailing_slash_is_not_a_second_endpoint(endpoints, monkeypatch):
+    monkeypatch.setattr(endpoints, "llm_main_base_url", "http://shared.test/v1/")
+    gateway = _gateway_with(lambda r: httpx.Response(200, json={"data": []}))
+    assert list(gateway.endpoints()) == ["http://shared.test/v1"]
+
+
+async def test_every_role_can_be_moved_to_its_own_endpoint(endpoints, monkeypatch):
+    """The point of the per-role URLs: `embed` is not special, any role can live
+    on its own server, and each request goes to that role's endpoint."""
+    monkeypatch.setattr(endpoints, "llm_fast_base_url", "http://fast.test/v1")
+    monkeypatch.setattr(endpoints, "llm_embed_base_url", "http://embed.test/v1")
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.host)
+        if request.url.path.endswith("/embeddings"):
+            return httpx.Response(
+                200, json={"data": [{"index": 0, "embedding": [1.0] * EMBEDDING_DIM}]}
+            )
+        return httpx.Response(200, json=_completion("hi"))
+
+    gateway = _gateway_with(handler)
+    await gateway.chat("main", "sys", "user")
+    await gateway.chat_messages("fast", [{"role": "user", "content": "x"}])
+    await gateway.embed(["hello"])
+    assert seen == ["shared.test", "fast.test", "embed.test"]
+
+
+async def test_endpoint_status_reports_roles_and_inventory_per_endpoint(endpoints, monkeypatch):
+    monkeypatch.setattr(endpoints, "llm_embed_base_url", "http://embed.test/v1")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "embed.test":
+            raise httpx.ConnectError("connection refused")
+        return httpx.Response(200, json={"data": [{"id": "m", "status": {"value": "loaded"}}]})
+
+    rows = await _gateway_with(handler).endpoint_status()
+    assert rows == [
+        {
+            "url": "http://shared.test/v1",
+            "roles": ["main", "fast"],
+            "available": True,
+            "models": [{"id": "m", "status": "loaded"}],
+        },
+        {"url": "http://embed.test/v1", "roles": ["embed"], "available": False, "models": []},
+    ]
+
+
+async def test_unavailable_endpoints_names_only_the_down_one(endpoints, monkeypatch):
+    """The gate wants a bool, the log line wants a name; one probe answers both.
+    A run is skipped when ANY configured endpoint is down — a pipeline that cannot
+    embed is doomed regardless of which server holds the embedder."""
+    monkeypatch.setattr(endpoints, "llm_embed_base_url", "http://embed.test/v1")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "embed.test":
+            raise httpx.ConnectError("connection refused")
+        return httpx.Response(200, json={"data": []})
+
+    assert await _gateway_with(handler).unavailable_endpoints() == ["http://embed.test/v1"]
+    assert await _gateway_with(lambda r: httpx.Response(200, json={"data": []})).unavailable_endpoints() == []
+
+
+async def test_unload_visits_every_endpoint_and_the_server_decides_what_unloads(
+    endpoints, monkeypatch
+):
+    """No endpoint is skipped by role. Only router mode reports `status.value`, so a
+    plain single-model server (the embed one today) reports nothing loaded and is
+    never sent an unload — the server's own answer decides, not a hardcoded idea of
+    which port holds VRAM."""
+    monkeypatch.setattr(endpoints, "llm_embed_base_url", "http://embed.test/v1")
+    unloads: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/models"):
+            if request.url.host == "shared.test":
+                return httpx.Response(
+                    200,
+                    json={
+                        "data": [
+                            {"id": "loaded-one", "status": {"value": "loaded"}},
+                            {"id": "cold-one", "status": {"value": "unloaded"}},
+                        ]
+                    },
+                )
+            return httpx.Response(200, json={"data": [{"id": "embedder"}]})  # no load state
+        unloads.append(json.loads(request.content)["model"])
+        return httpx.Response(200)
+
+    assert await _gateway_with(handler).unload_models() == ["loaded-one"]
+    assert unloads == ["loaded-one"]
+
+
+async def test_unload_on_one_dead_endpoint_does_not_stop_the_others(endpoints, monkeypatch):
+    """Unload is best-effort and runs on the pause path; a dead endpoint must not
+    keep VRAM held on a live one."""
+    monkeypatch.setattr(endpoints, "llm_embed_base_url", "http://embed.test/v1")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "shared.test":
+            raise httpx.ConnectError("connection refused")
+        if request.url.path.endswith("/models"):
+            return httpx.Response(200, json={"data": [{"id": "e", "status": {"value": "loaded"}}]})
+        return httpx.Response(200)
+
+    assert await _gateway_with(handler).unload_models() == ["e"]
+
+
 async def test_embed_truncates_and_normalizes(monkeypatch):
     from episteme.config import settings
 

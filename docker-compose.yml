@@ -39,6 +39,11 @@ services:
       TTS_ENABLED: ${TTS_ENABLED:-false}
       TTS_DEFAULT_VOICE: ${TTS_DEFAULT_VOICE:-}
       TTS_OPUS_BITRATE: ${TTS_OPUS_BITRATE:-64000}
+      # Host control agent (hostagent/llama_agent.py, run on the host outside
+      # compose — it is what starts llama.cpp, so it cannot share this lifecycle).
+      # Empty disables the backend panel and the resource governor entirely.
+      LLM_HOST_AGENT_URL: ${LLM_HOST_AGENT_URL:-}
+      RESOURCE_GOVERNOR_ENABLED: ${RESOURCE_GOVERNOR_ENABLED:-false}
     # Same bind-mount as the worker: pre-migration dumps land beside the regular
     # backups, on the host, outside the pgdata volume.
     volumes:

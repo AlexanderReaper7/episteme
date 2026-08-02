@@ -126,8 +126,12 @@ def test_components_explain_the_total():
 # --- Feed ordering ----------------------------------------------------------------
 
 
-def _post(affinity=None, hours_old=0.0, kind="feature", post_id=1):
-    at = datetime.now(UTC) - timedelta(hours=hours_old)
+def _post(affinity=None, hours_old=0.0, kind="feature", post_id=1, now=None):
+    """`now` is overridable so two posts can be built at the SAME instant: the
+    freshness term is a continuous function of `generated_at`, so two calls a few
+    microseconds apart differ in the 12th digit and an exact-equality assertion
+    between them fails at random."""
+    at = (now or datetime.now(UTC)) - timedelta(hours=hours_old)
     return SimpleNamespace(
         id=post_id, kind=kind, affinity_score=affinity, generated_at=at, story=None
     )
@@ -144,7 +148,8 @@ def test_fresher_outranks_older_at_the_same_affinity():
 def test_unscored_posts_rank_as_neutral_not_last():
     """Before the first score pass every post has NULL affinity; the feed must
     still be ordered by freshness rather than collapsing."""
-    assert _rank_value(_post(affinity=None)) == _rank_value(_post(affinity=0.0))
+    now = datetime.now(UTC)
+    assert _rank_value(_post(affinity=None, now=now)) == _rank_value(_post(affinity=0.0, now=now))
     assert _rank_value(_post(affinity=None)) > _rank_value(_post(affinity=None, hours_old=5))
 
 

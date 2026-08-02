@@ -52,12 +52,20 @@ class Settings(BaseSettings):
     rate_limit_cooldown_seconds: int = 3600
 
     # --- LLM gateway (any OpenAI-compatible server; llama-server in router mode) ---
+    # Default endpoint: every role is served from here unless it has its own URL
+    # below. Which roles share a server is pure topology, so it lives in config —
+    # nothing in the code knows that `embed` is the one that tends to be separate.
     llm_base_url: str = "http://host.docker.internal:5001/v1"
-    # Embeddings use a dedicated always-resident llama-server (CPU-only model,
-    # spawned by launch-llama-v2.ps1 on :5002). The router's --models-max counts
-    # models globally with no per-model exemption, so capping it at 1 — required
-    # so the fast and main models never share VRAM — would otherwise evict the
-    # embedder. Point this at llm_base_url to serve embeds from the router again.
+    # Per-role overrides; empty string = use llm_base_url. Set one when a role
+    # needs its own server: a different machine, a different llama-server build,
+    # a model that must stay resident while the others swap.
+    llm_main_base_url: str = ""
+    llm_fast_base_url: str = ""
+    # Embeddings default to a dedicated always-resident llama-server (CPU-only
+    # model, spawned by launch-llama-v2.ps1 on :5002). The router's --models-max
+    # counts models globally with no per-model exemption, so capping it at 1 —
+    # required so the fast and main models never share VRAM — would otherwise
+    # evict the embedder. Set this to "" to serve embeds from llm_base_url again.
     llm_embed_base_url: str = "http://host.docker.internal:5002/v1"
     llm_model_main: str = "Qwopus3.6-35B-A3B-Coder-MTP-Q4_K_M"
     llm_model_fast: str = "Qwythos-9B-Claude-Mythos-5-1M-MTP-Q4_K_M"
@@ -73,6 +81,54 @@ class Settings(BaseSettings):
     # pipeline run.
     llm_log_enabled: bool = True
     llm_log_retention_days: int = 30
+
+    # --- Host control agent (hostagent/llama_agent.py; llm/host.py is the client) ---
+    # Episteme is in Docker, llama.cpp is on the Windows host: a container cannot
+    # start a host process or read its console. This URL is that crossing — a
+    # loopback service on the host exposing lifecycle, logs and GPU measurements.
+    # EMPTY DISABLES THE WHOLE FEATURE: every route, panel and the governor become
+    # no-ops and Episteme behaves exactly as it did before the agent existed. The
+    # agent is optional infrastructure, never a dependency.
+    llm_host_agent_url: str = ""  # e.g. http://host.docker.internal:5003
+    # Three timeouts, because reads and actions want opposite things (see
+    # llm/host.py). Reads are on the dashboard's critical path — /status rides
+    # the page load, /logs polls every 3s — so a hung agent must give up in
+    # seconds rather than take the admin page down with it.
+    llm_host_agent_read_timeout_seconds: float = 15.0
+    # Actions block until the host has finished: the agent holds /start until
+    # both ports answer (launcher 120s + port wait 60s worst case), so a ceiling
+    # sized like a read would report a successful start as a failure.
+    llm_host_agent_timeout_seconds: float = 240.0
+    # /restart is a stop and a start inside one request, so ~the sum of both.
+    llm_host_agent_restart_timeout_seconds: float = 360.0
+    llm_log_tail_lines: int = 300
+    # A graceful stop pauses the pipeline and waits for the worker to finish its
+    # current unit — one story, measured at up to ~570s for a main-model write —
+    # so the wait is bounded and reports back rather than killing anything. The
+    # caller (admin panel) then offers an explicit force.
+    llm_graceful_stop_seconds: float = 120.0
+
+    # --- Resource governor (worker/governor.py; architecture §7 "Scheduling") ---
+    # Yields the GPU to whatever else is using it. The rule the user set: other
+    # work takes priority, but only where Episteme would *noticeably* degrade it —
+    # so this measures resource contention, NOT whether someone is at the keyboard.
+    # Requires llm_host_agent_url; inert without it.
+    resource_governor_enabled: bool = False
+    resource_governor_cron: str = "*/2 * * * *"
+    # Foreign GPU utilization (everything except our own llama-server processes)
+    # at which we yield. Per-process attribution makes this valid even while we
+    # are generating, which is what lets it work as a pause signal and not just a
+    # start gate.
+    resource_gpu_busy_percent: float = 25.0
+    # Headroom needed to load a decode model. Only consulted when our own models
+    # are UNLOADED: VRAM cannot be attributed per process (measured — the Windows
+    # counter reported 22GB for dwm on a 10GB card), so while we hold models the
+    # number says nothing about contention and is ignored rather than guessed at.
+    resource_min_free_vram_mb: int = 6000
+    # How long the GPU must stay quiet before a resource pause lifts. Asymmetric
+    # on purpose: yield immediately, return slowly, so a lull between two loading
+    # screens doesn't restart a 20GB model load on top of a running game.
+    resource_resume_quiet_seconds: int = 300
 
     # --- Pipeline ---
     pipeline_cron: str = "0 3 * * *"  # nightly; idle-aware gating comes in Phase 5

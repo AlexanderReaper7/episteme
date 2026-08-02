@@ -10,9 +10,11 @@ This is a list of things to maybe do, in no particular order. And serves as a pl
 ---
 
 - remove time from when the pipeline runs, since the pipeline runs when there is downtime, and downtime is not 100% predictable.
+  - half done: the governor brakes on GPU contention, but only ever *resumes its own pause* — it never starts a run. `pipeline_cron` is still 03:00, so an idle afternoon with unprocessed stories does nothing.
+  - rest: on a quiet tick with no pause outstanding, start if there is work; cron becomes a backstop. Open: how long "quiet" must hold before a 20GB load, and whether a manual pause suppresses it too.
 - defense-in-depth review.
 - styling, branding.
-- post narration with AI TTS (s2.1-pro).
+- local voice model for post narration.
 - pre TTS LLM pass for emotional tagging, pronunciation.
 - improve quizes and add more questions.
 - benchmarking
@@ -21,6 +23,3 @@ This is a list of things to maybe do, in no particular order. And serves as a pl
 - no db backup was generated before migration:
   - DATABASE_URL="postgresql://episteme:change-me@127.0.0.1:5433/episteme" uv run python -m episteme.migrations new -m "add post_audio table" 2>&1 | tail -25
   - DATABASE_URL="postgresql://episteme:change-me@127.0.0.1:5433/episteme" uv run python -m episteme.migrations upgrade 2>&1 | tail -15
-- voice provider custom params schema for nice admin page voice catalog editing.
-- continuos narration doesnt auto start when loaded next post, but it should.
-- make sure source request delay is truly global - agent tool use, pipeline, etc.

@@ -1,0 +1,35 @@
+# llama.cpp built to match the HOST install exactly, so a host-vs-container
+# comparison measures the platform and nothing else:
+#   build   b9882 (commit 48719618e) — same as C:\selfhosting\llama-cpp
+#   toolkit CUDA 13.3               — same as the host's cublas64_13/cudart64_13
+# The official ghcr.io/ggml-org images are all CUDA 12.8, which confounded the
+# first run: a 35% pp512 gap could have been the toolkit rather than WSL2.
+#
+# sm_86 only (RTX 3080) and the llama-bench target only — the full matrix would
+# compile for every arch and take an order of magnitude longer.
+FROM nvidia/cuda:13.3.0-devel-ubuntu24.04
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential cmake git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN git clone --depth 1 --branch b9882 https://github.com/ggml-org/llama.cpp /src
+
+# CUDA 13 moved the driver stub out of the classic lib64/stubs into
+# targets/<arch>/lib/stubs, so FindCUDAToolkit does not pick it up and the
+# llama-bench link fails on cuMemMap/cuGetErrorString. Point the linker at it
+# explicitly. Linking the STUB is correct: the real libcuda.so.1 is injected at
+# runtime by the NVIDIA container runtime.
+ENV CUDA_STUBS=/usr/local/cuda/targets/x86_64-linux/lib/stubs
+
+WORKDIR /src
+RUN cmake -B build \
+      -DGGML_CUDA=ON \
+      -DCMAKE_CUDA_ARCHITECTURES=86 \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DLLAMA_CURL=OFF \
+      -DCMAKE_EXE_LINKER_FLAGS="-L${CUDA_STUBS} -lcuda" \
+      -DCMAKE_SHARED_LINKER_FLAGS="-L${CUDA_STUBS} -lcuda" \
+ && cmake --build build --config Release -j"$(nproc)" --target llama-bench
+
+ENTRYPOINT ["/src/build/bin/llama-bench"]

@@ -1,8 +1,43 @@
 # Handoff: llama.cpp lifecycle + log integration
 
-**Status:** design handoff, nothing built. Written 2026-07-30.
+**Status: BUILT and live-verified 2026-08-01.** Written 2026-07-30 as a design
+handoff; kept because §7 and §9 are measurements worth keeping and §3–§5 record
+why the shape is what it is. **CLAUDE.md is now the authority on what exists** —
+read it for the as-built description, the three defects found live, and the cost
+budget. This section records only where the build *diverged* from the plan below.
+
 **Audience:** the next agent picking this up. Read [CLAUDE.md](CLAUDE.md) and
 [episteme-architecture.md](episteme-architecture.md) first; this document assumes them.
+
+## What changed versus this plan
+
+1. **One agent, not two.** This document's control agent (§4b) and spec §7's
+   "idle monitor" were specified separately but want the same privileges on the
+   same box, so they are one process: `hostagent/llama_agent.py`.
+2. **Option B was dropped.** §3 recommended a log bind mount *and* the agent. The
+   agent serves `GET /logs` itself, so the mount would be a second transport for
+   one panel, earning only "logs survive an agent that is down" — and when the
+   agent is down the start button is gone too, so the panel degrades as one unit.
+3. **Pull, not push.** Spec §7 had the agent flipping `processing_allowed` via
+   the API. Episteme polls instead: the agent stays stateless and credential-free,
+   every threshold lives in Episteme's config beside the rest of the tuning, and a
+   dead agent leaves *no opinion* — today's behaviour — rather than a stale flag
+   with nobody left to clear it.
+4. **No SSE** (§4b listed `/logs/stream`). htmx polling is what every other live
+   surface in `/admin` uses; a streaming transport for a 3-second refresh would be
+   a second mechanism earning nothing.
+5. **§4b's "bind 127.0.0.1 only … cost: unreachable from the container" worry was
+   unfounded.** Docker Desktop proxies `host.docker.internal` from the host side —
+   which is exactly why the containers already reach llama-server's own
+   loopback-bound :5001. Verified: the container reads :5003 fine. Loopback-only
+   is both safe and sufficient, so §5.3's auth question resolves to "no auth".
+6. **The signal is contention, not presence** (§5.1 / spec §7 both assumed user
+   idle time). User decision: other work takes priority only where Episteme would
+   *noticeably* degrade it. Idle detection was dropped entirely.
+7. **§6's acceptance criteria are met** except two that the environment could not
+   produce — see the end of CLAUDE.md's entry. Criterion 4 ("two rapid starts do
+   not launch two routers") **failed on the first live attempt** and is now the
+   most valuable regression test in the set.
 
 ---
 
@@ -42,10 +77,15 @@ Both ports were listening under distinct PIDs. Containers reach the host at
 
 Everything here is real and working — **do not rebuild it**:
 
-- [`llm/gateway.py`](src/episteme/llm/gateway.py) — `is_available()`, `list_models()`
+- [`llm/gateway.py`](src/episteme/llm/gateway.py) — `unavailable_endpoints()`,
+  `list_models(url)`
   (raw router rows, which include per-model `status.value` of `loaded`/`unloaded` and
   the full argv the router launched the model with), `endpoint_status()` (per-URL
-  health tagged with the roles it serves), `unload_models()`.
+  health + inventory tagged with the roles it serves), `unload_models()`.
+  **Since 2026-08-01 the role→endpoint map is config** (`LLM_<ROLE>_BASE_URL`), so
+  "which port serves what" is no longer a constant anything can assume: a control
+  agent must read `gateway.endpoints()`, not `settings.llm_base_url` plus
+  `llm_embed_base_url`.
 - `POST /api/llm/unload` — frees VRAM now, no pause.
 - `/admin` renders an `llm` block: base URLs, role→model mapping, model list.
 - `llm_calls` persists every call with `duration_ms`, tokens, stage, story — the
@@ -73,7 +113,7 @@ of crossing that boundary, and picking one is the first real decision.
 |---|---|
 | **A. Host-side control agent** — a small HTTP service on the host that Episteme calls | **Recommended.** Only option that cleanly does start/stop *and* logs. Cost: a second thing the user must have running. |
 | **B. Log file on a bind mount** — launcher gains `--log-file`, Episteme mounts the directory read-only | Good, and **worth doing regardless** (it is a prerequisite for A's log endpoint too). Solves logs only, not start. |
-| **C. Run llama.cpp in a container** | Rejected: needs GPU passthrough on Windows, and the user's whole model/preset workflow lives on the host. Contradicts the host-side residency policy in CLAUDE.md. |
+| **C. Run llama.cpp in a container** | Rejected on measurement, not assumption — see §9. GPU passthrough works fine; *generation* is 12-14% slower, and the model library would have to be duplicated into a Docker volume. |
 | **D. Docker socket → `docker run` a privileged helper** | Rejected: enormous blast radius for a convenience feature, on a single-user box with no auth. |
 | **E. Scheduled task / Windows service the app pokes via a flag file** | Works for start, but a filesystem-flag control channel is unobservable and racy. Only if the user rejects A. |
 
@@ -234,3 +274,27 @@ handoff exists.
 - Replacing the `--models-max 1` residency policy. It is a deliberate constraint
   (≤1 decode model in VRAM, embed pinned to system RAM); §7's swap cost is its known
   price, and renegotiating it is a separate conversation with the user.
+
+---
+
+## 9. Measured: host vs container (2026-08-01)
+
+§3 rejected containerizing llama.cpp on reasoning alone. It has since been
+measured, with a build- and CUDA-matched container so that only the platform
+differs. Full method, controls, raw data and reproduction:
+**[docs/llama-cpp-host-vs-docker.md](docs/llama-cpp-host-vs-docker.md)**.
+
+Headline: GPU passthrough works, but **token generation is ~13% slower under
+WSL2** on both decode models — and §7 already established that output length is
+what costs. Prefill is faster, but only when a model is fully GPU-resident, which
+`main` is not (+0.4% there). A **bind mount of the model directory is
+disqualifying** (~150-250 MB/s, and warm is no better than cold: the 20 GB main
+model costs +110s on *every* load); a named volume fixes that at the price of
+duplicating the model library out of the host workflow.
+
+Reading: keep `main`/`fast` on the host — a recurring 13% on the system's most
+expensive operation is a bad trade for removing the §3 boundary, which a log file
+plus a control agent solves once. Move `embed` in: CPU-only so it never pays the
+GPU tax (measured **+5.8% faster**), always-resident so its load is paid once, and
+since role→endpoint became config (`LLM_<ROLE>_BASE_URL`) it is an env change with
+no code change. **Decision left to the user, not taken.**

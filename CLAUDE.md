@@ -11,6 +11,12 @@ overnight into generated articles plus a Google-News-style aggregation stream.
 **Read [episteme-architecture.md](episteme-architecture.md) first** — it is the authoritative
 spec (data model, pipeline stages, feed-composition rules, roadmap phases, decided constraints).
 
+`docs/` holds investigations whose *conclusions* belong in this file but whose method and
+raw data would drown it — e.g.
+[docs/llama-cpp-host-vs-docker.md](docs/llama-cpp-host-vs-docker.md) (2026-08-01: should
+inference move into Docker? measured — generation is ~13% slower under WSL2, a model-dir
+bind mount is disqualifying, `embed` is the one role worth moving; decision still open).
+
 ## Current state (update this section as phases land)
 
 - **Phases 1, 2, and 2.5 are built** (1: ingestion + raw feed UI; 2: LLM writer
@@ -322,6 +328,145 @@ spec (data model, pipeline stages, feed-composition rules, roadmap phases, decid
   over-matched); the feed's keyset cursor is taken from the SQL `rank` column
   instead of Python's `math.tanh`, so the comparison never spans two libms.
 
+- **Host control agent + resource governor built AND live-verified (2026-08-01)** —
+  the crossing of the Docker/host boundary, and the first automatic scheduling.
+  `hostagent/llama_agent.py` is a single-file FastAPI service run on the HOST
+  (`uv run hostagent/llama_agent.py`, loopback :5003, PEP-723 header so uv
+  resolves its two deps). It merges two things the docs specified separately —
+  the lifecycle controller of [handoff-llama-control.md](handoff-llama-control.md)
+  §4b and the "idle monitor" of spec §7 — because they want the same privileges
+  on the same box. It is a **sensor and actuator, never a decision-maker**:
+  `/resources` reports measurements, `worker/governor.py` owns the policy, so
+  every threshold lives in Episteme's config and an agent that dies leaves *no
+  opinion* rather than a stale flag. `llm/host.py` is the client, deliberately
+  separate from `gateway.py` (lifecycle must not become reachable from inside a
+  completion call). **`LLM_HOST_AGENT_URL` empty disables all of it** and
+  Episteme behaves exactly as before — verified.
+  - *Signals, and where each is valid.* Per-process GPU utilization comes from
+    the `\GPU Engine(*)\Utilization Percentage` perf counter, so
+    `foreign_gpu_percent` (total minus our own llama-server PIDs) is truthful
+    **even while we generate** — which is what makes it a pause signal and not
+    only a start gate. VRAM cannot be attributed: `nvidia-smi
+    --query-compute-apps` returns `[N/A]` per process under WDDM, and the `GPU
+    Process Memory` counter over-reports badly (measured: dwm claiming 22 GB on
+    a 10 GB card — it counts committed, not resident). So free VRAM is consulted
+    **only while our own models are unloaded**, where the whole figure is by
+    definition someone else's. Windows' Game Bar registry
+    (`HKCU:\System\GameConfigStore\Children`, 310 entries) intersected with
+    running processes is a self-maintaining game watchlist — reported as context
+    for the panel, never decided on.
+  - *The rule is contention, not presence* (user decision): other work takes
+    priority, but only where Episteme would noticeably degrade it. Idle-time
+    detection was considered and dropped — someone typing an email is not a
+    reason to stop writing articles.
+  - *Pause now records `reason` + `since`* (`worker/control.py`). Two very
+    different actors pause the pipeline, and without an author the governor
+    would lift a pause a human set. `RESOURCE` is the only reason it may clear;
+    a legacy `{"paused": true}` row reads as `MANUAL`, which is the safe
+    direction. Asymmetric timing on purpose: yield immediately, resume only
+    after `resource_resume_quiet_seconds` — restarting a 20 GB model load during
+    a lull between two loading screens is worse than waiting.
+  - *"Stop" is composed, not new*: `POST /api/llm/backend/stop` sets the pause,
+    waits for the worker to finish its current unit, and only then kills the
+    processes. On timeout it returns `stopped: false` and leaves everything
+    running; the panel then offers an explicit force. Nothing is killed
+    mid-generation without a second deliberate click.
+  - *Cost budget (measured, and it shaped the design).* `Get-Counter` over all
+    621 GPU-engine instances is 3.3s and ~1s of that is PDH's own sampling
+    floor, so `/resources` is ~3.5s. It is therefore never on a synchronous
+    path: the admin panel loads it as its own htmx fragment and the governor
+    polls it on a cron. `Get-NetTCPConnection` was dropped entirely — **3.1s per
+    fresh process** (it re-imports NetTCPIP every time) against 259ms for bare
+    PowerShell; liveness is a Python socket connect instead, which is ~1ms and a
+    truer test. `/status` fell 5.15s → 1.09s and costs zero subprocesses when
+    the backend is down, which is exactly when someone is looking at it.
+  - **Three defects found live, each fixed with a regression test:**
+    1. *Two rapid starts produced FOUR llama-server processes.* A bare "is it
+       listening?" check is a TOCTOU race: both requests saw nothing bound and
+       both ran the launcher. The launcher's own `Get-NetTCPConnection` guard has
+       the identical hole. Every lifecycle route now takes a reentrant lock held
+       **through the port wait**, not just the check — releasing after spawning
+       would let the next caller observe the not-yet-bound port and launch again.
+       (The test fails with 4 launches if the lock is removed — verified.)
+    2. *The log pane replaced the entire dashboard.* `.admin-main` carries
+       `hx-target="#admin-main"` and **htmx inherits `hx-target`**, so a
+       self-replacing fragment relying on the default target swallows the page —
+       then polls against an element it deleted (`htmx:targetError` every 3s).
+       Every partial here now names `hx-target="this"`. Worth remembering for any
+       new admin fragment.
+    3. *ANSI escapes in the log file.* llama-server colors its output and
+       `--log-file` gets the codes verbatim. Stripped in the agent rather than via
+       `--log-colors off`, so the pane is correct however the server was started
+       and a human running the launcher in a console keeps their colors.
+  - *Launcher changes* (outside this repo, backup at `launch-llama-v2.ps1.bak`):
+    `--log-file` + `--log-timestamps` on both servers, logs truncated on start
+    (user's choice — llama-server does not rotate), and a `-Detached` switch that
+    starts hidden with no console, since a service-started process has none to
+    attach to. `-Detached` wins over `-Foreground` (which defaults to `$true`).
+  - *Live run (2026-08-01, while Battlefield 6 was running)*: panel read
+    `foreign 90.7% / ours 0% / 863 MB free / games: bf6` and correctly showed both
+    servers down; start from `/admin` brought both up with PIDs and uptime and the
+    log pane filled with real router output; the governor paused for real
+    (`reason: resource`, `foreign GPU load 90% >= 25% (bf6)`); forcing the
+    thresholds to read "quiet" against the *live* sensor confirmed all three
+    resume cases (governor+old → resume, governor+recent → wait out the window,
+    **manual → never touched**); graceful stop brought both down and left the
+    pause set; three concurrent starts → exactly one launch and exactly 2
+    processes.
+  - **Not yet verified live**: a pipeline stage actually running after an
+    agent-driven start (the GPU was occupied by a game throughout, and loading a
+    20 GB model on top of it is precisely what this feature exists to prevent),
+    and the graceful stop's *timeout* branch (nothing was mid-generation to make
+    it wait).
+
+  **Code-review pass (2026-08-01, fixed + regression-tested, NOT yet
+  live-verified)** — nine findings, all against paths the live run never
+  exercised because the GPU was busy throughout. The four that would have
+  destroyed work or lied to the operator:
+  1. *The governor unloaded models mid-generation.* Pause is gentle precisely so
+     the current story survives; `unload_models()` was then called
+     unconditionally, ripping the model out of VRAM under it. It now takes the
+     same guard `/api/pipeline/pause` has — and that guard is now ONE predicate,
+     `control.pipeline_job_running`, shared by both (the API keeps a session
+     wrapper). When something is running, the worker unloads at its own next unit
+     boundary, as it already did.
+  2. *The resume window timed the pause, not the quiet.* `since` was stamped once
+     and never refreshed, so after 300s of a two-hour game the window had long
+     expired and the first momentary dip — a loading screen, an alt-tab —
+     resumed straight into it. The pause value now carries `contended_at`
+     alongside `since`: `decide` returns a third action, `hold`, for "contended
+     while already paused", and the caller re-stamps it (`control.mark_contended`,
+     which never moves `since` — that is what the panel shows). Rows written
+     before the field read `contended_at` as `since`.
+  3. *Two definitions of "holds VRAM" disagreed.* The governor tested
+     `== "loaded"` while `unload_models` tested `not in (None, "unloaded")`, so
+     during the ~100s a model takes to load the governor attributed our own fresh
+     allocation to someone else and paused + unloaded the model it was loading.
+     `gateway.holds_vram(row)` is now the single predicate, and `loading` counts
+     as loaded — a model halfway into VRAM occupies it just as much.
+  4. *The graceful stop paused before finding out it could not stop anything.*
+     An absent or unreachable agent — the normal state, it is optional — 503'd
+     *after* leaving the pipeline paused as MANUAL, which the governor is
+     forbidden to lift, with no llama.cpp problem left to explain it. The agent is
+     now pre-flighted before any write, and a failed kill rolls the flag back via
+     `control.restore_pause` (a verbatim snapshot restore, so a governor pause is
+     not silently re-authored as a manual one). The *timeout* path still keeps the
+     pause deliberately.
+
+  Then: `/start` verifies the ports actually bound instead of trusting the exit
+  code (PowerShell's default `$ErrorActionPreference` is Continue, so a launcher
+  that failed on a missing model exits 0 — it reported `started: true` and threw
+  away the captured output that explained it); the host-agent client has **three**
+  timeouts instead of one, because reads sit on the dashboard's critical path
+  (a hung agent blocked the page for the length of a model load) while `/restart`
+  is a stop and a start in one request and could exceed the single ceiling, i.e.
+  render a success as a failure; the `*/2` periodic is registered only when the
+  governor is actually enabled (720 no-op job rows a day into an unpruned
+  `procrastinate_jobs`, drowning the 20-row admin queue view); and `_backend.html`
+  now shows the pause the stop button caused — the pause controls live on
+  `/admin/jobs`, a different page, so the operator previously got no indication at
+  all on the one they were standing on.
+
 ## Commands
 
 ```sh
@@ -383,6 +528,31 @@ curl -X POST http://127.0.0.1:8200/api/pipeline/pause
 curl -X POST http://127.0.0.1:8200/api/pipeline/resume     # ?run=false to only clear
 curl -X POST http://127.0.0.1:8200/api/llm/unload          # free VRAM now, no pause
 
+# llama.cpp lifecycle + logs + GPU sensing, via the HOST control agent.
+# The agent runs ON THE HOST (not in compose — it is what starts Episteme's
+# dependency, so it cannot share its lifecycle). Installed as a scheduled task
+# that starts at logon; `uv run` resolves its PEP-723 deps, so there is no venv
+# to maintain. Its own stdout goes to C:\selfhosting\llama-cpp\logs\agent.log.
+#   pwsh hostagent/install-task.ps1            # register + start (idempotent, -Force)
+#   pwsh hostagent/install-task.ps1 -Remove    # unregister
+#   uv run hostagent/llama_agent.py            # or just run it in a console
+# Then set LLM_HOST_AGENT_URL=http://host.docker.internal:5003 in .env.
+# Everything below 503s cleanly when the agent is absent; the feature is optional.
+curl http://127.0.0.1:8200/api/llm/backend                 # ports, PIDs, uptime
+curl -X POST http://127.0.0.1:8200/api/llm/backend/start   # idempotent (locked, not just checked)
+curl -X POST http://127.0.0.1:8200/api/llm/backend/restart
+# Graceful: pauses, waits for the current work unit, THEN kills. Returns
+# stopped:false if the unit outlasts llm_graceful_stop_seconds — nothing dies
+# mid-generation without the explicit force.
+curl -X POST http://127.0.0.1:8200/api/llm/backend/stop
+curl -X POST "http://127.0.0.1:8200/api/llm/backend/stop?force=true"
+curl "http://127.0.0.1:8200/api/llm/logs?which=router&tail=200"   # or which=embed
+curl http://127.0.0.1:8200/api/llm/resources               # ~3.5s: per-process GPU, VRAM, games
+# Resource governor (RESOURCE_GOVERNOR_ENABLED=true). Runs on its own cron;
+# defer it to exercise the policy now. It pauses with reason=resource and will
+# never lift a pause a human set.
+docker compose exec worker python -c "import asyncio; from episteme.worker.governor import govern_resources; print(asyncio.run(govern_resources())['reason'])"
+
 # Admin dashboard + JSON API (single-user, no auth — decided constraint)
 # http://127.0.0.1:8200/admin                 status, sources, pipeline runs, job queue, defer buttons
 # http://127.0.0.1:8200/post/{id}/provenance  every LLM call behind THIS post version (post-scoped, not admin)
@@ -426,7 +596,20 @@ uv lock                                     # re-resolve after editing dependenc
   `type_name`. New pipeline stages/section types follow the same pattern of small
   interfaces + registration.
 - **LLM access goes only through `llm/gateway.py`.** Code asks for a *role*
-  (`main`/`fast`/`embed`); config maps roles to model names (`LLM_MODEL_*` env).
+  (`main`/`fast`/`embed`); config maps roles to model names (`LLM_MODEL_*` env)
+  **and to endpoints** (`LLM_<ROLE>_BASE_URL`, falling back to `LLM_BASE_URL`).
+  Endpoint topology is config, not code (since 2026-08-01): `endpoint_for(role)`
+  resolves the URL, `endpoints()` groups roles by distinct URL, and one httpx
+  client is cached per URL — so roles sharing a server share a connection pool,
+  and moving any role to its own llama-server is an env change. Nothing
+  special-cases `embed`; that it sits alone on :5002 today is just what the
+  defaults say. Health (`unavailable_endpoints`, which names the down URLs so the
+  gate and the log line share one probe), the admin role table and
+  `unload_models` all derive from the resolved URLs. **`unload_models` visits
+  every endpoint and lets the server decide**: only llama-server in *router* mode
+  reports a per-model `status.value`, so a plain single-model server reports
+  nothing loaded and is never sent an unload — no hardcoded notion of which port
+  holds VRAM.
   Structured output is double-enforced: JSON schema sent as `response_format`
   (llama.cpp grammar constraint) + pydantic validation with repair-prompt retries
   (`llm/schemas.py` is the contract; `agent.request_validated` is the in-conversation

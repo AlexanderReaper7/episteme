@@ -1,0 +1,36 @@
+{# Live tail of llama-server's log. Polling, not SSE: htmx polling is what every
+   other live surface in /admin uses, and a streaming transport for a 3-second
+   refresh would be a second mechanism earning nothing.
+
+   The scroll box is `column-reverse`, which pins the view to the newest line
+   with no JS and no scroll bookkeeping across swaps. #}
+{# hx-target="this" is NOT redundant: .admin-main sets hx-target="#admin-main",
+   and htmx INHERITS hx-target down the tree — so a self-replacing fragment that
+   relies on the default target silently swallows the whole page instead. Every
+   partial in this directory names its target for that reason. #}
+<div id="backend-log"
+     hx-get="/admin/partials/backend-log?which={{ which }}"
+     hx-trigger="every 3s"
+     hx-target="this"
+     hx-swap="outerHTML">
+  <div class="log-head">
+    {% for name in logs_available %}
+    <button class="{{ 'primary' if name == which else '' }}"
+            hx-get="/admin/partials/backend-log?which={{ name }}"
+            hx-target="#backend-log" hx-swap="outerHTML">{{ name }}</button>
+    {% endfor %}
+    {% if log and log.exists %}
+    <span class="muted mono">{{ '%.1f'|format(log.size_bytes / 1024) }} KB</span>
+    {% endif %}
+  </div>
+  {% if not log %}
+  <p class="muted" style="font-size: 0.82rem;">Log unavailable — the control agent is not reachable.</p>
+  {% elif not log.exists %}
+  {# Expected before the first start after the launcher gained --log-file. #}
+  <p class="muted" style="font-size: 0.82rem;">
+    No log yet at <code class="mono">{{ log.path }}</code> — it is written from the next start onward.
+  </p>
+  {% else %}
+  <div class="log-pane"><pre class="mono">{{ log.lines | join('\n') }}</pre></div>
+  {% endif %}
+</div>

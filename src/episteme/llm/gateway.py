@@ -1,10 +1,19 @@
 """LLM gateway — the single module through which all model access flows.
 
 Code asks for a *role* (`main`, `fast`, `embed`); config maps each role to a
-model name on an OpenAI-compatible endpoint (spec §7). Structured output is
-enforced twice: the JSON schema is sent as a `response_format` so llama.cpp
-constrains generation grammatically, and the response is validated with the
-same pydantic model client-side, with repair-prompt retries.
+model name **and a base URL** on an OpenAI-compatible endpoint (spec §7).
+Structured output is enforced twice: the JSON schema is sent as a
+`response_format` so llama.cpp constrains generation grammatically, and the
+response is validated with the same pydantic model client-side, with
+repair-prompt retries.
+
+Endpoint topology is config, not code. Every role resolves through
+`endpoint_for()` to a URL (`llm_<role>_base_url`, falling back to
+`llm_base_url`), and one client is cached per distinct URL — so roles sharing a
+server share a connection pool, and moving one role to its own llama-server is
+an env change. Nothing here knows that `embed` is the role that happens to sit
+on its own port today; health, the admin view and unload all derive the split
+from the resolved URLs.
 """
 
 import logging
@@ -22,6 +31,7 @@ from .observe import record_llm_call
 log = logging.getLogger("episteme.llm")
 
 Role = Literal["main", "fast", "embed"]
+ROLES: tuple[Role, ...] = ("main", "fast", "embed")
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -66,6 +76,30 @@ def _as_llm_error(exc: Exception) -> Exception:
 GRAMMAR_MAX_STRING_LENGTH = 1000
 
 
+def _normalize(url: str) -> str:
+    """Endpoint identity is the URL, so trailing-slash variants of one server must
+    not read as two endpoints (double probes, two connection pools, a duplicate
+    admin row)."""
+    return url.rstrip("/")
+
+
+def holds_vram(model: dict) -> bool:
+    """Does this `/models` row currently occupy VRAM?
+
+    The single definition, because two callers ask it for opposite purposes —
+    `unload_models` ("is there anything to hand back?") and `models_loaded`
+    ("may we read free VRAM as someone else's?") — and a disagreement between
+    them is a bug in whichever one is more optimistic.
+
+    Only llama-server in *router* mode reports a per-model `status.value`; a
+    plain single-model server reports nothing, which counts as holding nothing.
+    Everything else counts as loaded, and that deliberately includes the
+    transient `loading`: a model halfway into VRAM occupies it just as much as a
+    resident one, and reading it as free is what let the governor pause and
+    unload the model it was in the middle of loading."""
+    return ((model.get("status") or {}).get("value")) not in (None, "unloaded")
+
+
 def grammar_safe(schema: object) -> object:
     """Deep-copy `schema` with grammar-incompilable constraints removed."""
     if isinstance(schema, dict):
@@ -81,104 +115,166 @@ def grammar_safe(schema: object) -> object:
 
 class LLMGateway:
     def __init__(self, transport: httpx.AsyncBaseTransport | None = None) -> None:
-        self._client = httpx.AsyncClient(
-            base_url=settings.llm_base_url,
-            timeout=settings.llm_timeout_seconds,
-            transport=transport,
-        )
-        # Embeds may live on a separate always-resident server (see config).
-        self._embed_client = httpx.AsyncClient(
-            base_url=settings.llm_embed_base_url,
-            timeout=settings.llm_timeout_seconds,
-            transport=transport,
-        )
+        self._transport = transport
+        # One client per distinct URL, built on demand. Keyed by the resolved URL
+        # rather than by role, so two roles on one server share a connection pool
+        # and moving a role elsewhere costs nothing here.
+        self._clients: dict[str, httpx.AsyncClient] = {}
 
-    def model_for(self, role: Role) -> str:
-        model = {
+    # --- endpoint resolution ------------------------------------------------
+
+    def endpoint_for(self, role: Role) -> str:
+        """The base URL serving `role`: its own override, else the default."""
+        override = {
+            "main": settings.llm_main_base_url,
+            "fast": settings.llm_fast_base_url,
+            "embed": settings.llm_embed_base_url,
+        }[role]
+        return _normalize(override or settings.llm_base_url)
+
+    def endpoints(self) -> dict[str, list[Role]]:
+        """Distinct URL -> the roles it serves, in role order. Two roles collapse
+        into one row exactly when they resolve to the same URL, so callers never
+        double-probe a shared server."""
+        grouped: dict[str, list[Role]] = {}
+        for role in ROLES:
+            grouped.setdefault(self.endpoint_for(role), []).append(role)
+        return grouped
+
+    def _client(self, url: str) -> httpx.AsyncClient:
+        url = _normalize(url)
+        client = self._clients.get(url)
+        if client is None:
+            client = httpx.AsyncClient(
+                base_url=url, timeout=settings.llm_timeout_seconds, transport=self._transport
+            )
+            self._clients[url] = client
+        return client
+
+    def client_for(self, role: Role) -> httpx.AsyncClient:
+        return self._client(self.endpoint_for(role))
+
+    def _configured_model(self, role: Role) -> str:
+        return {
             "main": settings.llm_model_main,
             "fast": settings.llm_model_fast,
             "embed": settings.llm_model_embed,
         }[role]
+
+    def model_for(self, role: Role) -> str:
+        model = self._configured_model(role)
         if not model:
             raise LLMError(f"No model configured for role {role!r} (see LLM_MODEL_* env)")
         return model
 
-    async def is_available(self) -> bool:
-        """Both endpoints must answer — a run that can't embed is doomed anyway."""
-        try:
-            response = await self._client.get("/models", timeout=5.0)
-            if response.status_code != 200:
-                return False
-            if settings.llm_embed_base_url != settings.llm_base_url:
-                response = await self._embed_client.get("/models", timeout=5.0)
-                return response.status_code == 200
-            return True
-        except httpx.HTTPError:
-            return False
+    def role_config(self) -> dict[Role, dict[str, str]]:
+        """The whole role table — model and endpoint per role — for the admin view.
+        Reads the same settings `model_for`/`endpoint_for` do, but reports an
+        unconfigured role as an empty string instead of raising: a status page must
+        render a broken configuration, not fail on it."""
+        return {
+            role: {"model": self._configured_model(role), "url": self.endpoint_for(role)}
+            for role in ROLES
+        }
 
-    async def list_models(self) -> list[dict]:
-        """Raw /models rows (llama-server router mode includes load state)."""
+    # --- health / inventory -------------------------------------------------
+
+    async def _probe(self, url: str) -> list[dict] | None:
+        """One `/models` GET: the endpoint's health and its inventory are the same
+        question, so they are the same request. `None` = the endpoint is down."""
         try:
-            response = await self._client.get("/models", timeout=5.0)
+            response = await self._client(url).get("/models", timeout=5.0)
+            if response.status_code != 200:
+                return None
+            return response.json().get("data", [])
+        except Exception:
+            return None
+
+    async def unavailable_endpoints(self) -> list[str]:
+        """Which configured endpoints are not answering; empty = everything is up.
+
+        The availability gate wants a bool and the log line wants a name, so this
+        returns the names and lets truthiness answer the bool — one probe, one
+        definition of "up". Every distinct endpoint counts: a run that can't embed
+        is doomed anyway, and which server that is depends on config."""
+        return [url for url in self.endpoints() if await self._probe(url) is None]
+
+    async def list_models(self, url: str | None = None) -> list[dict]:
+        """Raw /models rows (llama-server router mode includes load state) from one
+        endpoint, defaulting to the shared base URL."""
+        try:
+            response = await self._client(url or settings.llm_base_url).get("/models", timeout=5.0)
             response.raise_for_status()
             return response.json().get("data", [])
         except Exception as exc:
             raise _as_llm_error(exc) from exc
 
     async def endpoint_status(self) -> list[dict]:
-        """Per-distinct-endpoint health for the admin dashboard: one row per URL
-        we talk to, each independently probed, tagged with the roles it serves.
-        The embed server is a separate row only when it lives on a different URL."""
-
-        async def _ok(client: httpx.AsyncClient) -> bool:
-            try:
-                response = await client.get("/models", timeout=5.0)
-                return response.status_code == 200
-            except httpx.HTTPError:
-                return False
-
-        endpoints = [
-            {
-                "url": settings.llm_base_url,
-                "roles": ["main", "fast"],
-                "available": await _ok(self._client),
-            }
-        ]
-        if settings.llm_embed_base_url != settings.llm_base_url:
-            endpoints.append(
+        """Per-distinct-endpoint health + inventory for the admin dashboard: one
+        row per URL we talk to, each independently probed, tagged with the roles it
+        serves. No endpoint is privileged — a single-server config yields one row
+        carrying all three roles."""
+        rows = []
+        for url, roles in self.endpoints().items():
+            models = await self._probe(url)
+            rows.append(
                 {
-                    "url": settings.llm_embed_base_url,
-                    "roles": ["embed"],
-                    "available": await _ok(self._embed_client),
+                    "url": url,
+                    "roles": roles,
+                    "available": models is not None,
+                    "models": [
+                        {"id": m.get("id"), "status": (m.get("status") or {}).get("value")}
+                        for m in (models or [])
+                    ],
                 }
             )
-        else:
-            endpoints[0]["roles"].append("embed")
-        return endpoints
+        return rows
+
+    async def models_loaded(self) -> bool:
+        """Is any endpoint holding a model in VRAM right now?
+
+        Shares `holds_vram` with `unload_models`, deliberately: the two are the
+        same question asked by different callers, and when they disagreed the
+        governor read a model *loading* as "we hold nothing", attributed our own
+        fresh allocation to someone else, and paused + unloaded the model it was
+        in the middle of loading.
+
+        A down endpoint holds nothing (`_probe` returns None), which is the same
+        no-opinion direction the rest of this feature takes."""
+        for url in self.endpoints():
+            if any(holds_vram(row) for row in (await self._probe(url)) or []):
+                return True
+        return False
 
     async def unload_models(self) -> list[str]:
-        """Ask the router to unload every loaded decode model, freeing VRAM for
-        other applications (pause support). The router loads models lazily, so no
-        matching "load" is needed — the next completion request reloads. The
-        dedicated embed server is untouched: always-resident by design, and it
-        holds no VRAM (--device none). Best-effort: failures are logged, not raised.
+        """Ask every endpoint to unload the models it currently has loaded, freeing
+        VRAM for other applications (pause support). Servers load lazily, so no
+        matching "load" is needed — the next request reloads.
 
-        Router-mode endpoint lives at the server root, not under /v1."""
-        root = settings.llm_base_url.removesuffix("/v1")
+        No endpoint is skipped by role. Only llama-server in *router* mode reports
+        a `status.value` per model, so a plain single-model server (the embed one
+        today) reports none loaded and is never sent an unload — the server's own
+        answer decides, not our idea of which port holds VRAM. Best-effort
+        throughout: failures are logged, not raised.
+
+        The unload route lives at the server root, not under /v1."""
         unloaded: list[str] = []
-        try:
-            for row in await self.list_models():
-                status = row.get("status") or {}
-                if status.get("value") not in (None, "unloaded"):
-                    response = await self._client.post(
+        for url in self.endpoints():
+            client = self._client(url)
+            root = url.removesuffix("/v1")
+            try:
+                for row in await self.list_models(url):
+                    if not holds_vram(row):
+                        continue
+                    response = await client.post(
                         f"{root}/models/unload", json={"model": row["id"]}, timeout=30.0
                     )
                     if response.status_code == 200:
                         unloaded.append(row["id"])
                     else:
                         log.warning("Unload of %s failed: %s", row["id"], response.text[:200])
-        except (httpx.HTTPError, LLMError) as exc:
-            log.warning("Model unload failed: %s", exc)
+            except (httpx.HTTPError, LLMError) as exc:
+                log.warning("Model unload on %s failed: %s", url, exc)
         return unloaded
 
     async def chat(
@@ -206,13 +302,14 @@ class LLMGateway:
                 "type": "json_schema",
                 "json_schema": {"name": "response", "strict": True, "schema": response_schema},
             }
+        client = self.client_for(role)
         start = time.monotonic()
         try:
-            response = await self._client.post("/chat/completions", json=payload)
+            response = await client.post("/chat/completions", json=payload)
             if response.status_code == 400 and response_schema is not None:
                 # Older llama.cpp builds use the pre-OpenAI "json_object" + schema form.
                 payload["response_format"] = {"type": "json_object", "schema": response_schema}
-                response = await self._client.post("/chat/completions", json=payload)
+                response = await client.post("/chat/completions", json=payload)
             response.raise_for_status()
             # Parsing belongs INSIDE the guard: a 200 whose body is not the JSON
             # we expect is a failed call like any other, and must reach callers as
@@ -279,13 +376,14 @@ class LLMGateway:
                 "type": "json_schema",
                 "json_schema": {"name": "response", "strict": True, "schema": response_schema},
             }
+        client = self.client_for(role)
         start = time.monotonic()
         try:
-            response = await self._client.post("/chat/completions", json=payload)
+            response = await client.post("/chat/completions", json=payload)
             if response.status_code == 400 and response_schema is not None:
                 # Older llama.cpp builds use the pre-OpenAI "json_object" + schema form.
                 payload["response_format"] = {"type": "json_object", "schema": response_schema}
-                response = await self._client.post("/chat/completions", json=payload)
+                response = await client.post("/chat/completions", json=payload)
             response.raise_for_status()
             # Inside the guard for the same reason as `chat` above.
             data = response.json()
@@ -355,7 +453,7 @@ class LLMGateway:
             return []
         start = time.monotonic()
         try:
-            response = await self._embed_client.post(
+            response = await self.client_for("embed").post(
                 "/embeddings", json={"model": self.model_for("embed"), "input": texts}
             )
             response.raise_for_status()

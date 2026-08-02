@@ -66,7 +66,7 @@ async def embed_new_items(session: AsyncSession, limit: int | None = None) -> in
     # NULL-embedding entry is invisible to `_nearest` — nothing can ever fold
     # into it, so every later phrasing of the same topic mints another row. This
     # stage is the one place that has just established the endpoint IS up
-    # (`gateway.is_available` gates it), so it is where the debt gets paid. The
+    # (`gateway.unavailable_endpoints` gates it), so it is where the debt gets paid. The
     # count query is the guard: in the healthy steady state this costs one
     # indexed COUNT and does nothing.
     if await topics.pending_embeddings(session):
@@ -883,10 +883,10 @@ async def run_pipeline() -> None:
             await gateway.unload_models()
             return
 
-        if not await gateway.is_available():
-            log.warning("LLM endpoint %s unavailable; skipping pipeline run", settings.llm_base_url)
+        if down := await gateway.unavailable_endpoints():
+            log.warning("LLM endpoint(s) %s unavailable; skipping pipeline run", ", ".join(down))
             run.status = "skipped"
-            run.error = f"LLM endpoint {settings.llm_base_url} unavailable"
+            run.error = f"LLM endpoint(s) {', '.join(down)} unavailable"
             run.finished_at = datetime.now(UTC)
             await session.commit()
             return
@@ -995,9 +995,11 @@ async def pipeline_stage(
         # `cluster` is pure DB work, `narrate` uses the external Fish API, and
         # `score` is arithmetic over stored vectors — none needs a local model, so
         # none is gated on llama-server being up.
-        if stage not in ("cluster", "narrate", "score") and not await gateway.is_available():
+        if stage not in ("cluster", "narrate", "score") and (
+            down := await gateway.unavailable_endpoints()
+        ):
             run.status = "skipped"
-            run.error = f"LLM endpoint {settings.llm_base_url} unavailable"
+            run.error = f"LLM endpoint(s) {', '.join(down)} unavailable"
             run.finished_at = datetime.now(UTC)
             await session.commit()
             return

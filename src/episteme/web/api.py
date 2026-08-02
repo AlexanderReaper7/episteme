@@ -6,6 +6,7 @@ plain dict builders — the ORM models are the schema."""
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -18,6 +19,7 @@ from sqlalchemy import and_, func, or_, select, text, update
 from ..config import settings
 from ..db import SessionLocal
 from ..llm import gateway
+from ..llm.host import HostAgentError, host_agent
 from ..models import (
     POST_SCOPED_STAGES,
     Feedback,
@@ -221,10 +223,10 @@ def _llm_call_dict(call: LlmCall, full: bool = False) -> dict:
 
 @router.get("/status")
 async def api_status():
-    from ..worker.control import pause_requested
+    from ..worker.control import pause_state
 
     async with SessionLocal() as session:
-        paused = await pause_requested(session)
+        pause = await pause_state(session)
         story_counts = dict(
             (await session.execute(select(Story.status, func.count()).group_by(Story.status))).all()
         )
@@ -245,31 +247,33 @@ async def api_status():
             await session.execute(select(PipelineRun).order_by(PipelineRun.id.desc()).limit(1))
         ).scalar_one_or_none()
 
-    llm_models: list[dict] | None = None
-    try:
-        llm_models = [
-            {"id": m.get("id"), "status": (m.get("status") or {}).get("value")}
-            for m in await gateway.list_models()
-        ]
-    except Exception:
-        llm_models = None
-
+    # One probe per distinct endpoint answers health AND inventory, so the model
+    # list is whatever every configured server reports — not just the default
+    # URL's, which is only one of them once a role is moved elsewhere.
     endpoints = await gateway.endpoint_status()
+    llm_models = [
+        dict(model, endpoint=endpoint["url"]) for endpoint in endpoints for model in endpoint["models"]
+    ]
 
     return {
         "llm": {
             "base_url": settings.llm_base_url,
-            "embed_base_url": settings.llm_embed_base_url,
             "available": all(e["available"] for e in endpoints),
             "endpoints": endpoints,
             "models": llm_models,
-            "roles": {
-                "main": settings.llm_model_main,
-                "fast": settings.llm_model_fast,
-                "embed": settings.llm_model_embed,
+            "roles": gateway.role_config(),
+            # Lifecycle/process facts, not inference facts — and cheap: the agent
+            # skips its subprocess entirely when nothing is listening. `/resources`
+            # is deliberately NOT here; it costs ~3.5s and has its own route.
+            "host_agent": {
+                "enabled": host_agent.enabled,
+                "url": settings.llm_host_agent_url,
+                "status": await host_agent.status(),
             },
         },
-        "pipeline": {"paused": paused},
+        # `reason` is what lets the UI distinguish "you paused this" from "the
+        # governor paused this because the GPU was busy".
+        "pipeline": pause,
         "stories": story_counts,
         "source_items": {"total": item_total, "unembedded": unembedded},
         "posts": post_total,
@@ -454,12 +458,12 @@ async def api_defer(
 
 
 async def _pipeline_job_running() -> bool:
-    query = text(
-        "SELECT count(*) FROM procrastinate_jobs WHERE status = 'doing' "
-        "AND task_name IN ('episteme.run_pipeline', 'episteme.pipeline_stage')"
-    )
+    """Session wrapper over the shared predicate in `worker.control` — the
+    governor asks the same question and must get the same answer."""
+    from ..worker.control import pipeline_job_running
+
     async with SessionLocal() as session:
-        return bool((await session.execute(query)).scalar())
+        return await pipeline_job_running(session)
 
 
 @router.post("/pipeline/pause")
@@ -501,6 +505,129 @@ async def api_llm_unload():
     does NOT pause the pipeline; in-flight LLM calls will fail and a running
     worker will reload models on its next call. Pair with /pipeline/pause."""
     return {"unloaded_models": await gateway.unload_models()}
+
+
+# --- llama.cpp backend lifecycle (via the host control agent) ----------------------
+#
+# Every route here is a thin pass-through to hostagent/llama_agent.py, except the
+# stop, which is composed from parts that already exist. All of them 503 rather
+# than 500 when the agent is absent: an optional component being absent is a
+# service state, not a server error.
+
+
+async def _agent_call(coro):
+    """Turn HostAgentError into a 503. One helper so every lifecycle route
+    reports an unreachable agent the same way."""
+    try:
+        return await coro
+    except HostAgentError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.get("/llm/backend")
+async def api_llm_backend():
+    """Process-level view of the backend: which servers are listening, their PIDs
+    and uptime. Complements /api/status's endpoint probes, which answer the
+    different question of whether the HTTP API responds."""
+    return {
+        "enabled": host_agent.enabled,
+        "url": settings.llm_host_agent_url,
+        "status": await host_agent.status(),
+    }
+
+
+@router.get("/llm/resources")
+async def api_llm_resources():
+    """GPU contention measurements from the host. Its own route because it costs
+    ~3.5s (the per-process GPU counter has an irreducible sampling floor), so it
+    must never sit on the critical path of a page load."""
+    resources = await host_agent.resources()
+    if resources is None:
+        raise HTTPException(status_code=503, detail="Host agent unavailable")
+    return resources
+
+
+@router.get("/llm/logs")
+async def api_llm_logs(which: str = Query("router"), tail: int | None = Query(None)):
+    logs = await host_agent.logs(which, tail)
+    if logs is None:
+        raise HTTPException(status_code=503, detail="Host agent unavailable")
+    return logs
+
+
+@router.post("/llm/backend/start")
+async def api_llm_backend_start():
+    """Start llama.cpp. Idempotent at the agent — two rapid clicks cannot produce
+    two routers."""
+    return await _agent_call(host_agent.start())
+
+
+@router.post("/llm/backend/restart")
+async def api_llm_backend_restart():
+    return await _agent_call(host_agent.restart())
+
+
+@router.post("/llm/backend/stop")
+async def api_llm_backend_stop(force: bool = Query(False)):
+    """Stop llama.cpp **without losing work**.
+
+    Composed rather than new: pause the pipeline (the existing flag), wait for
+    the worker to finish its current unit — one story/post/batch, which is what
+    makes a pause non-destructive in the first place — and only then ask the
+    agent to kill the processes.
+
+    If the unit outlasts `llm_graceful_stop_seconds` this returns `stopped:
+    false` and leaves everything running, including the pause. Nothing is ever
+    killed mid-generation without `force=true`, which is a second deliberate act
+    by the caller. The pause is intentionally left set on the timeout path: the
+    worker is on its way to a boundary and re-clearing it would send it straight
+    back into main-model work.
+
+    **The pause is a side effect, so it is only taken once the stop can plausibly
+    happen and it is undone if it doesn't.** The agent is optional and often
+    absent; pausing first meant an unreachable agent 503'd *after* leaving the
+    pipeline paused as MANUAL — which the governor is forbidden to lift — with
+    nothing stopped and no llama.cpp problem to explain it. So: pre-flight the
+    agent before writing anything, and roll the flag back to exactly what it was
+    if the kill itself fails. Only the timeout path deliberately keeps it.
+    """
+    from ..worker.control import pause_state, restore_pause, set_paused
+
+    if not host_agent.enabled:
+        raise HTTPException(status_code=503, detail="No host agent configured")
+    if await host_agent.status() is None:
+        raise HTTPException(status_code=503, detail="Host agent unavailable")
+
+    async with SessionLocal() as session:
+        before = await pause_state(session)
+        await set_paused(session, True)
+
+    async def _rollback() -> None:
+        async with SessionLocal() as session:
+            await restore_pause(session, before)
+
+    waited = 0.0
+    deadline = settings.llm_graceful_stop_seconds
+    while not force and await _pipeline_job_running():
+        if waited >= deadline:
+            return {
+                "stopped": False,
+                "paused": True,
+                "reason": (
+                    f"pipeline still running after {waited:.0f}s; it will stop at the "
+                    "next unit boundary. Retry, or pass force=true to kill it now."
+                ),
+                "waited_seconds": waited,
+            }
+        await asyncio.sleep(2.0)
+        waited += 2.0
+
+    try:
+        result = await _agent_call(host_agent.stop())
+    except HTTPException:
+        await _rollback()
+        raise
+    return {"stopped": True, "paused": True, "waited_seconds": waited, **result}
 
 
 # --- Stories ----------------------------------------------------------------------

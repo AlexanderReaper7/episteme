@@ -14,6 +14,7 @@ from fastapi.responses import HTMLResponse
 
 from ..config import settings
 from ..db import SessionLocal
+from ..llm.host import host_agent
 from ..models import AppState, Source
 from ..recommend import topics
 from ..tts import (
@@ -294,6 +295,91 @@ async def admin_post_pin(request: Request, post_id: int, value: bool = True):
 async def queue_partial(request: Request):
     return templates.TemplateResponse(
         request, "admin/_admin_queue.html", {"jobs": await api_jobs(limit=20)}
+    )
+
+
+# --- llama.cpp backend panel ------------------------------------------------------
+#
+# Three fragments on three different clocks, because they cost three very
+# different amounts: process status is ~1ms and rides the page load, the log tail
+# is cheap enough to poll every 3s, and the GPU probe is ~3.5s and polls every
+# 30s. Splitting them is what keeps a slow sensor off the critical path.
+
+
+@router.get("/partials/backend-resources", response_class=HTMLResponse)
+async def backend_resources_partial(request: Request):
+    return templates.TemplateResponse(
+        request,
+        "admin/_backend_resources.html",
+        {
+            "resources": await host_agent.resources(),
+            "busy_percent": settings.resource_gpu_busy_percent,
+        },
+    )
+
+
+@router.get("/partials/backend-log", response_class=HTMLResponse)
+async def backend_log_partial(request: Request, which: str = "router"):
+    return templates.TemplateResponse(
+        request,
+        "admin/_backend_log.html",
+        {
+            "log": await host_agent.logs(which),
+            "which": which,
+            "logs_available": ["router", "embed"],
+        },
+    )
+
+
+@router.post("/backend/{action}", response_class=HTMLResponse)
+async def admin_backend_action(request: Request, action: str, force: bool = False):
+    """start / stop / restart. Failures render into the panel rather than
+    500-ing: an unreachable agent or a stop that timed out waiting for a work
+    unit are both things the operator needs to *read*, not stack traces.
+
+    The pause state is re-read afterwards and rendered into the panel: a stop
+    pauses the pipeline, and the pause controls are on a different page."""
+    from ..worker.control import pause_state
+    from .api import (
+        api_llm_backend,
+        api_llm_backend_restart,
+        api_llm_backend_start,
+        api_llm_backend_stop,
+    )
+
+    message, failed, offer_force = None, False, False
+    try:
+        if action == "start":
+            await api_llm_backend_start()
+        elif action == "restart":
+            await api_llm_backend_restart()
+        elif action == "stop":
+            result = await api_llm_backend_stop(force=force)
+            if not result["stopped"]:
+                # The graceful path did its job: it waited, the work unit is
+                # still going, and nothing was killed. Offer the explicit escape.
+                message, failed, offer_force = result["reason"], True, True
+        else:
+            raise HTTPException(404, f"Unknown action {action!r}")
+    except HTTPException as exc:
+        if exc.status_code == 404:
+            raise
+        message, failed = str(exc.detail), True
+
+    async with SessionLocal() as session:
+        pipeline = await pause_state(session)
+
+    return templates.TemplateResponse(
+        request,
+        "admin/_backend.html",
+        {
+            "backend": await api_llm_backend(),
+            "pipeline": pipeline,
+            "message": message,
+            "failed": failed,
+            "offer_force": offer_force,
+        },
+        headers={"HX-Trigger": "refreshQueue"},
     )
 
 
