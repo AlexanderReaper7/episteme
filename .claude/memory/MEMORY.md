@@ -1,10 +1,8 @@
 # Memory index
 
-- [Browser setup](browser-setup.md) — user runs Firefox at 150% zoom on 4K + Dark Reader; emulate ~2560px viewport
-- [Source access policy](source-access-policy.md) — how far to go for blocked/degraded Episteme sources (non-destructive means OK)
-- [Phys.org blocked](phys-org-blocked.md) — needs http_mode=impersonate (TLS fingerprinting)
-- [Testing: small batches](testing-small-batches.md) — cap test runs at 1-3 articles via defer limit params
-- [Two-stage write idea](two-stage-write-idea.md) — research agent → writer agent split, parked until pipeline visibility exists
-- [Post-version compare idea](post-version-compare-idea.md) — side-by-side diff of two post versions, evaluation tool for pipeline experiments
-- [Migration review gate](migration-review-gate.md) — never delete a migration's UNREVIEWED line without reading the whole file first
-- [TTS narration](tts-narration.md) — Fish Audio TTS narrate stage; free tier model key is "s2.1-pro-free"; voice id pending
+Parked ideas only. Anything that must fire unprompted lives in [CLAUDE.md](../../CLAUDE.md); anything that explains why a thing is built the way it is lives in [docs/decisions/](../../docs/decisions/README.md).
+
+These two are here because their whole value is surfacing at the moment someone is about to redesign that path, which neither of the other two tiers can do.
+
+- [Two-stage write idea](two-stage-write-idea.md) - research agent then writer agent; parked, do not implement on guesswork
+- [Post-version compare idea](post-version-compare-idea.md) - side-by-side diff of two post versions; the evaluation tool the idea above needs
