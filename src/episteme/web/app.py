@@ -15,15 +15,16 @@ from starlette_compress import CompressMiddleware
 from ..config import settings
 from ..db import SessionLocal
 from ..models import Post, SourceItem, Story
-from ..recommend import blocks, feedback, profile
+from ..recommend import blocks, profile
 from ..tts import list_voices, pick_default
 from .admin import _group_calls
 from .admin import router as admin_router
 from .api import api_post_llm_calls, api_story
 from .api import router as api_router
+from .feedback import feed_context as feedback_contexts
 from .feedback import post_context as feedback_context
 from .feedback import router as feedback_router
-from .templating import BASE_DIR, render, templates
+from .templating import BASE_DIR, fragment_block, render, templates
 
 
 class RevalidateStaticFiles(StaticFiles):
@@ -240,11 +241,10 @@ async def _feed_page(session, cursor: tuple[float, int] | None = None) -> dict:
         "has_more": has_more,
         "next_cursor": next_cursor,
         "first_page": cursor is None,
-        # One query for the page's feedback state, not one per card — the buttons
-        # render in whatever state the reader left them (feedback.signals_for_posts).
-        "feedback_signals": await feedback.signals_for_posts(
-            session, [post.id for post in posts]
-        ),
+        # One pass for the whole page's controls, not one per card — the buttons
+        # and topic chips render in whatever state the reader left them
+        # (web.feedback.feed_context).
+        "feedback_contexts": await feedback_contexts(session, posts),
     }
 
 
@@ -359,29 +359,39 @@ def _feedback_sig(page: dict) -> list:
     """The feedback state the cards render (which buttons are active, and the event
     id each active one undoes). Folded into both feed validators: liking a post on
     its article page changes how its FEED card renders, and without this the feed
-    would answer the next navigation with a stale 304 showing an inactive button."""
-    signals = page.get("feedback_signals") or {}
+    would answer the next navigation with a stale 304 showing an inactive button.
+
+    The topic bucket is in here because a rating decides whether a card shows topic
+    chips AT ALL, and which direction they carry — so a like recorded elsewhere
+    changes the card's markup well beyond one button's `is-active`."""
+    contexts = page.get("feedback_contexts") or {}
     sig = []
-    for post_id in sorted(signals):
-        kinds = sorted(((signals.get(post_id) or {}).get("kinds") or {}).items())
+    for post_id in sorted(contexts):
+        context = contexts.get(post_id) or {}
+        kinds = sorted((context.get("signals") or {}).items())
+        topics = sorted(
+            (str(key), value)
+            for key, value in (context.get("topic_signals") or {}).items()
+        )
         # Only entries with actual signals: a post whose last signal was undone is
         # indistinguishable from one that never had any, so both must hash alike or
         # an undo would leave the validator permanently shifted.
-        if kinds:
-            sig.append((post_id, kinds))
+        if kinds or topics:
+            sig.append((post_id, kinds, topics))
     return sig
 
 
-def _feed_etag(page: dict, fragment: bool) -> str:
+def _feed_etag(page: dict, block: str | None) -> str:
     """A weak validator over the first feed page's composition, so an unchanged feed
     answers a hard refresh with a 304 and skips the re-render.
 
-    `fragment` marks the boosted-htmx representation (just the `content` block) vs the
-    full document at the same URL. It's folded into the hash so a full-doc cache entry
-    can never satisfy a fragment conditional request (belt-and-suspenders alongside
-    `Vary: HX-Request`)."""
+    `block` is exactly what `templating.fragment_block` will render — the `content`
+    block for a boosted navigation, None for the whole document — so the validator
+    names the body that is actually served. A boolean here was the bug: it collapsed
+    "htmx wants the fragment" and "htmx's history restore wants the document" into
+    one tag over two different bodies (see `fragment_block`)."""
     sig = [
-        ("frag", fragment),
+        ("frag", block),
         *_feed_cards_sig(page["posts"]),
         _pagination_sig(page),
         ("fb", _feedback_sig(page)),
@@ -446,12 +456,19 @@ _HTML_CACHE_CONTROL = (
 )
 
 
+# Both headers, because both change the body: `HX-Request` splits document from
+# fragment, and `HX-Target` says WHICH region a boosted request wants — an htmx
+# history-restore sends `HX-Request` with no target and must get the whole document.
+# Keying on `HX-Request` alone put those two bodies in one cache entry.
+_HTML_VARY = "HX-Request, HX-Target"
+
+
 def _conditional_response(
-    request: Request, etag: str, vary: str | None = "HX-Request"
+    request: Request, etag: str, vary: str | None = _HTML_VARY
 ) -> Response | None:
     """If the request already holds this exact representation (`If-None-Match`),
     return a bodyless 304 carrying the same validators; otherwise None (render and
-    tag normally). `Vary: HX-Request` keeps the full-document and boosted-fragment
+    tag normally). `Vary` keeps the full-document and boosted-fragment
     representations as separate cache entries under the one URL; the partials pass
     `vary=None` because they have only one representation (always the fragment)."""
     if request.headers.get("if-none-match") == etag:
@@ -463,7 +480,7 @@ def _conditional_response(
 
 
 def _apply_validators(
-    response: Response, etag: str, vary: str | None = "HX-Request"
+    response: Response, etag: str, vary: str | None = _HTML_VARY
 ) -> Response:
     response.headers["ETag"] = etag
     response.headers["Cache-Control"] = _HTML_CACHE_CONTROL
@@ -484,13 +501,13 @@ async def feed(request: Request):
 
     # Conditional GET for the composed feed — for BOTH representations (full document
     # and boosted-htmx fragment), so in-app navigation to "/" (the Episteme home
-    # button) and its prefetch both hit the cache. The etag folds in `fragment`, so a
-    # full-doc entry can't satisfy a fragment request. Skipped only for the raw-item
-    # fallback, which churns with every ingest and isn't worth a validator.
+    # button) and its prefetch both hit the cache. The etag folds in the block the
+    # render will emit, so no entry can satisfy a conditional request for a different
+    # representation. Skipped only for the raw-item fallback, which churns with every
+    # ingest and isn't worth a validator.
     etag = None
-    is_htmx = request.headers.get("HX-Request") == "true"
     if fallback is None:
-        etag = _feed_etag(page, fragment=is_htmx)
+        etag = _feed_etag(page, block=fragment_block(request, "feed.html"))
         not_modified = _conditional_response(request, etag)
         if not_modified is not None:
             return not_modified
@@ -504,7 +521,7 @@ async def feed(request: Request):
 
 
 def _post_page_etag(
-    post: Post, voices, default_voice, tts_configured, fragment: bool, feedback_ctx: dict
+    post: Post, voices, default_voice, tts_configured, block: str | None, feedback_ctx: dict
 ) -> str:
     """A weak validator for a post's page, covering everything the render reads.
 
@@ -517,11 +534,11 @@ def _post_page_etag(
     player and are included for both kinds (harmless over-invalidation on an
     aggregate, which has no player).
 
-    `fragment` marks the boosted-htmx representation (just the `content` block) vs the
-    full document at the same URL, folded into the hash so the two never share a
-    conditional-request match (belt-and-suspenders alongside `Vary: HX-Request`)."""
+    `block` is what `templating.fragment_block` will render (the `content` block for
+    a boosted navigation, None for the whole document), folded into the hash so two
+    representations of this URL can never share a conditional-request match."""
     payload_obj = {
-        "frag": fragment,
+        "frag": block,
         "id": post.id,
         "kind": post.kind,
         "status": post.status,
@@ -599,14 +616,18 @@ async def post_view(request: Request, post_id: int):
 
     # Conditional GET for both post kinds AND both representations (full document +
     # boosted-htmx fragment): the etag folds in everything the render reads (feature
-    # columns / aggregate story items + narration controls) plus `fragment`, so it
-    # changes exactly when the page would and a full-doc entry can't satisfy a fragment
-    # request. This is what makes in-app article navigation and the hover-prefetch
-    # cacheable; continuous-mode `fetch("/post/N")` (no HX headers) and hard refreshes
-    # also benefit.
-    is_htmx = request.headers.get("HX-Request") == "true"
+    # columns / aggregate story items + narration controls) plus the block being
+    # emitted, so it changes exactly when the page would and no entry can satisfy a
+    # request for a different representation. This is what makes in-app article
+    # navigation and the hover-prefetch cacheable; continuous-mode `fetch("/post/N")`
+    # (no HX headers) and hard refreshes also benefit.
     etag = _post_page_etag(
-        post, voices, default_voice, tts_configured, is_htmx, feedback_ctx
+        post,
+        voices,
+        default_voice,
+        tts_configured,
+        fragment_block(request, "post.html"),
+        feedback_ctx,
     )
     not_modified = _conditional_response(request, etag)
     if not_modified is not None:
@@ -620,23 +641,23 @@ async def post_view(request: Request, post_id: int):
             "voices": voices,
             "default_voice": default_voice,
             "tts_configured": tts_configured,
-            **feedback_ctx,
+            "fb": feedback_ctx,
         },
     )
     return _apply_validators(response, etag)
 
 
-def _provenance_etag(post: dict, calls: list, fragment: bool) -> str:
+def _provenance_etag(post: dict, calls: list, block: str | None) -> str:
     """Validator for a post's provenance page. `llm_calls` rows are append-only and
     immutable once written, so `(id, post_id, pinned)` per call fully detects any
     change the page would show — a new call, a re-stamp onto this post, or a pin
     toggle — while the post's own pin / status / archival / score drive its header.
     This is the most cache-stable HTML page in the app (a completed post's calls
     never change again), and it is hover-prefetchable from every feed card's
-    `provenance` link. `fragment` splits the boosted-htmx representation from the
+    `provenance` link. `block` splits the boosted-htmx representation from the
     full document, exactly like the feed and post pages."""
     sig = {
-        "frag": fragment,
+        "frag": block,
         "post": (
             post["id"],
             post.get("status"),
@@ -667,8 +688,9 @@ async def post_provenance(request: Request, post_id: int):
     # Conditional GET for both representations. The page is near-immutable (a
     # completed post's calls never change), so the etag holds across sessions and the
     # feed's hover-prefetch of the `provenance` link becomes a real cache hit.
-    is_htmx = request.headers.get("HX-Request") == "true"
-    etag = _provenance_etag(post, calls, fragment=is_htmx)
+    etag = _provenance_etag(
+        post, calls, block=fragment_block(request, "post_provenance.html")
+    )
     not_modified = _conditional_response(request, etag)
     if not_modified is not None:
         return not_modified

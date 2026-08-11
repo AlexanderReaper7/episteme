@@ -11,26 +11,26 @@
       <span class="kv-chips">
         {% for alias in topic.aliases %}<span class="kv-chip"><span class="kv-chip-v">{{ alias }}</span></span>{% endfor %}
       </span>
-      {% else %}<span class="muted">—</span>{% endif %}
+      {% else %}<span class="muted">-</span>{% endif %}
     </td>
     <td>{% if not topic.embedded %}<span class="status-badge status-badge-bad">no embedding</span>{% endif %}</td>
     <td class="topic-actions">
       <form hx-post="/admin/topics/{{ topic.slug }}/rename" hx-target="#topic-rows"
             hx-swap="outerHTML">
         <input name="value" placeholder="rename to…" aria-label="new label for {{ topic.label }}">
-        <button type="submit">rename</button>
+        <button type="submit">{{ ico.icon("edit") }} rename</button>
       </form>
       <form hx-post="/admin/topics/{{ topic.slug }}/merge" hx-target="#topic-rows"
             hx-swap="outerHTML"
             hx-confirm="Merge “{{ topic.label }}” into another topic? This deletes it and rewrites every story and post that used it.">
         <input name="value" placeholder="merge into slug…" aria-label="merge {{ topic.label }} into">
-        <button type="submit">merge</button>
+        <button type="submit">{{ ico.icon("merge") }} merge</button>
       </form>
     </td>
   </tr>
   {% else %}
   <tr><td colspan="5" class="muted">
-    No vocabulary yet — run the bootstrap above, or let triage build one story by story.
+    No vocabulary yet - run the bootstrap above, or let triage build one story by story.
   </td></tr>
   {% endfor %}
 </tbody>

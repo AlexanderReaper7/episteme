@@ -1,16 +1,115 @@
-{% import "admin/_macros.html" as ui %}
-<table class="admin-table">
-  <tr><th>#</th><th>task</th><th>params</th><th>status</th><th>attempts</th><th>scheduled</th></tr>
-  {% for job in jobs %}
-  <tr>
-    <td>{{ job.id }}</td>
-    <td class="mono">{{ job.task_name }}</td>
-    <td>{{ ui.kv_chips(job.args) }}</td>
-    <td>{{ ui.status_badge(job.status) }}</td>
-    <td>{{ job.attempts }}</td>
-    <td>{{ job.scheduled_at | dt }}</td>
-  </tr>
-  {% else %}
-  <tr><td colspan="6" class="mono">queue empty</td></tr>
-  {% endfor %}
-</table>
+{# The queue table and its filter chips. Self-contained and self-refreshing -
+   the root element carries the poll, so the URL it polls names both the active
+   view and the state the browser is currently showing. The `v` digest is what
+   lets an unchanged queue answer 204: no payload, and no swap, which is what
+   actually stops the flashing (the cheapest re-render is still a re-render).
+
+   It replaces its own container's contents, so it names `hx-target` explicitly:
+   .admin-main sets hx-target="#admin-main" and htmx INHERITS that, so a fragment
+   relying on the default target swallows the whole dashboard and then polls
+   against an element it just deleted. #}
+
+{# One row shape, used for a standalone job and for a folded group's members
+   alike - a member is the same row, indented. Two copies would be two places for
+   the columns to drift apart. #}
+{% macro job_row(job, css="") %}
+<tr class="{{ css }}">
+  <td class="muted">{{ job.id }}</td>
+  <td>
+    <span class="job-label">{{ job.label }}</span>
+    {% if job.detail %}<span class="muted job-detail">{{ job.detail }}</span>{% endif %}
+  </td>
+  <td>{{ ui.status_badge(job.status) }}</td>
+  {# A finished job is timed by when it finished; a running one by when it
+     started; one still queued has neither, and its only time is the intent
+     in scheduled_at (NULL whenever it was deferred on demand). #}
+  <td>
+    {% if job.finished %}{{ job.finished | ago_tag }}
+    {% elif job.started %}started {{ job.started | ago_tag }}
+    {% elif job.scheduled_at %}{{ job.scheduled_at | ago_tag }}
+    {% else %}<span class="muted">queued</span>{% endif %}
+  </td>
+  <td class="num muted">{{ job.duration_seconds | duration or "-" }}</td>
+  <td class="num {{ 'bad' if job.attempts > 1 }}">{{ job.attempts }}</td>
+</tr>
+{% endmacro %}
+
+<div class="queue-view"
+     hx-get="/admin/partials/queue?view={{ view }}&v={{ queue_hash }}"
+     hx-trigger="every 10s, refreshQueue from:body"
+     hx-target="#queue" hx-swap="innerHTML">
+
+  <p class="queue-filters">
+    {% for key, label in views %}
+    <button class="queue-filter {{ 'is-active' if view == key }}"
+            hx-get="/admin/partials/queue?view={{ key }}"
+            hx-target="#queue" hx-swap="innerHTML">{{ label }}</button>
+    {% endfor %}
+    <span class="muted queue-filters-note">{{ view_note }}</span>
+  </p>
+
+  <table class="admin-table queue-table">
+    <thead>
+      <tr><th>#</th><th>job</th><th>status</th><th>when</th><th class="num">took</th><th class="num">tries</th></tr>
+    </thead>
+    {% for entry in entries %}
+    {% if entry.kind == "group" %}
+    {# A fold, not a filter: the runs are still here, one click away, and any run
+       of this task that failed or is still in flight was never eligible to be
+       folded and has its own row somewhere in this table.
+
+       The toggle is a checkbox rather than script, so the fold works with JS off;
+       CSS reveals the members via :has(). It is CHECKED BY THE SERVER from the
+       cookie, never re-checked by script after a swap - same reason the poll
+       renders its final shape (see admin.open_groups). #}
+    <tbody class="job-group">
+      <tr class="job-group-head">
+        <td class="muted">{{ entry.id }}</td>
+        <td>
+          <label class="job-group-summary">
+            <input class="job-group-toggle" type="checkbox" value="{{ entry.key }}"
+                   {% if entry.open %}checked{% endif %}
+                   aria-label="Show the {{ entry.count }} {{ entry.label }} runs">
+            {{ ico.icon("disclosure", "disclosure-caret") }}
+            <span class="job-label">{{ entry.label }}</span>
+            <span class="job-group-count">×{{ entry.count }}</span>
+          </label>
+        </td>
+        <td>{{ ui.status_badge("succeeded") }}</td>
+        <td>
+          {{ entry.newest | ago_tag }}
+          {% if entry.count > 1 and entry.oldest %}
+          <span class="muted job-group-span">… {{ entry.oldest | ago_tag }}</span>
+          {% endif %}
+        </td>
+        <td class="num muted">{{ entry.total_seconds | duration or "-" }}</td>
+        <td class="num {{ 'bad' if entry.attempts > 1 }}">{{ entry.attempts }}</td>
+      </tr>
+      {% for job in entry.members %}
+      {{ job_row(job, "job-group-member") }}
+      {% endfor %}
+      {% if entry.hidden %}
+      <tr class="job-group-member">
+        <td></td>
+        <td colspan="5" class="muted">
+          {{ entry.hidden }} older run{{ "s" if entry.hidden != 1 }} not listed
+        </td>
+      </tr>
+      {% endif %}
+    </tbody>
+    {% else %}
+    <tbody>{{ job_row(entry.job) }}</tbody>
+    {% endif %}
+    {% else %}
+    <tbody><tr><td colspan="6" class="muted">{{ empty_note }}</td></tr></tbody>
+    {% endfor %}
+  </table>
+
+  {# The table is a window onto RETAINED history: "nothing failed" means nothing
+     failed inside the kept window, and the window depends on what the job was. #}
+  <p class="muted queue-note">
+    Pruned nightly: housekeeping after {{ retention.maintenance }}d, ingestion
+    after {{ retention.ingest }}d, pipeline work after {{ retention.work }}d -
+    and anything that failed after {{ retention.failed }}d, whatever it was.
+  </p>
+</div>

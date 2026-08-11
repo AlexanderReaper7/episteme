@@ -44,13 +44,15 @@ def _render(sections):
     # test is about sections, so it supplies the "no signals yet" shape.
     return templates.env.get_template("post.html").render(
         post=post,
-        post_id=post.id,
-        signals={},
-        topic_signals={},
-        source_signals={},
-        post_topics=post.topics,
-        post_sources=[],
-        with_topics=True,
+        fb={
+            "post_id": post.id,
+            "signals": {},
+            "topic_signals": {},
+            "source_signals": {},
+            "post_topics": [{"label": t, "slug": t} for t in post.topics],
+            "post_sources": [],
+            "variant": "article",
+        },
     )
 
 
@@ -111,7 +113,14 @@ def _quiz_answers(html):
     out = []
     for block in html.split('class="quiz-item"')[1:]:
         answer = int(re.search(r'data-answer="(\d+)"', block).group(1))
-        choices = re.findall(r'class="quiz-choice" data-index="\d+">([^<]*)</button>', block)
+        # Each choice leads with a hidden correct/wrong mark, so the label is
+        # whatever follows the last tag inside the button.
+        choices = [
+            re.sub(r"(?s).*>", "", body).strip()
+            for body in re.findall(
+                r'class="quiz-choice" data-index="\d+"\s*>(.*?)</button>', block, re.S
+            )
+        ]
         out.append((choices[answer], choices))
     return out
 

@@ -77,6 +77,19 @@ def test_admin_main_content_target_falls_back_to_full_document():
     assert "<html" in html and "admin-sidebar-nav" in html
 
 
+def test_history_restore_request_gets_the_whole_document():
+    # htmx's Back/Forward restore (`loadHistoryFromServer`) sends HX-Request WITHOUT
+    # HX-Target and swaps the result in as the page body — so it must get a full
+    # document, not the `content` block. This is the request the fragment/full-doc
+    # split used to mis-tag: same body as a plain hit, but stamped with the
+    # FRAGMENT's etag, which nested the next boosted navigation inside itself.
+    html = _body(render(
+        _request({"HX-Request": "true", "HX-History-Restore-Request": "true"}),
+        "admin/admin_runs.html", CTX,
+    ))
+    assert "<html" in html and "admin-sidebar-nav" in html
+
+
 def test_htmx_request_without_known_target_falls_back_to_full_document():
     # A boosted request whose target maps to no block (defensive) must not 500 or
     # emit a half page — it falls through to the full document.

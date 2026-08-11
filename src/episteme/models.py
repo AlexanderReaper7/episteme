@@ -381,6 +381,57 @@ class Voice(Base):
 POST_SCOPED_STAGES = ("condense", "research", "write", "qa")
 
 
+# What kind of thing a queued job IS. Two very different consumers read this and
+# they must not drift: the history prune keeps each class for a different window,
+# and the admin queue folds the two plumbing classes out of the default view. If
+# they disagreed, the page would hide rows the prune keeps (invisible history) or
+# show rows the prune has already dropped as if they were the whole story.
+#
+# `scheduler` is procrastinate's periodic entry point — the task the cron fires,
+# whose only job is to defer the real one. It carries a raw unix `timestamp` arg
+# and no outcome of its own, so it is plumbing in the strictest sense: every tick
+# writes one of these next to the row that did the work.
+JOB_CLASS_SCHEDULER = "scheduler"
+JOB_CLASS_MAINTENANCE = "maintenance"
+JOB_CLASS_INGEST = "ingest"
+JOB_CLASS_WORK = "work"
+
+# Classes the queue page folds away by default. Both are self-firing housekeeping
+# with no editorial meaning: seeing them is opt-in, not the default reading.
+JOB_PLUMBING_CLASSES = (JOB_CLASS_SCHEDULER, JOB_CLASS_MAINTENANCE)
+
+_MAINTENANCE_TASKS = frozenset(
+    {
+        "episteme.govern_resources",
+        "episteme.recover_stalled_jobs",
+        "episteme.prune_job_history",
+    }
+)
+_INGEST_TASKS = frozenset({"episteme.ingest_all", "episteme.ingest_source"})
+
+# Terminal statuses that are not a success, and the ones that mean the job has
+# not finished at all. Here rather than in the worker because the web process
+# reads them too (the queue's failure filter and its maintenance summary), and
+# web deliberately does not import worker modules at import time — doing so would
+# register the periodic tasks in a process that never runs them.
+FAILURE_STATUSES = ("failed", "cancelled", "aborted")
+LIVE_STATUSES = ("todo", "doing", "aborting")
+
+
+def job_class(task_name: str) -> str:
+    """Classify a procrastinate task name. Prefix-matched on `scheduled_` first:
+    a periodic entry point is plumbing whatever it goes on to defer, so
+    `scheduled_ingest` is a scheduler row and not an ingest one."""
+    bare = task_name.removeprefix("episteme.")
+    if bare.startswith("scheduled_"):
+        return JOB_CLASS_SCHEDULER
+    if task_name in _MAINTENANCE_TASKS:
+        return JOB_CLASS_MAINTENANCE
+    if task_name in _INGEST_TASKS:
+        return JOB_CLASS_INGEST
+    return JOB_CLASS_WORK
+
+
 class LlmCall(Base):
     """One gateway call: full request/response plus timing, for the admin
     provenance view. Written best-effort by llm.observe — never blocks the

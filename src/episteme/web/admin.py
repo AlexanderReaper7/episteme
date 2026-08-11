@@ -7,15 +7,18 @@ serves the public /post/{id}/provenance page in web.app."""
 
 from __future__ import annotations
 
+import hashlib
+import json
+from collections import Counter
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 
 from ..config import settings
 from ..db import SessionLocal
 from ..llm.host import host_agent
-from ..models import AppState, Source
+from ..models import FAILURE_STATUSES, AppState, Source
 from ..recommend import topics
 from ..tts import (
     DEFAULT_PROVIDER,
@@ -31,6 +34,7 @@ from ..tts import (
     upsert_voice,
 )
 from .api import (
+    DEFERRABLE_TASKS,
     api_defer,
     api_jobs,
     api_jobs_summary,
@@ -45,6 +49,7 @@ from .api import (
     api_topic_rename,
     api_topics,
     api_topics_proposal_discard,
+    job_presentation,
 )
 from .templating import render, templates
 
@@ -79,15 +84,255 @@ async def admin_runs(request: Request):
     )
 
 
+# --- Manual jobs: one shape for every deferrable button on the page --------------
+#
+# A job is a button, a sentence, and the targets it can be pointed at. The targets
+# used to be three shared inputs floating below the stage chain, wired to buttons
+# by a hand-written `hx-include` id list, plus a fourth input for `source_id` that
+# sat at the bottom of a different section from the one button that reads it. Two
+# mechanisms, one of them a list of ids that nothing checked.
+#
+# Now there is one: `job_params` DERIVES the fields from api.DEFERRABLE_TASKS -
+# the same table the request is validated against - and the template renders them
+# inside the job's own control, which the button includes by proximity
+# (`closest .job-run`). A button therefore cannot offer a target the task will
+# reject, cannot drop one it accepts, and cannot read a field belonging to another
+# job.
+JOB_PARAM_ORDER = ("limit", "story_id", "post_id", "source_id")
+
+# `hint` is the field's whole explanation, so it has to survive being read alone:
+# it is the tooltip AND the accessible name, since there is no room beside a
+# 4-character input for a sentence.
+JOB_PARAMS: dict[str, dict[str, str]] = {
+    "limit": {"label": "limit", "placeholder": "all", "hint": "most rows to process"},
+    "story_id": {"label": "story", "placeholder": "any", "hint": "re-run one story id"},
+    "post_id": {"label": "post", "placeholder": "any", "hint": "re-run one post id"},
+    "source_id": {"label": "source", "placeholder": "id", "hint": "source id, required"},
+}
+
+
+def job_params(task: str) -> tuple[dict[str, str], ...]:
+    """The target fields a deferrable task accepts, in a fixed order.
+
+    Order is imposed here because the API stores the allowed set as a frozenset,
+    which has none - and a control row whose fields move between renders is worse
+    than a wrong one."""
+    accepted = DEFERRABLE_TASKS[task][1]
+    return tuple(
+        {"name": name, **JOB_PARAMS[name]} for name in JOB_PARAM_ORDER if name in accepted
+    )
+
+
+def parse_target(name: str, raw: object) -> int | None:
+    """One target field as an int, or None if it was left blank. Raises ValueError
+    naming the field for anything else.
+
+    This is the ONLY gate on these values, and it has to be: an <input type=number>
+    submits content it cannot parse as the EMPTY STRING (HTML spec), so a typo like
+    "1o" reached the server indistinguishable from "left blank" - and blank means
+    "everything due". Asking for one story and getting the entire backlog, with no
+    error rendered anywhere, is the silent failure that made these fields text."""
+    value = str(raw or "").strip()
+    if not value:
+        return None
+    if not value.isdigit() or int(value) < 1:
+        label = JOB_PARAMS[name]["label"]
+        raise ValueError(f"{label} must be a whole number above zero, not {value!r}.")
+    return int(value)
+
+
+def _job(task: str, icon: str, **rest: object) -> dict:
+    return {"task": task, "icon": icon, "params": job_params(task), **rest}
+
+
+# The pipeline, as the page presents it. `takes`/`makes` are the two facts that
+# decide whether pressing a button will do anything: a stage is data-driven, so it
+# is a no-op unless rows of the kind it consumes are sitting unprocessed. `note`
+# is what the stage actually does, which the takes/makes pair cannot say - the
+# chain is drawn vertically precisely so there is room for it.
+STAGES: tuple[dict, ...] = (
+    _job("embed", "embed", takes="new source items", makes="embeddings",
+         note="Runs every unembedded source item through the local embedding model. "
+              "Nothing downstream can see an item until it has a vector."),
+    _job("cluster", "cluster", takes="embedded items", makes="stories",
+         note="Groups embedded items by cosine similarity inside a rolling window, "
+              "growing each story's centroid as members join. One story is one event, "
+              "however many outlets covered it."),
+    _job("triage", "triage", takes="new stories", makes="write / aggregate / skip",
+         note="The fast model reads a digest of each new story and decides its fate: "
+              "a written feature, an aggregation card, or nothing. Cheap, and it is "
+              "what keeps the expensive stage off everything that does not deserve it."),
+    _job("write", "write", takes="stories marked write", makes="feature posts",
+         note="The main model researches and writes the article in one agentic "
+              "conversation, choosing its own rich sections. Nearly all the GPU time "
+              "on this page is here: budget minutes per story, not seconds."),
+    _job("qa", "qa", takes="unscored posts", makes="edits + quality score",
+         note="A vision pass over the rendered page. The model reviews the article as "
+              "a reader sees it, applies corrections through a tool harness, and "
+              "scores what is left."),
+    _job("narrate", "narrate", takes="posts with no audio", makes="narration",
+         note="Sends each finished article to the TTS provider and stores the audio. "
+              "The nightly batch is off unless tts_enabled, so this button is normally "
+              "the only thing that runs it."),
+    _job("score", "score", takes="published posts", makes="feed ranking",
+         note="Recomputes every published post's affinity against your interest "
+              "profile and reorders the feed. No LLM, and the one to run after "
+              "retuning weights by hand."),
+)
+
+# The rest of the deferrable surface. Every one of these was reachable only by
+# curl before, including `narrate` - a real pipeline stage that had no button at
+# all while six of its seven siblings did.
+MAINTENANCE_OPS: tuple[dict, ...] = (
+    _job("ingest_source", "ingest-one", label="ingest one source",
+         help="Poll a single source now, ignoring its fetch interval."),
+    _job("backup_database", "backup", label="back up database",
+         help="pg_dump into the backups mount. Manual-only; nothing schedules this."),
+    _job("propose_topics", "propose", label="propose topics",
+         help="Cluster raw tags into a vocabulary proposal. Applies nothing, review it on Topics."),
+    _job("apply_topics", "apply", label="apply topics",
+         help="Commit the reviewed proposal and rewrite every story and post topic list."),
+    _job("backfill_topic_embeddings", "heal", label="backfill topic embeddings",
+         help="Heal topics created while the embed endpoint was down. Normally automatic."),
+    _job("recover_stalled_jobs", "recover", label="recover stalled jobs",
+         help="Requeue jobs a killed worker stranded in “doing”. Runs every 5 minutes."),
+    _job("prune_job_history", "delete", label="prune job history",
+         help="Delete finished jobs past their retention window. Runs nightly."),
+)
+
+# A target is hoisted out of the jobs and rendered once for the group when EVERY
+# job in that group accepts it. Only `limit` is ever eligible: it is a cap on how
+# much work to do, which means the same thing wherever you type it, whereas an id
+# names one row and so can never be a group-level knob. Seven identical `limit`
+# boxes down a vertical chain is seven places to look for the one you set.
+SHARED_PARAMS = frozenset({"limit"})
+
+
+def _group(jobs: tuple[dict, ...]) -> dict:
+    """A set of jobs plus the targets they all share.
+
+    The include selector is built here rather than written in the template so a
+    button can never ask for a field that is not there: `closest .job-run` is its
+    own control, `previous .job-shared` is the group's shared row, and a job with
+    neither emits no hx-include at all - most of these tasks 422 on a stray param.
+
+    `previous`, NOT `closest .job-group`. The group element is an ANCESTOR of every
+    job in it, so including it sweeps in each sibling's fields as well: measured in
+    the browser, `write` sent `story_id: ["284", ""]` (its own plus triage's empty
+    box) and three empty `post_id`s. Harmless only by the accident that htmx
+    resolves the selectors in order and the job's own value therefore came first -
+    reorder the DOM and a typed target is silently replaced by a blank one, which
+    is the exact failure this page was rebuilt to end. `previous` scans backwards
+    for the nearest preceding match, so it reaches the group's shared row and
+    nothing below it."""
+    shared = tuple(
+        name
+        for name in JOB_PARAM_ORDER
+        if name in SHARED_PARAMS and all(name in DEFERRABLE_TASKS[j["task"]][1] for j in jobs)
+    )
+
+    def own(job: dict) -> dict:
+        params = tuple(p for p in job["params"] if p["name"] not in shared)
+        include = [s for s, on in (("closest .job-run", params), ("previous .job-shared", shared)) if on]
+        return {**job, "params": params, "include": ", ".join(include)}
+
+    return {
+        "shared": tuple({"name": name, **JOB_PARAMS[name]} for name in shared),
+        "jobs": tuple(own(job) for job in jobs),
+    }
+
+
+STAGE_GROUP = _group(STAGES)
+OPS_GROUP = _group(MAINTENANCE_OPS)
+
+
+def _cron_help(expression: str) -> str:
+    """A cron line as a phrase. Only the shapes this project's defaults use are
+    spelled out; anything else falls back to the expression itself rather than
+    guessing, since a wrong schedule in the UI is worse than a raw one."""
+    fields = expression.split()
+    if len(fields) == 5 and fields[1:] == ["*", "*", "*", "*"] and fields[0].startswith("*/"):
+        return f"every {fields[0][2:]} minutes"
+    if len(fields) == 5 and fields[2:] == ["*", "*", "*"] and fields[0].isdigit() and fields[1].isdigit():
+        return f"daily at {int(fields[1]):02d}:{int(fields[0]):02d}"
+    return expression
+
+
+# The queue's filter chips. `recent` is the default and holds EVERYTHING: the
+# housekeeping crons outnumber real work ~200:1, and the answer to that is folding
+# their repetition (see group_jobs), not hiding the class. Each entry is
+# (chip label, note explaining what the view holds, empty-state text, window).
+#
+# The window is per view because it means two different things. `recent` reads a
+# long stretch precisely so the repeats it folds are worth folding — a window of
+# 20 raw rows is 20 minutes of heartbeat and one real job. The narrow views are
+# already filtered down to things worth reading one at a time.
+QUEUE_VIEWS: dict[str, tuple[str, str, str, int]] = {
+    "recent": (
+        "Recent",
+        "Everything, newest first. Runs of the same task are folded into one row.",
+        "No jobs yet.",
+        200,
+    ),
+    "activity": (
+        "Activity",
+        "Ingestion and pipeline work only, with the housekeeping crons filtered out.",
+        "No ingestion or pipeline jobs yet.",
+        20,
+    ),
+    "failed": (
+        "Failed",
+        "Everything that did not succeed, housekeeping included.",
+        "Nothing has failed, in the retained history.",
+        20,
+    ),
+    "running": ("Running", "Jobs a worker is executing right now.", "Nothing running.", 20),
+    "waiting": ("Waiting", "Queued and not yet picked up.", "Queue empty.", 20),
+}
+
+DEFAULT_QUEUE_VIEW = "recent"
+
+# Repetition is folded from the SECOND occurrence, because two rows saying the
+# same thing are already one row and a decision about which to read.
+QUEUE_GROUP_MIN = 2
+
+# ...but a fold is opened to see what varies between the runs, and past a handful
+# nothing does. The cap is what keeps a 200-job window from putting 200 rows of
+# hidden markup on the wire every time the queue moves.
+QUEUE_GROUP_MEMBERS = 10
+
+
+async def stage_backlog() -> dict[str, dict]:
+    """How many rows each stage would act on right now, from the stage's OWN
+    predicate (worker/pending.py). Six indexed COUNTs on a page render.
+
+    `worker.pending` is safe to import from the web process in a way
+    `worker.pipeline` is not: it pulls in models, config and recommend, no
+    gateway and no TTS."""
+    from ..recommend import profile as profile_service
+    from ..worker.pending import stage_backlog as backlog
+
+    async with SessionLocal() as session:
+        return await backlog(session, await profile_service.load(session))
+
+
 @router.get("/jobs", response_class=HTMLResponse)
-async def admin_jobs(request: Request):
+async def admin_jobs(request: Request, view: str = DEFAULT_QUEUE_VIEW):
+    backlog = await stage_backlog()
+    stages = {
+        **STAGE_GROUP,
+        "jobs": tuple({**job, **backlog[job["task"]]} for job in STAGE_GROUP["jobs"]),
+    }
     return render(
         request,
         "admin/admin_jobs.html",
         {
             "active": "jobs",
             "status": await api_status(),
-            "jobs": await api_jobs(limit=50),
+            "stages": stages,
+            "maintenance_ops": OPS_GROUP,
+            "pipeline_cron_help": _cron_help(settings.pipeline_cron),
+            **await queue_context(view, open_groups(request)),
         },
     )
 
@@ -291,10 +536,184 @@ async def admin_post_pin(request: Request, post_id: int, value: bool = True):
     )
 
 
+def state_hash(*parts: object) -> str:
+    """A short digest of the DATA a polled fragment renders.
+
+    It rides in the fragment's own poll URL, so the next poll tells the server
+    what the browser is currently showing and an unchanged fragment answers 204
+    (see queue_partial). Deliberately hashes the data and NOT the rendered HTML:
+    the rendered text contains relative times that drift every minute on their
+    own, which would flip the digest — and re-render the whole region — while
+    nothing about the queue had actually happened. Those timestamps go to the
+    browser as machine-readable attributes and are refreshed in place by app.js,
+    so display stays honest without a swap."""
+    payload = json.dumps(parts, default=str, sort_keys=True)
+    return hashlib.blake2s(payload.encode(), digest_size=8).hexdigest()
+
+
+def _job_identity(job: dict) -> tuple:
+    """What makes a row look different. Excludes `duration_seconds` (derived from
+    the two timestamps already here) and the rendered label/detail (derived from
+    task_name/args)."""
+    return (
+        job["id"],
+        job["status"],
+        job["attempts"],
+        job["started"],
+        job["finished"],
+        job["scheduled_at"],
+    )
+
+
+# Which groups the reader has opened, as one cookie holding the open keys.
+#
+# Same architecture as the maintenance fold's cookie it replaces, and for the same
+# reason the poll fix introduced it in the first place: the state has to
+# reach the SERVER, because a group re-opened by script after the swap flickers
+# open on every poll. Script only records it. One cookie rather than one per
+# group — the key set is small but unbounded (it is task names), and a cookie per
+# task name would ride along with every request for the rest of the session.
+QUEUE_GROUP_COOKIE = "qopen"
+
+
+def open_groups(request: Request) -> set[str]:
+    """The group keys this request says are expanded."""
+    return {key for key in request.cookies.get(QUEUE_GROUP_COOKIE, "").split("|") if key}
+
+
+def _job_time(job: dict) -> datetime | None:
+    """When a row happened: finished, else started, else its scheduled intent."""
+    return job["finished"] or job["started"] or job["scheduled_at"]
+
+
+def group_jobs(jobs: list[dict], open_keys: frozenset[str] | set[str] = frozenset()) -> list[dict]:
+    """Fold repeated, uneventful runs of the same task into one entry each.
+
+    Three rules, and each of them is load-bearing:
+
+    *Only succeeded rows fold.* A failure or a job still in flight is news, so it
+    keeps its own row, in its own chronological place, even when the same task
+    folded around it. That is what lets the default view hold the housekeeping
+    crons at all — the reason to look at them is the exception, and the exception
+    is exactly what never gets folded away.
+
+    *A group is anchored at its NEWEST member*, so the page still reads
+    newest-first at the top level: `ingest_source` appears where its latest run
+    would have, carrying the ten before it. Grouping by proximity instead would
+    have folded almost nothing here — `scheduled_govern_resources` and
+    `govern_resources` alternate by construction (the cron defers the work), so
+    adjacent runs of one task are rare.
+
+    *The key is the rendered label*, not the task name: one `pipeline_stage` row
+    per stage is seven different things a reader cares about telling apart, and
+    they carry the same task name.
+    """
+    foldable = Counter(job["label"] for job in jobs if job["status"] == "succeeded")
+    entries: list[dict] = []
+    folded: set[str] = set()
+    for job in jobs:
+        label = job["label"]
+        if job["status"] != "succeeded" or foldable[label] < QUEUE_GROUP_MIN:
+            entries.append({"kind": "job", "job": job})
+            continue
+        if label in folded:
+            continue
+        folded.add(label)
+        members = [j for j in jobs if j["label"] == label and j["status"] == "succeeded"]
+        times = [t for t in (_job_time(m) for m in members) if t is not None]
+        took = [m["duration_seconds"] for m in members if m["duration_seconds"] is not None]
+        entries.append(
+            {
+                "kind": "group",
+                "key": label,
+                "label": label,
+                "id": members[0]["id"],
+                "count": len(members),
+                "newest": max(times) if times else None,
+                "oldest": min(times) if times else None,
+                "total_seconds": sum(took) if took else None,
+                "attempts": max(m["attempts"] for m in members),
+                "members": members[:QUEUE_GROUP_MEMBERS],
+                "hidden": max(0, len(members) - QUEUE_GROUP_MEMBERS),
+                "open": label in open_keys,
+            }
+        )
+    return entries
+
+
+async def queue_context(
+    view: str = DEFAULT_QUEUE_VIEW, open_keys: frozenset[str] | set[str] = frozenset()
+) -> dict:
+    """Everything _admin_queue.html renders. One builder for both the full page
+    and the polled partial, so the two cannot present the same queue differently.
+
+    `failed` deliberately spans every class: a failing governor is a real failure,
+    and a failure view that filtered by class would be the one place it hides.
+    """
+    if view not in QUEUE_VIEWS:
+        view = DEFAULT_QUEUE_VIEW
+    _, note, empty, limit = QUEUE_VIEWS[view]
+    if view == "failed":
+        jobs = []
+        for status in FAILURE_STATUSES:
+            jobs += await api_jobs(status=status, limit=limit)
+        jobs = sorted(jobs, key=lambda j: j["id"], reverse=True)[:limit]
+    elif view == "running":
+        jobs = await api_jobs(status="doing", limit=limit)
+    elif view == "waiting":
+        jobs = await api_jobs(status="todo", limit=limit)
+    elif view == "activity":
+        jobs = await api_jobs(exclude_plumbing=True, limit=limit)
+    else:
+        jobs = await api_jobs(limit=limit)
+    return {
+        "entries": group_jobs(jobs, open_keys),
+        "view": view,
+        "views": [(key, value[0]) for key, value in QUEUE_VIEWS.items()],
+        "view_note": note,
+        "empty_note": empty,
+        # Named on the page because the table is a window onto retained history,
+        # not onto everything that ever ran: "no failures" means none in the kept
+        # window, and the windows differ by class (worker/job_history.py).
+        "retention": {
+            "maintenance": settings.job_history_maintenance_days,
+            "ingest": settings.job_history_ingest_days,
+            "work": settings.job_history_work_days,
+            "failed": settings.job_history_failed_days,
+        },
+        # Over the raw rows, deliberately: the digest answers "has the queue
+        # moved", and grouping is a pure function of these. Which groups are open
+        # is NOT in it — that is per-reader state the server stamps from a cookie,
+        # and folding it in would make one reader's click re-render everyone's.
+        "queue_hash": state_hash(view, [_job_identity(job) for job in jobs]),
+    }
+
+
+# A polled fragment answers 204 when the browser already has the current state.
+# htmx does not swap a 204, so an unchanged queue costs one conditional request
+# and NO DOM replacement — which is what actually removes the flashing, since the
+# cheapest possible re-render is still a re-render. `no-store` because the same
+# URL legitimately answers 204 now and 200 once the state moves past the `v` it
+# carries; a cached copy of either would be wrong within seconds.
+_POLL_HEADERS = {"Cache-Control": "no-store"}
+
+
+def _unchanged(current: str, seen: str | None) -> bool:
+    """Only a non-empty match counts. A fragment rendered before this mechanism
+    existed (or a hand-written URL) carries no `v` and must get real content
+    rather than a 204 it cannot interpret."""
+    return bool(seen) and seen == current
+
+
 @router.get("/partials/queue", response_class=HTMLResponse)
-async def queue_partial(request: Request):
+async def queue_partial(
+    request: Request, view: str = DEFAULT_QUEUE_VIEW, v: str | None = None
+):
+    context = await queue_context(view, open_groups(request))
+    if _unchanged(context["queue_hash"], v):
+        return Response(status_code=204, headers=_POLL_HEADERS)
     return templates.TemplateResponse(
-        request, "admin/_admin_queue.html", {"jobs": await api_jobs(limit=20)}
+        request, "admin/_admin_queue.html", context, headers=_POLL_HEADERS
     )
 
 
@@ -385,21 +804,50 @@ async def admin_backend_action(request: Request, action: str, force: bool = Fals
 
 @router.post("/defer/{task}", response_class=HTMLResponse)
 async def admin_defer(request: Request, task: str):
+    """Enqueue and report back. Returns the confirmation line, targeted at the
+    slot inside the control that was clicked (#defer-<task>), and nudges the queue
+    view to refresh via HX-Trigger rather than swapping the table itself - a new
+    row among twenty is not a confirmation, and it is invisible outright in any
+    view that filters the job out.
+
+    A refused defer (a missing source_id, a target id naming no row, a typo in a
+    limit) renders as the same line rather than a 4xx, because htmx does not swap
+    a failed response by default: the old behaviour for a bad click was nothing
+    happening at all. It lands beside the button rather than at the top of the
+    page, which was the same failure one scroll further away - the answer arrived
+    somewhere the reader was not looking."""
     form = await request.form()
 
     def _num(name: str) -> int | None:
-        value = (form.get(name) or "").strip()
-        return int(value) if value else None
+        return parse_target(name, form.get(name))
 
-    await api_defer(
-        task,
-        limit=_num("limit"),
-        story_id=_num("story_id"),
-        post_id=_num("post_id"),
-        source_id=_num("source_id"),
-    )
+    context: dict = {}
+    try:
+        result = await api_defer(
+            task,
+            limit=_num("limit"),
+            story_id=_num("story_id"),
+            post_id=_num("post_id"),
+            source_id=_num("source_id"),
+        )
+    except HTTPException as exc:
+        context = {"error": exc.detail}
+    except ValueError as exc:
+        context = {"error": str(exc)}
+    else:
+        job = job_presentation(
+            {"task_name": result["deferred"], "args": result["args"]}
+        )
+        context = {
+            "label": job["label"],
+            "detail": job["detail"],
+            "job_id": result["job_id"],
+        }
     return templates.TemplateResponse(
-        request, "admin/_admin_queue.html", {"jobs": await api_jobs(limit=20)}
+        request,
+        "admin/_defer_result.html",
+        context,
+        headers={"HX-Trigger": "refreshQueue"},
     )
 
 
@@ -415,10 +863,17 @@ async def admin_pause_resume(request: Request, action: str):
         raise HTTPException(404, f"Unknown action {action!r}")
     # Swap the controls bar back in (its label flips paused/unpaused) and nudge the
     # queue table to refresh via its `refreshQueue from:body` trigger.
+    # `oob_status` carries the status box at the top of the page along with it: it
+    # lives in a different card, and a pause that did not update the thing whose
+    # whole job is reporting the pause would be worse than not having the box.
     return templates.TemplateResponse(
         request,
         "admin/_job_controls.html",
-        {"status": await api_status()},
+        {
+            "status": await api_status(),
+            "pipeline_cron_help": _cron_help(settings.pipeline_cron),
+            "oob_status": True,
+        },
         headers={"HX-Trigger": "refreshQueue"},
     )
 

@@ -8,19 +8,63 @@
 {%- if data -%}
 <span class="kv-chips">{{ _kv_inner(data, '', sort) }}</span>
 {%- else -%}
-<span class="muted">—</span>
+<span class="muted">-</span>
+{%- endif -%}
+{%- endmacro %}
+
+{# The targets a manual job can be pointed at, rendered INSIDE the job's own
+   control so the field sits beside the button that reads it - or once for a whole
+   group, when every job in it takes the same target (admin.SHARED_PARAMS).
+
+   The button includes `closest .job-run` and/or `previous .job-shared`, so nothing
+   coordinates ids across the page: a field can only ever be read by the job it is
+   inside or by the shared row above it. Which fields exist comes from
+   admin.job_params, i.e. from the same table the API validates against.
+
+   Never `closest .job-group`: the group is an ancestor of every job in it, so that
+   selector sweeps in each sibling's fields too - see the note on admin._group.
+
+   `type="text"`, NOT `type="number"`: a number input whose content is not a valid
+   number submits as the EMPTY STRING (HTML spec), so "1o" in a limit field arrived
+   as blank, blank means "everything due", and asking for one item ran the whole
+   backlog with no error anywhere. Text keeps the typo intact so the server can
+   refuse it by name; `pattern` still marks it :invalid before you press anything.
+
+   `hint` carries the whole explanation because there is no room for a sentence
+   beside a four-character input - so it is both the tooltip and the accessible
+   name, and the visible label is left free to be one word. #}
+{% macro job_targets(params, extra='') -%}
+{%- if params -%}
+<span class="job-targets {{ extra }}">
+  {%- for param in params %}
+  <label class="job-target" title="{{ param.hint }}">
+    <span class="job-target-name">{{ param.label }}</span>
+    <input name="{{ param.name }}" type="text" inputmode="numeric" pattern="[0-9]*"
+           size="4" autocomplete="off" spellcheck="false"
+           placeholder="{{ param.placeholder }}"
+           aria-label="{{ param.label }}: {{ param.hint }}">
+  </label>
+  {%- endfor %}
+</span>
 {%- endif -%}
 {%- endmacro %}
 
 {# Status label as a diff-style badge: dark tinted fill + same-hue border, in
    the tone the status maps to. succeeded→ok, failed/aborted/cancelled→bad,
-   anything else (todo/doing/running/…) stays neutral. #}
+   anything else (todo/doing/running/…) stays neutral.
+
+   The glyph sits BESIDE the word, never instead of it: this is an operator
+   surface where a misread status is a wrong decision, and the tone mapping is the
+   single source of truth for both the colour and the glyph so they cannot
+   disagree. `doing`/`running` gets the spinner, which is the one place on the
+   site something animates continuously - it is reporting live state. #}
 {% macro status_badge(value) -%}
-{%- if value == 'succeeded' -%}{%- set tone = 'ok' -%}
-{%- elif value in ('failed', 'aborted', 'cancelled') -%}{%- set tone = 'bad' -%}
-{%- else -%}{%- set tone = 'neutral' -%}
+{%- if value == 'succeeded' -%}{%- set tone, glyph = 'ok', 'ok' -%}
+{%- elif value in ('failed', 'aborted', 'cancelled') -%}{%- set tone, glyph = 'bad', 'bad' -%}
+{%- elif value in ('doing', 'running') -%}{%- set tone, glyph = 'neutral', 'running' -%}
+{%- else -%}{%- set tone, glyph = 'neutral', 'clock' -%}
 {%- endif -%}
-<span class="status-badge status-badge-{{ tone }}">{{ value }}</span>
+<span class="status-badge status-badge-{{ tone }}">{{ ico.icon(glyph, "icon-spin" if glyph == "running" else "") }}{{ value }}</span>
 {%- endmacro %}
 
 {% macro _kv_inner(data, prefix='', sort=true) -%}

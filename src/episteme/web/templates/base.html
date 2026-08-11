@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark">
   <title>Episteme{% block title %}{% endblock %}</title>
   {# `asset()` fingerprints the URL (?v=<hash>) so it can be cached immutably and
-     re-fingerprints on any edit — see web.app.RevalidateStaticFiles. #}
+     re-fingerprints on any edit - see web.app.RevalidateStaticFiles. #}
   <link rel="stylesheet" href="{{ asset('style.css') }}">
   <!-- Vendored htmx preferred; falls back to CDN until static/htmx.min.js exists. -->
   <script src="{{ asset('htmx.min.js') }}"
@@ -38,20 +38,22 @@
 {# `preload` extension: prefetch a boosted link's target on hover so the click feels
    instant. `preload="mouseover"` is inherited by descendant links; it fires the SAME
    boosted GET htmx would (correct HX headers → cached fragment), only GETs, once per
-   element — so hx-post mutation buttons are untouched. #}
+   element - so hx-post mutation buttons are untouched. #}
 <body hx-boost="true"
       hx-target="#main-content"
       hx-swap="innerHTML"
       hx-ext="preload"
       preload="mouseover">
+  {# Above the swap boundary on purpose - see the sprite's own header comment. #}
+  {% include "_icon_sprite.html" %}
   <header class="site-header">
     <h1><a href="/">Episteme</a></h1>
     <nav class="site-nav">
-      <a href="/tune">Tune</a>
+      <a href="/tune">{{ ico.icon("tune") }} Tune</a>
       {# Full load: the admin shell lives in an inherited `content` block that can't be
          emitted as a fragment on its own, so entering admin is a normal navigation.
          Intra-admin nav is boosted from there (see admin_base). #}
-      <a href="/admin" hx-boost="false">Admin</a>
+      <a href="/admin" hx-boost="false">{{ ico.icon("admin") }} Admin</a>
     </nav>
   </header>
   <main id="main-content">

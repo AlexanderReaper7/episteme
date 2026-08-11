@@ -1,7 +1,7 @@
 {% import "admin/_macros.html" as ui %}
 {# One source row. Rendered inside the table on the page, and returned on its own by
    the enable/disable toggle (hx-target="closest tr") so a state change swaps just this
-   row — no full reload. `now` is the cutoff for an active cooldown. #}
+   row - no full reload. `now` is the cutoff for an active cooldown. #}
 <tr>
   <td>
     <span class="source-name">
@@ -18,9 +18,14 @@
   <td>{{ src.last_fetched_at | dt }}</td>
   <td class="bad">{% if src.cooldown_until and src.cooldown_until > now %}{{ src.cooldown_until | dt }}{% endif %}</td>
   <td>
-    <button hx-post="/admin/sources/{{ src.id }}/toggle"
-            hx-target="closest tr" hx-swap="outerHTML">
-      {{ 'disable' if src.enabled else 'enable' }}
-    </button>
+    {# Icon-only toggle (universal action). The source name is in the tooltip and
+       the accessible name, and the off state is still spelled out in the first
+       cell - the glyph never becomes the only place the state is readable. #}
+    <button class="icon-btn icon-press"
+            title="{{ 'Disable' if src.enabled else 'Enable' }} {{ src.name }}"
+            aria-label="{{ 'Disable' if src.enabled else 'Enable' }} {{ src.name }}"
+            aria-pressed="{{ 'true' if src.enabled else 'false' }}"
+            hx-post="/admin/sources/{{ src.id }}/toggle"
+            hx-target="closest tr" hx-swap="outerHTML">{{ ico.icon("toggle-on" if src.enabled else "toggle-off") }}</button>
   </td>
 </tr>

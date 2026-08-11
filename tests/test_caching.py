@@ -11,18 +11,23 @@ hold)."""
 from datetime import datetime
 from types import SimpleNamespace
 
+from starlette.requests import Request
+
+from episteme.web.app import _HTML_VARY
 from episteme.web.app import _feed_etag as _feed_etag_impl
 from episteme.web.app import _feed_partial_etag, _items_partial_etag, _provenance_etag
 from episteme.web.app import _post_page_etag as _post_etag_impl
+from episteme.web.templating import fragment_block
 
 _VOICES = [SimpleNamespace(id="v1", label="Voice One", enabled=True)]
 
 
-# Thin wrappers so the existing call sites read cleanly; `fragment` (the boosted-htmx
-# representation) defaults to the full-document form and is exercised explicitly in
-# the fragment-distinctness tests at the bottom.
-def _feed_etag(page, fragment=False):
-    return _feed_etag_impl(page, fragment)
+# Thin wrappers so the existing call sites read cleanly; `block` is the Jinja block
+# the response body will be (None = the whole document, the same value
+# `templating.fragment_block` returns) and is exercised explicitly in the
+# representation-distinctness tests at the bottom.
+def _feed_etag(page, block=None):
+    return _feed_etag_impl(page, block)
 
 
 _NO_FEEDBACK = {
@@ -35,10 +40,18 @@ _NO_FEEDBACK = {
 
 
 def _post_page_etag(post, voices=_VOICES, default_voice="v1", tts_configured=True,
-                    fragment=False, feedback_ctx=None):
+                    block=None, feedback_ctx=None):
     return _post_etag_impl(
-        post, voices, default_voice, tts_configured, fragment,
+        post, voices, default_voice, tts_configured, block,
         _NO_FEEDBACK if feedback_ctx is None else feedback_ctx,
+    )
+
+
+def _request(headers: dict[str, str]) -> Request:
+    raw = [(k.lower().encode(), v.encode()) for k, v in headers.items()]
+    return Request(
+        {"type": "http", "method": "GET", "path": "/",
+         "query_string": b"", "headers": raw}
     )
 
 
@@ -102,12 +115,18 @@ def _aggregate(items=None, **kw):
     return SimpleNamespace(**base)
 
 
-def _page(posts, has_more=False, next_cursor=None, feedback_signals=None):
+def _page(posts, has_more=False, next_cursor=None, feedback=None):
+    """`feedback` is {post_id: partial context}, merged onto the empty control
+    state — the shape web.feedback.feed_context returns for a page of cards."""
+    empty = {"signals": {}, "topic_signals": {}}
     return {
         "posts": posts,
         "has_more": has_more,
         "next_cursor": next_cursor,
-        "feedback_signals": feedback_signals or {},
+        "feedback_contexts": {
+            post_id: {**empty, **context}
+            for post_id, context in (feedback or {}).items()
+        },
     }
 
 
@@ -207,21 +226,58 @@ def test_aggregate_post_etag_folds_in_story_items():
 
 
 # --- representation distinctness ------------------------------------------
-# The boosted-htmx fragment and the full document live at the same URL; their etags
-# must differ so a cached full document can never satisfy a fragment conditional
-# request (defense-in-depth alongside the response's `Vary: HX-Request`).
+# One URL serves several bodies, so no two of them may ever share a validator: a
+# matching etag makes the server answer "your copy is current" about a body the
+# client does not hold. The etag is therefore taken from the SAME predicate that
+# chooses the body (`templating.fragment_block`), not from a re-reading of the
+# headers — see the history-restore test below for what re-reading cost.
 
 
 def test_feed_fragment_and_full_document_etags_differ():
     page = _page([_feature(), _aggregate()])
-    assert _feed_etag(page, fragment=True) != _feed_etag(page, fragment=False)
+    assert _feed_etag(page, block="content") != _feed_etag(page, block=None)
 
 
 def test_post_fragment_and_full_document_etags_differ():
     post = _feature()
-    full = _post_page_etag(post, fragment=False)
-    frag = _post_page_etag(post, fragment=True)
+    full = _post_page_etag(post, block=None)
+    frag = _post_page_etag(post, block="content")
     assert full != frag
+
+
+def test_history_restore_and_boosted_click_never_share_a_feed_validator():
+    """The live bug (2026-08-03). htmx's Back/Forward restore XHR
+    (`loadHistoryFromServer`) sends `HX-Request: true` with NO `HX-Target` because
+    it wants the whole document — while a boosted click sends both and wants the
+    `content` block. The validators were keyed off `HX-Request` alone, so those two
+    bodies got ONE etag under ONE `Vary: HX-Request` entry: after a Back, clicking
+    the Episteme logo revalidated into a 304 and htmx swapped an entire document —
+    sprite, header and all — into `#main-content`, nesting the page inside itself."""
+    page = _page([_feature(), _aggregate()])
+    plain = _feed_etag(page, fragment_block(_request({}), "feed.html"))
+    restore = _feed_etag(
+        page,
+        fragment_block(
+            _request({"HX-Request": "true", "HX-History-Restore-Request": "true"}),
+            "feed.html",
+        ),
+    )
+    boosted = _feed_etag(
+        page,
+        fragment_block(
+            _request({"HX-Request": "true", "HX-Target": "main-content"}), "feed.html"
+        ),
+    )
+    # The restore gets the same full document a plain hit does — same body, so
+    # sharing that validator is correct and cheap.
+    assert restore == plain
+    assert boosted != restore
+
+
+def test_vary_covers_every_header_the_body_depends_on():
+    # `fragment_block` reads both headers, so a cache keyed on one of them stores two
+    # different bodies in one entry — which is exactly how the nesting bug survived.
+    assert "HX-Request" in _HTML_VARY and "HX-Target" in _HTML_VARY
 
 
 # --- infinite-scroll partial validators -----------------------------------
@@ -298,29 +354,29 @@ def _call(cid, post_id=100, pinned=False):
 
 def test_provenance_etag_is_weak_and_stable():
     post, calls = _prov_post(), [_call(1), _call(2)]
-    etag = _provenance_etag(post, calls, fragment=False)
+    etag = _provenance_etag(post, calls, block=None)
     assert etag.startswith('W/"')
-    assert etag == _provenance_etag(_prov_post(), [_call(1), _call(2)], fragment=False)
+    assert etag == _provenance_etag(_prov_post(), [_call(1), _call(2)], block=None)
 
 
 def test_provenance_etag_moves_on_new_call_pin_or_archival():
-    base = _provenance_etag(_prov_post(), [_call(1)], fragment=False)
+    base = _provenance_etag(_prov_post(), [_call(1)], block=None)
     # A newly logged (or re-stamped) call.
-    assert _provenance_etag(_prov_post(), [_call(1), _call(2)], fragment=False) != base
+    assert _provenance_etag(_prov_post(), [_call(1), _call(2)], block=None) != base
     # A call pinned in place.
-    assert _provenance_etag(_prov_post(), [_call(1, pinned=True)], fragment=False) != base
+    assert _provenance_etag(_prov_post(), [_call(1, pinned=True)], block=None) != base
     # The post pinned / archived / re-scored.
-    assert _provenance_etag(_prov_post(pinned=True), [_call(1)], fragment=False) != base
+    assert _provenance_etag(_prov_post(pinned=True), [_call(1)], block=None) != base
     assert _provenance_etag(
-        _prov_post(archived_at="2026-07-22T00:00:00"), [_call(1)], fragment=False
+        _prov_post(archived_at="2026-07-22T00:00:00"), [_call(1)], block=None
     ) != base
-    assert _provenance_etag(_prov_post(quality_score=0.3), [_call(1)], fragment=False) != base
+    assert _provenance_etag(_prov_post(quality_score=0.3), [_call(1)], block=None) != base
 
 
 def test_provenance_fragment_and_full_document_etags_differ():
     post, calls = _prov_post(), [_call(1)]
-    assert _provenance_etag(post, calls, fragment=True) != _provenance_etag(
-        post, calls, fragment=False
+    assert _provenance_etag(post, calls, block="content") != _provenance_etag(
+        post, calls, block=None
     )
 
 
@@ -334,17 +390,29 @@ def test_provenance_fragment_and_full_document_etags_differ():
 def test_feed_etag_moves_when_a_card_gains_feedback():
     posts = [_feature()]
     base = _feed_etag(_page(posts))
-    liked = _feed_etag(_page(posts, feedback_signals={1: {"kinds": {"like": 9}}}))
+    liked = _feed_etag(_page(posts, feedback={1: {"signals": {"like": 9}}}))
     assert liked != base
     # Undo restores the previous validator exactly — nothing residual is hashed.
-    assert _feed_etag(_page(posts, feedback_signals={1: {"kinds": {}}})) == base
+    assert _feed_etag(_page(posts, feedback={1: {}})) == base
 
 
 def test_feed_partial_etag_moves_when_a_card_gains_feedback():
     posts = [_feature()]
     base = _feed_partial_etag(_page(posts))
-    liked = _feed_partial_etag(_page(posts, feedback_signals={1: {"kinds": {"save": 3}}}))
+    liked = _feed_partial_etag(_page(posts, feedback={1: {"signals": {"save": 3}}}))
     assert liked != base
+
+
+def test_feed_etag_moves_when_a_card_gains_topic_steering():
+    """Cards carry topic chips, so the topic bucket is part of what they render —
+    and a rating decides whether the chips appear at all. A validator that only
+    watched the like/dislike/save bucket would serve a stale card."""
+    posts = [_feature()]
+    base = _feed_etag(_page(posts))
+    steered = _feed_etag(
+        _page(posts, feedback={1: {"topic_signals": {("astronomy", "less_topic"): 4}}})
+    )
+    assert steered != base
 
 
 def test_post_etag_moves_when_the_post_gains_feedback():

@@ -7,7 +7,7 @@
    default (lowest sort_order).
 
    Row-level handlers (edit, drag) are delegated on the stable #voice-table, not the
-   #voice-rows <tbody> — create/toggle/delete swap that <tbody> out via htmx, so
+   #voice-rows <tbody> - create/toggle/delete swap that <tbody> out via htmx, so
    binding to it would lose the handlers after the first mutation. */
 (function () {
   "use strict";
@@ -196,7 +196,7 @@
   }
 
   // On a persist failure, pull the server truth back into the admin region via htmx
-  // (a targeted fragment swap — no full page reload).
+  // (a targeted fragment swap - no full page reload).
   function resync() {
     if (window.htmx) {
       window.htmx.ajax("GET", "/admin/voices", { target: "#admin-main", swap: "innerHTML" });

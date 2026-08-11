@@ -1,0 +1,25 @@
+{# The only way to put a glyph on the page. Registered as the global `ico` in
+   web/templating.py (NOT reachable by `{% import %}` - render_block renders one
+   block in isolation and never runs a template's top-level imports, so an
+   imported macro would vanish on every boosted navigation).
+
+   Icons are always decorative: the control they sit in carries the accessible
+   name (`title` + `aria-label` when it has no visible text). Giving the <svg> its
+   own <title> as well would put two accessible names on one control, which reads
+   worse than none. Hence `aria-hidden` with no escape hatch.
+
+   Names are the semantic ones from tools/build_icon_sprite.py, never Carbon's
+   file stems - the app says `provenance`, not `flow`. #}
+
+{% macro icon(name, extra="") -%}
+<svg class="icon{% if extra %} {{ extra }}{% endif %}" aria-hidden="true" focusable="false"><use href="#i-{{ name }}"/></svg>
+{%- endmacro %}
+
+{# A two-state glyph: outline at rest, solid on hover/focus and while the control
+   is `.is-active`. Both layers are always in the DOM because a cross-fade needs
+   something to fade between - CSS in style.css (`.icon-swap`) does the rest.
+   Only the names in build_icon_sprite.FILLED have a `-filled` twin; anything else
+   renders as an empty box, so this is not a drop-in for `icon()`. #}
+{% macro toggle(name, extra="") -%}
+<span class="icon-swap{% if extra %} {{ extra }}{% endif %}"><svg class="icon icon-swap-a" aria-hidden="true" focusable="false"><use href="#i-{{ name }}"/></svg><svg class="icon icon-swap-b" aria-hidden="true" focusable="false"><use href="#i-{{ name }}-filled"/></svg></span>
+{%- endmacro %}

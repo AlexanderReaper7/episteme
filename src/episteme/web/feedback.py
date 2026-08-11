@@ -10,6 +10,7 @@ visible and editable in the reader's own words.
 from __future__ import annotations
 
 import logging
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
@@ -28,16 +29,44 @@ log = logging.getLogger("episteme.web.feedback")
 
 router = APIRouter()
 
+# Which surface the controls are rendered on. A `Literal` rather than a bool: the
+# fragment replaces itself, so it has to say where it lives in its own URLs, and
+# an unrecognized value must 422 rather than silently fall back to the fuller
+# control set. That was the actual defect here — card buttons sent nothing, the
+# route defaulted to the article set, and clicking Dislike on a feed card swapped
+# in the hide-source button on a card that had deliberately rendered without it.
+Variant = Literal["card", "article"]
 
-async def post_context(session: AsyncSession, post_id: int) -> dict:
-    """Everything `_feedback.html` needs for one post's full control set: the
-    signals already recorded, the topics that can be steered, and the outlets that
-    can be hidden."""
+
+def _topic_entries(labels: list[str], index: dict) -> list[dict]:
+    """Label to read, slug to key by.
+
+    Signals are recorded against the topic's permanent slug, so pairing the two
+    here is what keeps a chip rendering as pressed after the topic has been
+    renamed. One definition, shared by the single-post and whole-page paths, so
+    the two can't pair them differently."""
+    return [
+        {"label": label, "slug": topics_service.slug_for(label, index)}
+        for label in labels
+    ]
+
+
+def _post_labels(post: Post, story: Story | None) -> list[str]:
+    """A post's own topics, falling back to its story's. An aggregate card has no
+    topics of its own — it renders entirely from the story."""
+    return list(post.topics or []) or list((story.topics if story else None) or [])
+
+
+async def post_context(
+    session: AsyncSession, post_id: int, variant: Variant = "article"
+) -> dict:
+    """Everything `_feedback.html` needs for one post's control set: the signals
+    already recorded, the topics that can be steered, and — on the article page —
+    the outlets that can be hidden."""
     post = await session.get(Post, post_id)
     if post is None:
         raise HTTPException(404, f"Unknown post {post_id}")
     story = await session.get(Story, post.story_id)
-    labels = list(post.topics or []) or list((story.topics if story else None) or [])
     sources = (
         await session.execute(
             select(Source.id, Source.name)
@@ -54,22 +83,45 @@ async def post_context(session: AsyncSession, post_id: int) -> dict:
         "signals": signals["kinds"],
         "topic_signals": signals["topics"],
         "source_signals": signals["sources"],
-        # Label to read, slug to key by: signals are recorded against the topic's
-        # permanent slug, so pairing them here is what keeps a more/less button
-        # rendering as pressed after the topic has been renamed.
-        "post_topics": [
-            {"label": label, "slug": topics_service.slug_for(label, index)}
-            for label in labels
-        ],
+        "post_topics": _topic_entries(_post_labels(post, story), index),
         "post_sources": [{"id": row.id, "name": row.name} for row in sources],
-        # The compact card controls carry no topic/source steering; the article
-        # page renders the full set.
-        "with_topics": True,
+        "variant": variant,
     }
 
 
+async def feed_context(session: AsyncSession, posts: list[Post]) -> dict[int, dict]:
+    """`post_context`'s card half for a whole page at once: `{post_id: context}`.
+
+    Cards carry topic chips too, so they need the same label→slug pairing the
+    article page does — but resolving it per card would mean a `slug_index` per
+    post. The vocabulary is read once for the page instead, and the signals come
+    from the single query the feed already makes. Outlets are deliberately absent:
+    hiding a whole publisher is destructive and stays on the article page.
+    """
+    signals = await feedback_service.signals_for_posts(
+        session, [post.id for post in posts]
+    )
+    index = await topics_service.slug_index(session) if posts else {}
+    contexts = {}
+    for post in posts:
+        bucket = signals.get(post.id) or {}
+        # Aggregates already have `.story` loaded for the card banner, so reading
+        # topics off it here costs no extra query.
+        story = post.story if post.kind == "aggregate" else None
+        contexts[post.id] = {
+            "post_id": post.id,
+            "signals": bucket.get("kinds") or {},
+            "topic_signals": bucket.get("topics") or {},
+            "source_signals": {},
+            "post_topics": _topic_entries(_post_labels(post, story), index),
+            "post_sources": [],
+            "variant": "card",
+        }
+    return contexts
+
+
 def _controls(request: Request, context: dict) -> HTMLResponse:
-    return templates.TemplateResponse(request, "_feedback.html", context)
+    return templates.TemplateResponse(request, "_feedback.html", {"fb": context})
 
 
 @router.post("/feedback", response_class=HTMLResponse)
@@ -79,7 +131,7 @@ async def feedback_record(
     post_id: int | None = Query(None, ge=1),
     topic: str | None = None,
     source_id: int | None = Query(None, ge=1),
-    with_topics: bool = True,
+    variant: Variant = "article",
 ):
     async with SessionLocal() as session:
         try:
@@ -90,8 +142,7 @@ async def feedback_record(
             raise HTTPException(422, str(exc)) from None
         if post_id is None:
             return HTMLResponse("")
-        context = await post_context(session, post_id)
-    context["with_topics"] = with_topics
+        context = await post_context(session, post_id, variant)
     return _controls(request, context)
 
 
@@ -100,7 +151,7 @@ async def feedback_undo(
     request: Request,
     feedback_id: int,
     post_id: int | None = Query(None, ge=1),
-    with_topics: bool = True,
+    variant: Variant = "article",
 ):
     async with SessionLocal() as session:
         try:
@@ -110,8 +161,7 @@ async def feedback_undo(
         if post_id is None:
             # Undo from the /tune list: re-render the whole profile panel.
             return await _tune_panel(request)
-        context = await post_context(session, post_id)
-    context["with_topics"] = with_topics
+        context = await post_context(session, post_id, variant)
     return _controls(request, context)
 
 

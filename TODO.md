@@ -20,3 +20,5 @@ This is a list of things to maybe do, in no particular order. And serves as a pl
 - benchmarking
 - docker test? testing db?
 - prefix caching for system prompts?
+- make sure icons are vendored.
+- admin topics nav is broken

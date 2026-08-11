@@ -5,6 +5,7 @@ event id — so the thing worth asserting is that the rendered markup actually
 carries that id, and that a template typo can't ship silently.
 """
 
+import re
 from datetime import UTC, datetime
 
 from episteme.recommend.profile import ProfileState
@@ -21,15 +22,17 @@ def _controls(**overrides):
         # Label to read, permanent slug to key signals by.
         "post_topics": [{"label": "astronomy", "slug": "astronomy"}],
         "post_sources": [{"id": 7, "name": "Phys.org"}],
-        "with_topics": True,
+        "variant": "article",
     }
     context.update(overrides)
-    return templates.env.get_template("_feedback.html").render(**context)
+    return templates.env.get_template("_feedback.html").render(fb=context)
 
 
 def test_untouched_controls_post_the_record_endpoint():
     html = _controls()
-    assert 'hx-post="/feedback?kind=like&post_id=42"' in html
+    # `&amp;` because the query context is built as a Jinja value and autoescaped,
+    # which is what an ampersand inside an HTML attribute is supposed to look like.
+    assert 'hx-post="/feedback?kind=like&amp;post_id=42&amp;variant=article"' in html
     assert 'aria-pressed="false"' in html
     assert "is-active" not in html
 
@@ -38,28 +41,91 @@ def test_recorded_signal_renders_pressed_and_posts_its_own_undo():
     """Undo targets the event id, not the post: that is what makes it exact rather
     than a guess at reversing whatever the profile currently holds."""
     html = _controls(signals={"like": 815})
-    assert 'hx-post="/feedback/815/undo?post_id=42"' in html
+    assert 'hx-post="/feedback/815/undo?post_id=42&amp;variant=article"' in html
     assert 'aria-pressed="true"' in html
     assert "is-active" in html
 
 
-def test_card_controls_omit_topic_and_source_steering():
-    html = _controls(with_topics=False)
-    assert "more_topic" not in html
+def test_every_action_carries_the_variant_it_was_rendered_for():
+    """The fragment replaces itself, so a URL that drops `variant` lets the NEXT
+    render guess — which is how a feed card used to come back wearing the article
+    page's hide-source button."""
+    for variant in ("card", "article"):
+        html = _controls(
+            variant=variant,
+            signals={"dislike": 3},
+            topic_signals={("astronomy", "less_topic"): 8},
+        )
+        posts = re.findall(r'hx-post="([^"]+)"', html)
+        assert posts, "no controls rendered"
+        assert all(f"variant={variant}" in url for url in posts), posts
+
+
+def test_card_controls_omit_source_steering_but_keep_topic_chips():
+    """Hiding an outlet REMOVES its content from the feed, so it stays on the
+    article page. Refining a rating by topic is not destructive and belongs
+    wherever the rating itself can be given."""
+    html = _controls(variant="card", signals={"like": 1})
     assert "hide_source" not in html
+    assert "kind=more_topic" in html
+
+
+def test_topic_chips_appear_only_after_a_rating():
+    """Picking a topic means "this part of what I just rated". With no rating there
+    is nothing to be more specific about, so there is nothing to offer."""
+    assert "more_topic" not in _controls()
+    assert "less_topic" not in _controls()
+
+
+def test_saving_is_not_a_rating_so_it_offers_no_topics():
+    """Save is a bookmark, not a statement about the subject."""
+    html = _controls(signals={"save": 4})
+    assert "more_topic" not in html and "less_topic" not in html
+
+
+def test_a_chip_inherits_the_direction_of_the_rating():
+    """The one-way flow: the reader states a direction once, then names what part
+    of the post it was about. A chip can never contradict the rating above it."""
+    disliked = _controls(signals={"dislike": 2})
+    assert "kind=less_topic" in disliked and "kind=more_topic" not in disliked
+    assert "Less of" in disliked
+
+    liked = _controls(signals={"like": 2})
+    assert "kind=more_topic" in liked and "kind=less_topic" not in liked
+    assert "More of" in liked
 
 
 def test_topic_steering_posts_the_slug_and_reads_the_label():
-    """The button shows the vocabulary's spelling but files the signal under the
+    """The chip shows the vocabulary's spelling but files the signal under the
     topic's permanent slug, so a rename can neither redirect the click onto a
-    different topic nor detach the button from the event it renders from."""
+    different topic nor detach the chip from the event it renders from."""
     html = _controls(
-        post_topics=[{"label": "the colour blue", "slug": "blue"}],
+        signals={"dislike": 1},
+        post_topics=[
+            {"label": "the colour blue", "slug": "blue"},
+            {"label": "optics", "slug": "optics"},
+        ],
         topic_signals={("blue", "more_topic"): 12},
     )
     assert "the colour blue" in html
-    assert "topic=blue" in html and "kind=less_topic" in html
-    assert 'hx-post="/feedback/12/undo?post_id=42"' in html
+    assert "topic=optics" in html and "kind=less_topic" in html
+    assert 'hx-post="/feedback/12/undo?post_id=42&amp;variant=article"' in html
+
+
+def test_a_picked_chip_survives_undoing_the_rating_that_gave_it_meaning():
+    """The orphan case. The topic event still exists, so its chip stays visible and
+    still undoable — hiding it would make a recorded signal unreachable. The
+    UNPICKED chips go, along with the direction they would have carried."""
+    html = _controls(
+        topic_signals={("astronomy", "less_topic"): 55},
+        post_topics=[
+            {"label": "astronomy", "slug": "astronomy"},
+            {"label": "optics", "slug": "optics"},
+        ],
+    )
+    assert 'hx-post="/feedback/55/undo?post_id=42&amp;variant=article"' in html
+    assert "optics" not in html
+    assert "kind=less_topic" not in html
 
 
 def test_hiding_a_source_is_confirmed_because_it_removes_content():
@@ -71,8 +137,20 @@ def test_hiding_a_source_is_confirmed_because_it_removes_content():
 
 def test_hidden_source_offers_unhide_without_a_confirm():
     html = _controls(source_signals={7: 99})
-    assert 'hx-post="/feedback/99/undo?post_id=42"' in html
-    assert "unhide" in html
+    assert 'hx-post="/feedback/99/undo?post_id=42&amp;variant=article"' in html
+    assert "Show everything from Phys.org" in html
+
+
+def test_every_icon_only_control_names_itself():
+    """A glyph with no words is unreadable without both a tooltip (`title`, what
+    the user asked for) and an accessible name (`aria-label`). The chips are
+    exempt: their content IS the word."""
+    html = _controls(signals={"like": 1})
+    for button in re.findall(r"<button\b.*?</button>", html, re.S):
+        if "feedback-btn--topic" in button:
+            continue
+        assert re.search(r'title="[^"]+"', button), button
+        assert re.search(r'aria-label="[^"]+"', button), button
 
 
 def _tune(**overrides):

@@ -4,7 +4,7 @@
 
 {% block content %}
 <div class="admin-page">
-  <p class="note"><a href="/post/{{ post.id }}">← post</a></p>
+  <p class="note"><a href="/post/{{ post.id }}">{{ ico.icon("back") }} post</a></p>
 
   <section class="admin-card admin-card-wide">
     <h2>{{ post.title or "Aggregate card (story " ~ story.id ~ ")" }}</h2>
@@ -15,18 +15,18 @@
         {% for p in story.posts %}
         <div>
           {% if p.id == post.id %}
-          <strong>#{{ p.id }} ({{ p.status }}) — this version</strong> · {{ p.generated_at | dt }}
+          <strong>#{{ p.id }} ({{ p.status }}) - this version</strong> · {{ p.generated_at | dt }}
           {% else %}
           <a href="/post/{{ p.id }}/provenance">#{{ p.id }} ({{ p.status }})</a>
-          — {{ p.title or "(" ~ p.kind ~ ")" }} · {{ p.generated_at | dt }}
+          - {{ p.title or "(" ~ p.kind ~ ")" }} · {{ p.generated_at | dt }}
           {% endif %}
           {% if p.pinned %} · pinned{% endif %}
         </div>
         {% endfor %}
       </td></tr>
       {% endif %}
-      <tr><th>story</th><td>#{{ story.id }} — {{ story.status }}</td></tr>
-      <tr><th>triage</th><td>{{ story.triage_decision }} (score {{ story.rank_score }}) — {{ story.triage_reason }}</td></tr>
+      <tr><th>story</th><td>#{{ story.id }} - {{ story.status }}</td></tr>
+      <tr><th>triage</th><td>{{ story.triage_decision }} (score {{ story.rank_score }}) - {{ story.triage_reason }}</td></tr>
       <tr><th>topics</th><td>{{ story.topics | join(", ") }}</td></tr>
       <tr><th>items</th><td>
         {% for item in story["items"] %}
@@ -36,7 +36,7 @@
     </table>
 
     {# research_notes is story-level and overwritten by each rewrite, so it only
-       describes the current version — archived pages omit it (their research is
+       describes the current version - archived pages omit it (their research is
        in the write transcript below). #}
     {% if story.research_notes and post.status == "published" %}
     <h3>Research notes</h3>
@@ -61,8 +61,9 @@
     </p>
 
     {% for group in groups %}
-    <details class="llm-call">
+    <details class="disclosure llm-call">
       <summary>
+        {{ ico.icon("disclosure", "disclosure-caret") }}
         <strong>{{ group.stage or '?' }}</strong> · {{ group.kind }} · {{ group.calls[0].role }}
         {% if group.calls | length > 1 %} · {{ group.calls | length }} turns{% endif %}
         · {{ group.prompt_tokens }}+{{ group.completion_tokens }} tok
@@ -82,7 +83,8 @@
       <div class="llm-msg llm-msg-{{ msg.role or 'assistant' }}">
         <span class="llm-msg-role">{{ msg.role or 'assistant' }}</span>
         {% if msg.reasoning_content %}
-        <details><summary class="muted">thinking</summary>
+        <details class="disclosure llm-thinking">
+          <summary class="muted">{{ ico.icon("disclosure", "disclosure-caret") }} thinking</summary>
           <div class="llm-text muted">{{ msg.reasoning_content }}</div>
         </details>
         {% endif %}

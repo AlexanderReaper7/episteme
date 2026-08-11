@@ -20,7 +20,7 @@
         </li>
         {% endfor %}
       </ul>
-      {# Endpoint is per role, so it belongs next to the model it serves — with
+      {# Endpoint is per role, so it belongs next to the model it serves - with
          everything on one server the column simply repeats the same URL. #}
       <table class="admin-table">
         <tr><th>role</th><th>model</th><th>endpoint</th></tr>
@@ -49,7 +49,7 @@
     </section>
 
     {# Only rendered when a host agent is configured. With LLM_HOST_AGENT_URL
-       empty the dashboard is exactly what it was before this feature existed —
+       empty the dashboard is exactly what it was before this feature existed -
        the agent is optional infrastructure, not a dependency. #}
     {% if status.llm.host_agent.enabled %}
     <section class="admin-card admin-card-wide">
@@ -173,7 +173,9 @@
           {% for job in jobs_summary.running %}
           <dd class="mini-row-value">
             <span class="pill pill-live">#{{ job.id }}</span>
-            <span class="mono">{{ job.task_name }}</span>
+            <span class="job-label">{{ job.label }}</span>
+            {% if job.detail %}<span class="muted">{{ job.detail }}</span>{% endif %}
+            {% if job.started %}<span class="muted">· {{ job.started | ago }}</span>{% endif %}
           </dd>
           {% endfor %}
           {% else %}
@@ -184,7 +186,8 @@
           <dt class="mini-row-label">next up</dt>
           {% if jobs_summary.upcoming %}
           <dd class="mini-row-value">
-            <span class="mono">{{ jobs_summary.upcoming.task_name }}</span>
+            <span class="job-label">{{ jobs_summary.upcoming.label }}</span>
+            {% if jobs_summary.upcoming.detail %}<span class="muted">{{ jobs_summary.upcoming.detail }}</span>{% endif %}
             <span class="muted">#{{ jobs_summary.upcoming.id }}{% if jobs_summary.upcoming.scheduled_at %} · {{ jobs_summary.upcoming.scheduled_at | dt }}{% endif %}</span>
           </dd>
           {% else %}
@@ -196,7 +199,9 @@
           {% if jobs_summary.recent %}
           <dd class="mini-row-value">
             {{ ui.status_badge(jobs_summary.recent.status) }}
-            <span class="mono">{{ jobs_summary.recent.task_name }}</span>
+            <span class="job-label">{{ jobs_summary.recent.label }}</span>
+            {% if jobs_summary.recent.detail %}<span class="muted">{{ jobs_summary.recent.detail }}</span>{% endif %}
+            {% if jobs_summary.recent.finished %}<span class="muted">· {{ jobs_summary.recent.finished | ago }}</span>{% endif %}
           </dd>
           {% else %}
           <dd class="mini-row-value muted">none yet</dd>

@@ -1,5 +1,5 @@
 {# Unified feed cards. Every unit is a Post; the WHOLE card is one link
-   (`.card-link` stretched over it) — never image and title as separate anchors.
+   (`.card-link` stretched over it) - never image and title as separate anchors.
    Secondary links (provenance) sit above the stretch via z-index. Feature posts
    open their generated read at /post/{id}; aggregate cluster cards open the
    cluster detail at the same route (which lists the external sources). #}
@@ -13,7 +13,7 @@
     <a class="card-link" href="/post/{{ post.id }}"
        aria-label="{{ primary.title or primary.url }}"></a>
     {% if banner %}
-    {# Hotlinked (never cached, per spec §6) — drop the banner if the image is gone. #}
+    {# Hotlinked (never cached, per spec §6) - drop the banner if the image is gone. #}
     <div class="card-banner">
       <img src="{{ banner }}" alt="" loading="lazy"
            onerror="this.closest('.card-banner').remove()">
@@ -21,13 +21,13 @@
     {% endif %}
     <div class="card-body">
       <div class="card-meta">
-        <span class="card-kind card-kind--aggregate">Aggregated</span>
+        <span class="card-kind card-kind--aggregate">{{ ico.icon("aggregate") }} Aggregated</span>
         <span class="source-name">{{ primary.source.name }}</span>
         {% if story.items | length > 1 %}
         <span class="muted">+{{ (story.items | length) - 1 }} more</span>
         {% endif %}
         {% if story.last_item_at %}<time>{{ story.last_item_at | dt }}</time>{% endif %}
-        <a class="card-provenance" href="/post/{{ post.id }}/provenance">provenance</a>
+        <a class="card-provenance" href="/post/{{ post.id }}/provenance">{{ ico.icon("provenance") }} provenance</a>
       </div>
       <h2 class="card-title">{{ primary.title or primary.url }}</h2>
       {% set snippet = primary.extracted_text or (primary.raw_content | striptags if primary.raw_content else None) %}
@@ -37,17 +37,13 @@
         {% for topic in story.topics %}<span class="chip">{{ topic }}</span>{% endfor %}
       </div>
       {% endif %}
-      {% with post_id = post.id,
-              signals = (feedback_signals.get(post.id) or {}).get("kinds") or {},
-              with_topics = false %}
-        {% include "_feedback.html" %}
-      {% endwith %}
+      {% with fb = feedback_contexts[post.id] %}{% include "_feedback.html" %}{% endwith %}
     </div>
   </article>
   {% endif %}
 {% else %}
   {# Denormalized at write time (pipeline.write_posts) so the feed never loads a
-     feature's story items just to find its banner — see web.app._feed_page. #}
+     feature's story items just to find its banner - see web.app._feed_page. #}
   {% set banner = post.banner_url %}
   <article class="card card--feature">
     <a class="card-link" href="/post/{{ post.id }}" aria-label="{{ post.title }}"></a>
@@ -59,11 +55,11 @@
     {% endif %}
     <div class="card-body">
       <div class="card-meta">
-        <span class="card-kind card-kind--feature">Article</span>
+        <span class="card-kind card-kind--feature">{{ ico.icon("article") }} Article</span>
         <span class="byline">Episteme</span>
-        <span class="muted">{{ post.reading_time_minutes }} min · {{ post.difficulty }}</span>
+        <span class="muted">{{ ico.icon("clock") }} {{ post.reading_time_minutes }} min · {{ post.difficulty }}</span>
         <time>{{ post.generated_at | dt }}</time>
-        <a class="card-provenance" href="/post/{{ post.id }}/provenance">provenance</a>
+        <a class="card-provenance" href="/post/{{ post.id }}/provenance">{{ ico.icon("provenance") }} provenance</a>
       </div>
       <h2 class="card-title">{{ post.title }}</h2>
       {% if post.summary %}<p class="card-snippet">{{ post.summary | truncate(300) }}</p>{% endif %}
@@ -72,17 +68,13 @@
         {% for topic in post.topics %}<span class="chip">{{ topic }}</span>{% endfor %}
       </div>
       {% endif %}
-      {% with post_id = post.id,
-              signals = (feedback_signals.get(post.id) or {}).get("kinds") or {},
-              with_topics = false %}
-        {% include "_feedback.html" %}
-      {% endwith %}
+      {% with fb = feedback_contexts[post.id] %}{% include "_feedback.html" %}{% endwith %}
     </div>
   </article>
 {% endif %}
 {% else %}
 {% if first_page %}
-<p class="empty-state">No posts yet — the pipeline will fill this stream on its next run.</p>
+<p class="empty-state">No posts yet - the pipeline will fill this stream on its next run.</p>
 {% endif %}
 {% endfor %}
 

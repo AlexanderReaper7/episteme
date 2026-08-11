@@ -1,4 +1,4 @@
-"""Job-queue self-healing.
+"""Job-queue self-healing: requeue jobs a dead worker stranded.
 
 procrastinate writes a job's terminal event only when the worker *finishes* it.
 A `docker compose up --build` redeploy SIGKILLs the worker container, so any job
@@ -7,6 +7,11 @@ has nothing that sweeps these orphans (this is exactly how ingest_source job 116
 stuck on the 2026-07-18 redeploy: worker killed mid-fetch, row left `doing` with
 attempts=0 across every later deploy). This module is that missing recovery: a
 periodic sweep requeues stalled jobs and prunes the dead workers behind them.
+
+Retention — deleting finished job rows once they stop being worth reading — is
+deliberately NOT here: see worker/job_history.py. The two touch the same table
+but have opposite jobs (one revives rows, one forgets them) and opposite failure
+modes, so they stay independently readable and independently deployable.
 """
 
 import logging

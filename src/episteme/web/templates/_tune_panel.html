@@ -1,11 +1,11 @@
 {# The profile, as the reader sees it. Everything below is DERIVED from the
-   feedback log — there is no hidden state — so "rebuild" is always safe and
+   feedback log - there is no hidden state - so "rebuild" is always safe and
    "undo" is exact rather than approximate. #}
 <div id="tune-panel">
   <section class="tune-card">
     <h2>Tell the feed what you want</h2>
     <p class="muted">
-      Plain words. This is the most expressive control here — it can do things the
+      Plain words. This is the most expressive control here - it can do things the
       buttons can't, like "more deep-sea biology, less speculative AI hype, and
       never anything about crypto".
     </p>
@@ -31,11 +31,11 @@
       <h2>What the feed thinks you like</h2>
       <button type="button" class="tune-rebuild" hx-post="/tune/rebuild"
               hx-target="#tune-panel" hx-swap="outerHTML"
-              title="Replay the feedback log from scratch">rebuild</button>
+              title="Replay the feedback log from scratch">{{ ico.icon("restart") }} rebuild</button>
     </div>
     <p class="muted">
-      Drag any slider. A dragged value is <em>absolute</em> — it replaces whatever
-      the log had added up to, instead of nudging it — on a scale of
+      Drag any slider. A dragged value is <em>absolute</em> - it replaces whatever
+      the log had added up to, instead of nudging it - on a scale of
       −{{ '%g' | format(clamp) }} to +{{ '%g' | format(clamp) }}, and 0 forgets the
       topic. Move as many as you like; nothing is recorded until you save. The feed
       keeps learning from there, and each change is a signal like any other, so you
@@ -48,15 +48,15 @@
     {% endif %}
     {% if topic_rows %}
     {# One form for the whole list: the reader's unit of work is an editing session,
-       not a slider. Fields are `w:<slug>` — the topic's permanent identity, so a
-       rename can't redirect a drag onto a different topic — and `dirty` (set by
+       not a slider. Fields are `w:<slug>` - the topic's permanent identity, so a
+       rename can't redirect a drag onto a different topic - and `dirty` (set by
        app.js) names the sliders actually moved, so an untouched one never pins a
        weight. Which sliders moved is knowable only on the client, so this list
        genuinely needs JavaScript; the "set a topic by name" box below does not and
        can reach every one of these topics. #}
     <noscript>
       <p class="muted">
-        The sliders need JavaScript to save. Use “set a topic by name” below —
+        The sliders need JavaScript to save. Use “set a topic by name” below -
         the name of any topic listed here works, and the weight it sets is the
         same absolute value.
       </p>
@@ -86,14 +86,14 @@
       </ul>
       <div class="weight-actions">
         <button type="submit" class="weight-save" disabled>Save changes</button>
-        <button type="button" class="weight-revert" data-revert hidden>revert</button>
+        <button type="button" class="weight-revert" data-revert hidden>{{ ico.icon("undo") }} revert</button>
         <span class="weight-pending muted" role="status" data-pending></span>
       </div>
     </form>
     {% else %}
     <p class="muted">
       Nothing learned yet. Say something above, use the buttons on any post, or set
-      a topic by hand below — the feed stays in date order until it has something to
+      a topic by hand below - the feed stays in date order until it has something to
       go on.
     </p>
     {% endif %}
@@ -119,7 +119,7 @@
 
     <h3>Hard blocks</h3>
     <p class="muted">
-      These remove content from the feed entirely, rather than ranking it lower — a
+      These remove content from the feed entirely, rather than ranking it lower - a
       blocked word hides every post whose title or text contains it. Unlike a
       weight, a block never fades. Unblocking takes effect immediately.
     </p>
@@ -130,7 +130,7 @@
         <button type="button" class="chip-remove" title="unblock “{{ keyword }}”"
                 aria-label="unblock {{ keyword }}"
                 hx-post="/tune/unblock?keyword={{ keyword | urlencode }}"
-                hx-target="#tune-panel" hx-swap="outerHTML">×</button>
+                hx-target="#tune-panel" hx-swap="outerHTML">{{ ico.icon("remove") }}</button>
       </span>
       {% endfor %}
       {% for source_id in profile.blocked_sources %}
@@ -139,7 +139,7 @@
                 title="unblock {{ sources.get(source_id, source_id) }}"
                 aria-label="unblock {{ sources.get(source_id, source_id) }}"
                 hx-post="/tune/unblock?source_id={{ source_id }}"
-                hx-target="#tune-panel" hx-swap="outerHTML">×</button>
+                hx-target="#tune-panel" hx-swap="outerHTML">{{ ico.icon("remove") }}</button>
       </span>
       {% endfor %}
     </span>
@@ -212,7 +212,7 @@
         <time>{{ event.created_at | dt }}</time>
         <button type="button" class="signal-undo" hx-post="/feedback/{{ event.id }}/undo"
                 hx-target="#tune-panel" hx-swap="outerHTML"
-                title="Remove this signal and replay">undo</button>
+                title="Remove this signal and replay">{{ ico.icon("undo") }} undo</button>
       </li>
       {% endfor %}
     </ul>

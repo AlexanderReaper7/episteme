@@ -1,31 +1,122 @@
 {% extends "admin/admin_base.html" %}
+{% import "admin/_macros.html" as ui %}
 
 {% block title %} • Job queue{% endblock %}
 
 {% block admin_content %}
 <h1 class="admin-title">Job queue</h1>
 
+{% include "admin/_pipeline_status.html" %}
+
 <section class="admin-card admin-card-wide">
-  <h2>Controls</h2>
+  <h2>Run the pipeline</h2>
   {% include "admin/_job_controls.html" %}
-  <p class="stage-controls">
-    <input id="stage-limit" name="limit" type="number" min="1" placeholder="limit">
-    <input id="stage-story" name="story_id" type="number" min="1" placeholder="story id">
-    <input id="stage-post" name="post_id" type="number" min="1" placeholder="post id">
-    <button hx-post="/admin/defer/embed" hx-include="#stage-limit" hx-target="#queue" hx-swap="innerHTML">embed</button>
-    <button hx-post="/admin/defer/cluster" hx-include="#stage-limit" hx-target="#queue" hx-swap="innerHTML">cluster</button>
-    <button hx-post="/admin/defer/triage" hx-include="#stage-limit,#stage-story" hx-target="#queue" hx-swap="innerHTML">triage</button>
-    <button hx-post="/admin/defer/write" hx-include="#stage-limit,#stage-story" hx-target="#queue" hx-swap="innerHTML">write</button>
-    <button hx-post="/admin/defer/qa" hx-include="#stage-limit,#stage-post" hx-target="#queue" hx-swap="innerHTML">qa</button>
-    <button hx-post="/admin/defer/score" hx-include="#stage-limit,#stage-post" hx-target="#queue" hx-swap="innerHTML">score</button>
+</section>
+
+<section class="admin-card admin-card-wide">
+  <div class="admin-card-head">
+    <h2>Run one stage</h2>
+  </div>
+  <p class="muted stage-intro">
+    Stages are data-driven: each one picks up whatever rows the previous stage left
+    unprocessed, so any of them can run on its own and continues from where the last
+    run stopped. Top to bottom is the order a story travels.
   </p>
+
+  {# One expandable block per stage, in pipeline order. Collapsed, a block is
+     still a working control: the run button lives in the summary, so the common
+     case (run with the shared limit) is one click and expanding is for reading
+     what the stage does or pointing it at one row.
+
+     `job-shared` is the row of targets every stage in the group accepts (see
+     admin.SHARED_PARAMS); `job-run` is the block, holding the ones only that stage
+     takes. A button includes whichever of the two it actually has fields in, by
+     proximity, so no ids are coordinated - and a collapsed <details> still submits
+     its inputs, since hidden is not disabled. #}
+  <div class="stage-group">
+    {% if stages.shared %}
+    <p class="stage-shared job-shared">
+      {{ ui.job_targets(stages.shared, "job-targets-shared") }}
+      <span class="muted">Applies to whichever stage you run. Blank means everything due.</span>
+    </p>
+    {% endif %}
+
+    <ol class="stage-chain">
+      {% for stage in stages.jobs %}
+      <li class="stage-block job-run">
+        <details class="disclosure stage-details">
+          <summary class="stage-head">
+            {{ ico.icon("disclosure", "disclosure-caret") }}
+            <span class="stage-name">{{ ico.icon(stage.icon) }} {{ stage.task }}</span>
+            <span class="stage-flow">
+              <span class="stage-takes">{{ stage.takes }}</span>
+              {{ ico.icon("produces") }}
+              <span class="stage-makes">{{ stage.makes }}</span>
+            </span>
+            {# What the takes/makes pair is a proxy for, stated outright: a
+               data-driven stage is a no-op unless its input rows exist. `blocked`
+               is not a zero - it is a button that will do nothing whatever the
+               count says, which is a different thing to tell someone. #}
+            {% if stage.blocked %}
+            <span class="stage-due is-blocked" title="This stage returns immediately unless you name a single row.">{{ ico.icon("warn") }} {{ stage.blocked }}</span>
+            {% elif stage.due is none %}
+            <span class="stage-due muted" title="Only knowable by building every post's script; see worker/pending.py.">not counted</span>
+            {% elif stage.due %}
+            <span class="stage-due is-due">{{ stage.due }} due</span>
+            {% else %}
+            <span class="stage-due muted">nothing due</span>
+            {% endif %}
+            {# Visibly just "run" - the stage's name is one span to the left and
+               repeating it makes seven ragged buttons. But seven controls whose
+               accessible name is the same word is a domain action that stopped
+               naming its object (0029), so the label carries it. #}
+            <button class="stage-run" aria-label="run {{ stage.task }}"
+                    hx-post="/admin/defer/{{ stage.task }}"
+                    {% if stage.include %}hx-include="{{ stage.include }}"{% endif %}
+                    hx-target="#defer-{{ stage.task }}" hx-swap="innerHTML">
+              {{ ico.icon("run") }} run
+            </button>
+          </summary>
+          <div class="stage-body">
+            <p class="stage-note">{{ stage.note }}</p>
+            {{ ui.job_targets(stage.params) }}
+          </div>
+        </details>
+        {# Outside the <details>, because a run started from the collapsed header
+           has to be able to answer where you can see it. #}
+        <div class="defer-result" id="defer-{{ stage.task }}" aria-live="polite"></div>
+      </li>
+      {% endfor %}
+    </ol>
+  </div>
+</section>
+
+<section class="admin-card admin-card-wide">
+  <div class="admin-card-head">
+    <h2>Maintenance &amp; one-off jobs</h2>
+  </div>
+  <p class="muted stage-intro">
+    These run themselves on a schedule. The buttons are for not waiting.
+  </p>
+  <div class="job-ops">
+    {% for op in maintenance_ops.jobs %}
+    <div class="job-op job-run">
+      <button hx-post="/admin/defer/{{ op.task }}"
+              {% if op.include %}hx-include="{{ op.include }}"{% endif %}
+              hx-target="#defer-{{ op.task }}" hx-swap="innerHTML">
+        {{ ico.icon(op.icon) }} {{ op.label }}
+      </button>
+      {{ ui.job_targets(op.params) }}
+      <span class="muted">{{ op.help }}{% if op.task == 'ingest_source' %} Ids are on <a href="/admin/sources">Sources</a>.{% endif %}</span>
+      <div class="defer-result" id="defer-{{ op.task }}" aria-live="polite"></div>
+    </div>
+    {% endfor %}
+  </div>
 </section>
 
 <section class="admin-card admin-card-wide">
   <h2>Queue</h2>
-  <div id="queue" hx-get="/admin/partials/queue"
-       hx-trigger="every 10s, refreshQueue from:body"
-       hx-target="this">
+  <div id="queue">
     {% include "admin/_admin_queue.html" %}
   </div>
 </section>

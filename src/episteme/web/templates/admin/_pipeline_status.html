@@ -1,0 +1,33 @@
+{# The pipeline's state, as its own box at the top of the page.
+
+   It used to be a line UNDER three buttons, rendered only while paused - so the
+   normal state was indistinguishable from "this element does not exist", and the
+   first question anyone brings to this page (is it running?) was answered by
+   absence. Now it answers in both directions and answers first.
+
+   `oob_status` is set only when this rides back on a pause/resume response, which
+   targets #job-controls in a different card; htmx applies the swap by id from
+   anywhere in the response. On a full page render the flag is absent, so the same
+   partial renders as a plain element. #}
+<section id="pipeline-status"
+         class="admin-card admin-card-wide pipeline-status{{ ' is-paused' if status.pipeline.paused }}"
+         {% if oob_status %}hx-swap-oob="true"{% endif %}>
+  {% if status.pipeline.paused %}
+  <p class="pipeline-state">
+    <span class="bad">{{ ico.icon("pause") }} pipeline paused</span>
+    {# Say WHO paused it. A pipeline that stopped on its own is indistinguishable
+       from a broken one unless the panel names the resource governor as the cause. #}
+    {% if status.pipeline.reason == 'resource' %}
+    <span class="muted">by the resource governor, another program is using the GPU. It will resume on its own once the GPU is quiet.</span>
+    {% else %}
+    <span class="muted">by hand. The governor will not lift this; only the resume button will.</span>
+    {% endif %}
+    {% if status.pipeline.since %}<span class="muted">· since {{ status.pipeline.since | dt }} ({{ status.pipeline.since | ago }})</span>{% endif %}
+  </p>
+  {% else %}
+  <p class="pipeline-state">
+    <span class="ok">{{ ico.icon("ok") }} pipeline running</span>
+    <span class="muted">Stages run when their input rows are waiting. Full run normally {{ pipeline_cron_help }}.</span>
+  </p>
+  {% endif %}
+</section>

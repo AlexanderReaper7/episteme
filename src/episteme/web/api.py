@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Annotated
 from urllib.parse import urlsplit
 
 from croniter import croniter
@@ -21,6 +22,12 @@ from ..db import SessionLocal
 from ..llm import gateway
 from ..llm.host import HostAgentError, host_agent
 from ..models import (
+    JOB_CLASS_INGEST,
+    JOB_CLASS_MAINTENANCE,
+    JOB_CLASS_SCHEDULER,
+    JOB_CLASS_WORK,
+    JOB_PLUMBING_CLASSES,
+    LIVE_STATUSES,
     POST_SCOPED_STAGES,
     Feedback,
     InterestProfile,
@@ -31,6 +38,7 @@ from ..models import (
     Source,
     SourceItem,
     Story,
+    job_class,
 )
 from ..recommend import feedback, profile, topics
 from ..recommend.scoring import defer_rescore
@@ -55,6 +63,7 @@ DEFERRABLE_TASKS: dict[str, tuple[str, frozenset[str]]] = {
     "run_pipeline": ("episteme.run_pipeline", frozenset()),
     "backup_database": ("episteme.backup_database", frozenset()),
     "recover_stalled_jobs": ("episteme.recover_stalled_jobs", frozenset()),
+    "prune_job_history": ("episteme.prune_job_history", frozenset()),
     # Vocabulary bootstrap, two-phase on purpose: propose writes a reviewable
     # proposal, apply commits it (see recommend/topics.py).
     "propose_topics": ("episteme.propose_topics", frozenset()),
@@ -330,7 +339,7 @@ def next_cron_fire(expr: str) -> datetime | None:
 
 
 @router.get("/runs")
-async def api_runs(limit: int = Query(20, ge=1, le=200)):
+async def api_runs(limit: Annotated[int, Query(ge=1, le=200)] = 20):
     async with SessionLocal() as session:
         runs = (
             (await session.execute(select(PipelineRun).order_by(PipelineRun.id.desc()).limit(limit)))
@@ -373,69 +382,191 @@ async def api_runs_summary():
 
 # --- Job queue --------------------------------------------------------------------
 
+# What a queue row means, derived rather than displayed raw. Three things were
+# unreadable before: every pipeline stage was the same task name
+# (`episteme.pipeline_stage`) with the interesting word hidden in the args; the
+# periodic entry points carried a raw unix timestamp as their only visible
+# detail; and there was no time anywhere, because `scheduled_at` is NULL for an
+# immediately-deferred job — which is nearly all of them.
+
+# args worth showing next to the label, in this order. `stage` is excluded: it
+# IS the label. `timestamp` is excluded because it is procrastinate's own cron
+# bookkeeping — a unix integer that reads as data and says nothing.
+_JOB_DETAIL_ARGS = ("source_id", "story_id", "post_id", "voice", "limit")
+_JOB_DETAIL_LABELS = {"source_id": "source", "story_id": "story", "post_id": "post"}
+
+
+def job_presentation(row: dict) -> dict:
+    """Row + the derived fields the queue view reads: `label` (what ran),
+    `detail` (which target), `job_class`, and `duration_seconds`.
+
+    A `pipeline_stage` row is labelled by its stage, since that is the only thing
+    distinguishing one from another; everything else drops the `episteme.` prefix
+    that is identical on every row and therefore carries no information."""
+    args = row.get("args") or {}
+    task = row["task_name"]
+    label = args.get("stage") if task == "episteme.pipeline_stage" else None
+    label = label or task.removeprefix("episteme.")
+    detail = " · ".join(
+        f"{_JOB_DETAIL_LABELS.get(key, key)} {args[key]}"
+        for key in _JOB_DETAIL_ARGS
+        if args.get(key) is not None
+    )
+    started, finished = row.get("started"), row.get("finished")
+    return {
+        **row,
+        "label": label,
+        "detail": detail,
+        "job_class": job_class(task),
+        "duration_seconds": (
+            (finished - started).total_seconds() if started and finished else None
+        ),
+    }
+
+
+# One lateral pass over a job's events gives both timestamps. procrastinate keeps
+# no timing on the job row itself — `scheduled_at` is the cron's intent, NULL for
+# anything deferred on demand — so without this join the queue can only say that
+# something happened, never when or for how long.
+_JOB_SELECT = """
+SELECT j.id, j.task_name, j.status, j.args, j.attempts, j.scheduled_at,
+       e.started, e.finished
+FROM procrastinate_jobs j
+LEFT JOIN LATERAL (
+    SELECT max(at) FILTER (WHERE type = 'started') AS started,
+           max(at) FILTER (WHERE type NOT IN ('started', 'deferred', 'scheduled'))
+               AS finished
+    FROM procrastinate_events WHERE job_id = j.id
+) e ON true
+"""
+
 
 @router.get("/jobs")
-async def api_jobs(status: str | None = None, limit: int = Query(50, ge=1, le=500)):
-    query = (
-        "SELECT id, task_name, status, args, attempts, scheduled_at "
-        "FROM procrastinate_jobs "
-        + ("WHERE status = :status " if status else "")
-        + "ORDER BY id DESC LIMIT :limit"
-    )
+async def api_jobs(
+    status: str | None = None,
+    # Annotated, NOT `= Query(None, alias="class")`. The admin routes call these
+    # handlers directly as plain async functions (see web/admin.py), and a
+    # `Query(...)` default is a Query OBJECT when FastAPI is not the one filling
+    # it in — truthy, so `if job_class_:` fired on every direct call and filtered
+    # the queue against a sentinel no job could match. Annotated keeps the real
+    # default a real None.
+    job_class_: Annotated[str | None, Query(alias="class")] = None,
+    exclude_plumbing: bool = False,
+    limit: Annotated[int, Query(ge=1, le=500)] = 50,
+):
+    """Recent jobs, newest first. `class` filters to one of scheduler/maintenance/
+    ingest/work; `exclude_plumbing` drops the two self-firing housekeeping classes
+    in one go, which is what the queue page's default view asks for.
+
+    Class filtering happens in Python (`models.job_class` is prefix-matched, and
+    duplicating it as a SQL predicate is precisely the drift the shared classifier
+    exists to prevent), so a filtered query over-fetches and trims. The multiplier
+    is sized for the real ratio — plumbing outnumbers work ~200:1 — and the cap
+    keeps a pathological queue from being read whole."""
+    where = ["true"]
     params: dict = {"limit": limit}
     if status:
+        where.append("j.status = :status")
         params["status"] = status
+    wanted: tuple[str, ...] | None = None
+    if job_class_:
+        wanted = (job_class_,)
+    elif exclude_plumbing:
+        wanted = tuple(
+            c
+            for c in (JOB_CLASS_SCHEDULER, JOB_CLASS_MAINTENANCE, JOB_CLASS_INGEST, JOB_CLASS_WORK)
+            if c not in JOB_PLUMBING_CLASSES
+        )
+    params["limit"] = limit if wanted is None else min(limit * 40, 4000)
+    query = (
+        _JOB_SELECT
+        + " WHERE "
+        + " AND ".join(where)
+        + " ORDER BY j.id DESC LIMIT :limit"
+    )
     async with SessionLocal() as session:
         rows = (await session.execute(text(query), params)).mappings().all()
-    return [dict(row) for row in rows]
-
-
-_JOB_COLUMNS = "id, task_name, status, args, attempts, scheduled_at"
+    jobs = [job_presentation(dict(row)) for row in rows]
+    if wanted is not None:
+        jobs = [job for job in jobs if job["job_class"] in wanted]
+    return jobs[:limit]
 
 
 @router.get("/jobs/summary")
 async def api_jobs_summary():
     """Condensed queue state for the dashboard: what's running now, what's next
-    in line (earliest scheduled todo), and the most recently finished job."""
+    in line (earliest scheduled todo), and the most recently finished job. Rows
+    carry the same derived label/timing as the queue page — the dashboard used to
+    print `episteme.pipeline_stage` here, which names the mechanism and not the
+    work."""
     async with SessionLocal() as session:
         running = (
             await session.execute(
-                text(
-                    f"SELECT {_JOB_COLUMNS} FROM procrastinate_jobs "
-                    "WHERE status = 'doing' ORDER BY id DESC LIMIT 5"
-                )
+                text(f"{_JOB_SELECT} WHERE j.status = 'doing' ORDER BY j.id DESC LIMIT 5")
             )
         ).mappings().all()
         upcoming = (
             await session.execute(
                 text(
-                    f"SELECT {_JOB_COLUMNS} FROM procrastinate_jobs WHERE status = 'todo' "
-                    "ORDER BY scheduled_at ASC NULLS FIRST, id ASC LIMIT 1"
+                    f"{_JOB_SELECT} WHERE j.status = 'todo' "
+                    "ORDER BY j.scheduled_at ASC NULLS FIRST, j.id ASC LIMIT 1"
                 )
             )
         ).mappings().first()
         recent = (
             await session.execute(
                 text(
-                    f"SELECT {_JOB_COLUMNS} FROM procrastinate_jobs "
-                    "WHERE status NOT IN ('todo', 'doing') ORDER BY id DESC LIMIT 1"
-                )
+                    f"{_JOB_SELECT} WHERE j.status <> ALL(:live) ORDER BY j.id DESC LIMIT 1"
+                ),
+                {"live": list(LIVE_STATUSES)},
             )
         ).mappings().first()
     return {
-        "running": [dict(r) for r in running],
-        "upcoming": dict(upcoming) if upcoming else None,
-        "recent": dict(recent) if recent else None,
+        "running": [job_presentation(dict(r)) for r in running],
+        "upcoming": job_presentation(dict(upcoming)) if upcoming else None,
+        "recent": job_presentation(dict(recent)) if recent else None,
     }
+
+
+# The models a target id names. Keys are the param names in DEFERRABLE_TASKS, so
+# adding a target to a task without teaching this mapping about it is a KeyError
+# at defer time rather than a silent pass - which is the whole failure this exists
+# to end.
+TARGET_MODELS = {"story_id": Story, "post_id": Post, "source_id": Source}
+
+
+async def _check_targets(session, **ids: int | None) -> None:
+    """Refuse a target id that names no row, with a 422 saying which one.
+
+    `defer_args` is deliberately pure (unit-testable with no database), so it can
+    validate that a task ACCEPTS `post_id` but never that post 999 exists. The
+    result was a job enqueued happily, run twenty minutes later, and doing
+    nothing - the same silence as a dropped parameter, one stage further on.
+
+    Ids that are None are simply absent and must not be checked.
+    """
+    for name, ident in ids.items():
+        if ident is None:
+            continue
+        # Indexed, not .get(): a target added to DEFERRABLE_TASKS without a model
+        # here must be a KeyError, not a silent pass. See TARGET_MODELS.
+        if await session.get(TARGET_MODELS[name], ident) is None:
+            # Raise on the first one. Two wrong ids is still one mistake to fix,
+            # and a message naming both reads as two separate failures.
+            raise HTTPException(422, f"No {name.removesuffix('_id')} with id {ident}")
 
 
 @router.post("/jobs/defer/{task}")
 async def api_defer(
     task: str,
-    limit: int | None = Query(None, ge=1),
-    story_id: int | None = Query(None, ge=1),
-    post_id: int | None = Query(None, ge=1),
-    source_id: int | None = Query(None, ge=1),
+    # Annotated so the Python defaults stay real Nones for admin.py's direct
+    # calls — see the note on api_jobs. Safe here only by accident today (the
+    # admin route passes all four explicitly), which is exactly the kind of
+    # accident that stops being true on the next edit.
+    limit: Annotated[int | None, Query(ge=1)] = None,
+    story_id: Annotated[int | None, Query(ge=1)] = None,
+    post_id: Annotated[int | None, Query(ge=1)] = None,
+    source_id: Annotated[int | None, Query(ge=1)] = None,
 ):
     """Enqueue a job. Single pipeline stages take caps/targets, e.g.
     POST /api/jobs/defer/write?limit=2  or  /api/jobs/defer/qa?post_id=8."""
@@ -447,6 +578,10 @@ async def api_defer(
         raise HTTPException(404, str(exc.args[0]))
     except ValueError as exc:
         raise HTTPException(422, str(exc))
+    async with SessionLocal() as session:
+        await _check_targets(
+            session, story_id=story_id, post_id=post_id, source_id=source_id
+        )
     from ..worker.app import app as job_app
 
     async with job_app.open_async():
@@ -740,7 +875,7 @@ async def api_posts(limit: int = Query(50, ge=1, le=500), offset: int = Query(0,
 
 
 @router.post("/posts/{post_id}/pin")
-async def api_post_pin(post_id: int, value: bool = Query(True)):
+async def api_post_pin(post_id: int, value: Annotated[bool, Query()] = True):
     """Retention override: a pinned post is never auto-pruned, and its
     provenance page's calls (stamped + shared story-level) are kept with it —
     e.g. keep a superseded draft around for a later side-by-side comparison.
@@ -1128,7 +1263,7 @@ async def api_topics_proposal_discard():
 
 
 @router.post("/topics/{slug}/rename")
-async def api_topic_rename(slug: str, label: str = Query(..., min_length=1)):
+async def api_topic_rename(slug: str, label: Annotated[str, Query(min_length=1)]):
     """Rename a vocabulary entry, rewriting every story/post that references it —
     labels are stored, not ids, so this is the only sanctioned way to do it."""
     async with SessionLocal() as session:
@@ -1140,7 +1275,7 @@ async def api_topic_rename(slug: str, label: str = Query(..., min_length=1)):
 
 
 @router.post("/topics/{slug}/merge")
-async def api_topic_merge(slug: str, into: str = Query(..., min_length=1)):
+async def api_topic_merge(slug: str, into: Annotated[str, Query(min_length=1)]):
     """Fold one vocabulary entry into another (aliases move, rows are rewritten,
     the absorbed entry is deleted).
 

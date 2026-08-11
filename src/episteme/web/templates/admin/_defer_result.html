@@ -1,0 +1,13 @@
+{# What a click actually did. The queue table refreshes underneath via
+   HX-Trigger, but "a row appeared somewhere in a list of twenty" is not
+   confirmation - this says which task, with which arguments, as which job. #}
+{% if error %}
+<p class="defer-line defer-error">{{ ico.icon("bad") }} {{ error }}</p>
+{% else %}
+<p class="defer-line defer-ok">
+  {{ ico.icon("ok") }}
+  Queued <span class="job-label">{{ label }}</span>
+  {% if detail %}<span class="muted">{{ detail }}</span>{% endif %}
+  <span class="muted">as job {{ job_id }}</span>
+</p>
+{% endif %}

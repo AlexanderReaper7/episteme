@@ -32,10 +32,14 @@ log = logging.getLogger("episteme.recommend.feedback")
 # What each signal means and what it needs. `post` signals speak about one post's
 # content; `topic` and `source` signals are aimed at a dimension directly.
 POST_KINDS = ("like", "dislike", "save")
+# A refinement of a rating rather than a control of its own: the reader likes or
+# dislikes a post and then names which of its topics that was about, so the
+# direction is inherited from the rating and only ONE of these two is ever offered
+# at a time (see templates/_feedback.html).
 TOPIC_KINDS = ("more_topic", "less_topic")
-# The hand-edited weight from /tune. Kept out of TOPIC_KINDS on purpose: those two
-# are the paired more/less buttons on a card, and the rendered button state reads
-# that tuple. A set carries a number instead of a direction.
+# The hand-edited weight from /tune. Kept out of TOPIC_KINDS on purpose: the
+# rendered chip state reads that tuple, and a set carries a number instead of a
+# direction.
 SET_KINDS = ("set_topic",)
 SOURCE_KINDS = ("hide_source",)
 # Hard keyword blocks, added and removed by hand on /tune. Unblocking is its own
@@ -135,6 +139,12 @@ async def record(
     if kind in POST_KINDS:
         if post_id is None:
             raise FeedbackError(f"{kind} needs a post_id")
+        # Snapshotted for EVERY post signal, including `save`, which currently
+        # feeds nothing into the profile (profile._CONTENT_SIGNALS). The log is
+        # canonical and the profile is replayed from it, so what a signal is worth
+        # has to stay a retunable decision — dropping the payload for the signals
+        # that happen to be worth zero today would make that one decision the only
+        # irreversible one in the system.
         payload.update(await _snapshot(session, post_id))
     elif kind in TOPIC_KINDS:
         if not topic:

@@ -4,7 +4,7 @@
 
 {% block content %}
 {% if fallback %}
-<p class="note">The pipeline hasn't produced posts or story clusters yet — showing raw
+<p class="note">The pipeline hasn't produced posts or story clusters yet - showing raw
 source items. Trigger a run with:
 <code>docker compose exec worker procrastinate --app=episteme.worker.app.app defer episteme.run_pipeline '{}'</code></p>
 <section id="feed" class="feed">
@@ -15,7 +15,7 @@ source items. Trigger a run with:
 {% else %}
 {# One unified vertical stream: features and aggregate cluster cards interleaved. #}
 <section id="feed" class="feed">
-  {% with posts = feed.posts, has_more = feed.has_more, next_cursor = feed.next_cursor, first_page = feed.first_page, feedback_signals = feed.feedback_signals %}
+  {% with posts = feed.posts, has_more = feed.has_more, next_cursor = feed.next_cursor, first_page = feed.first_page, feedback_contexts = feed.feedback_contexts %}
   {% include "_feed.html" %}
   {% endwith %}
 </section>

@@ -1,16 +1,37 @@
-{# Job-queue action bar. Returned on its own by pause/resume (hx-target="#job-controls")
-   so toggling the pause state swaps just this bar — no full reload — and the handler
-   fires an `HX-Trigger: refreshQueue` that the #queue table listens for. #}
-<p id="job-controls">
-  <button hx-post="/admin/defer/ingest_all" hx-target="#queue" hx-swap="innerHTML">ingest now</button>
-  <button hx-post="/admin/defer/run_pipeline" hx-target="#queue" hx-swap="innerHTML">run pipeline now</button>
-  {% if status.pipeline.paused %}
-  <button hx-post="/admin/pipeline/resume" hx-target="#job-controls" hx-swap="outerHTML">resume pipeline</button>
-  {# Say WHO paused it. A pipeline that stopped on its own is indistinguishable
-     from a broken one unless the panel names the resource governor as the cause. #}
-  <span class="bad">paused{% if status.pipeline.reason == 'resource' %} — GPU busy{% endif %}</span>
-  {% if status.pipeline.since %}<span class="muted">since {{ status.pipeline.since | dt }}</span>{% endif %}
-  {% else %}
-  <button hx-post="/admin/pipeline/pause" hx-target="#job-controls" hx-swap="outerHTML">pause + unload</button>
-  {% endif %}
-</p>
+{# Whole-pipeline actions. Returned on its own by pause/resume
+   (hx-target="#job-controls") so toggling the pause state swaps just this bar -
+   no full reload - and the handler fires an `HX-Trigger: refreshQueue` that the
+   queue view listens for. The status box at the top of the page rides back with
+   it as an out-of-band swap; see _pipeline_status.html. #}
+<div id="job-controls">
+  <div class="job-ops">
+    <div class="job-op job-run">
+      <button hx-post="/admin/defer/ingest_all" hx-target="#defer-ingest_all" hx-swap="innerHTML">
+        {{ ico.icon("ingest-all") }} ingest now
+      </button>
+      <span class="muted">Poll every enabled source for new items. Does no LLM work.</span>
+      <div class="defer-result" id="defer-ingest_all" aria-live="polite"></div>
+    </div>
+    <div class="job-op job-run">
+      <button hx-post="/admin/defer/run_pipeline" hx-target="#defer-run_pipeline" hx-swap="innerHTML">
+        {{ ico.icon("run") }} run pipeline now
+      </button>
+      <span class="muted">All stages in order, batched so each model loads once. Normally {{ pipeline_cron_help }}.</span>
+      <div class="defer-result" id="defer-run_pipeline" aria-live="polite"></div>
+    </div>
+    <div class="job-op job-run">
+      {% if status.pipeline.paused %}
+      <button hx-post="/admin/pipeline/resume" hx-target="#job-controls" hx-swap="outerHTML">
+        {{ ico.icon("resume") }} resume pipeline
+      </button>
+      <span class="muted">Clears the pause. Work continues from exactly where it stopped.</span>
+      {% else %}
+      <button hx-post="/admin/pipeline/pause" hx-target="#job-controls" hx-swap="outerHTML">
+        {{ ico.icon("pause") }} pause + unload
+      </button>
+      <span class="muted">Stop after the current story, then free the GPU. Nothing in flight is lost.</span>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% if oob_status %}{% include "admin/_pipeline_status.html" %}{% endif %}

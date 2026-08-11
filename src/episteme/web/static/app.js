@@ -1,7 +1,7 @@
 /* Single persistent front-end controller.
 
    The whole app is htmx-boosted (base.html): navigation swaps only the
-   #main-content (or admin #admin-main) region and pushes the URL — the page is
+   #main-content (or admin #admin-main) region and pushes the URL - the page is
    never fully reloaded. So per-page initialization can't live in per-page
    <script> tags; instead this file runs once and re-initializes on every
    `htmx:load` (which htmx fires for the initial document AND for every swapped-in
@@ -23,7 +23,7 @@
   // htmx boosts every nav to swap only #main-content / #admin-main. Its default
   // `scrollIntoViewOnBoost` scrolls that target into view after the swap; because
   // .site-header is position:sticky at top:0, aligning the target's top to the
-  // viewport top pushes the page down by the header's height — a spurious downward
+  // viewport top pushes the page down by the header's height - a spurious downward
   // nudge on every nav, even from a fully-scrolled-up page. Disable it and instead
   // scroll the window to the true top on real navigations only. htmx:pushedIntoHistory
   // fires exactly when a URL is pushed (boosted <a>/<form> navs) and NOT for the
@@ -36,7 +36,7 @@
     window.scrollTo(0, 0);
   });
 
-  // Search `root` INCLUDING itself — htmx:load hands us the swapped element, which
+  // Search `root` INCLUDING itself - htmx:load hands us the swapped element, which
   // may be the match or an ancestor of it.
   function pick(root, sel) {
     if (root.matches && root.matches(sel)) return root;
@@ -104,7 +104,7 @@
   }
 
   // Hydrate quiz/chart/diagram sections under `root`. Assumes any vendors it needs
-  // (vega*, mermaid) are already loaded — hydrateRich guarantees that. Everything
+  // (vega*, mermaid) are already loaded - hydrateRich guarantees that. Everything
   // degrades: a failed render collapses to its caption.
   function hydrateSections(root) {
     root.querySelectorAll(".section-quiz").forEach(function (quiz) {
@@ -117,7 +117,7 @@
         var choices = item.querySelectorAll(".quiz-choice");
         // A question with no valid answer index stays inert rather than scoring
         // every click as wrong. The schema validates answer_index against choices,
-        // so nothing the pipeline writes lands here — this guards hand-edited rows.
+        // so nothing the pipeline writes lands here - this guards hand-edited rows.
         if (!(answer >= 0 && answer < choices.length)) return;
         shuffleChoices(item);
         choices.forEach(function (btn) {
@@ -153,7 +153,7 @@
         // about a third of the article column. Fit it to the column instead.
         // Deliberately a measured NUMBER, not width:"container": container sizing
         // reads the target's offsetWidth, which measured 0 here and collapses the
-        // chart to nothing — a worse failure than the one being fixed. A 0 reading
+        // chart to nothing - a worse failure than the one being fixed. A 0 reading
         // (hidden section, detached node) falls through to Vega's own default.
         var available = Math.floor(figure.clientWidth);
         if (spec.width === undefined && available > 0) {
@@ -273,7 +273,7 @@
     player.addEventListener("playing", function () { setStatus(""); });
     player.addEventListener("waiting", function () { setStatus("Buffering…"); });
     player.addEventListener("error", function () {
-      setStatus("Narration failed — try again.");
+      setStatus("Narration failed - try again.");
     });
     player.addEventListener("ended", function () {
       if (continuous.checked) advance();
@@ -367,7 +367,7 @@
         .catch(function () { setStatus(""); });
     }
 
-    // ?continuous=1 / ?voice= / ?autoplay=1 — the hard-navigation fallback landing.
+    // ?continuous=1 / ?voice= / ?autoplay=1 - the hard-navigation fallback landing.
     if (params.get("continuous") === "1") {
       continuous.checked = true;
       try { localStorage.setItem(CONT_KEY, "1"); } catch (e) {}
@@ -385,12 +385,12 @@
   // sliders is a single editing session, so nothing posts until the reader says so.
   //
   //   * the live readout and the centre-anchored fill while dragging;
-  //   * `dirty` — the slugs actually moved, and the ONLY thing the server records
+  //   * `dirty` - the slugs actually moved, and the ONLY thing the server records
   //     from. This is the load-bearing part: only the client knows which sliders
   //     moved, because only it holds each one's rendered starting value. A server
   //     comparing submitted values against the stored profile would record every
   //     slider whose weight had decayed past its own rounding since the page
-  //     rendered — pinning weights nobody touched. So the list genuinely needs
+  //     rendered - pinning weights nobody touched. So the list genuinely needs
   //     JavaScript (the panel says so in a <noscript>, and the "set a topic by
   //     name" box reaches every one of these topics without it).
   //   * revert, which is purely local: the server was never told.
@@ -424,7 +424,7 @@
       form.querySelectorAll(".weight-slider").forEach(function (slider) {
         // Compared as NUMBERS, not strings: the browser sanitizes a range input's
         // value onto its step grid and drops a trailing zero, so a slider rendered
-        // as value="-2.0" reads back "-2" and would look moved on first paint —
+        // as value="-2.0" reads back "-2" and would look moved on first paint -
         // every whole-numbered weight arriving pre-dirty.
         var moved =
           Math.abs(
@@ -475,12 +475,102 @@
     });
   }
 
+  /* ================== expanded queue groups (admin) ====================== */
+
+  // The queue folds repeated runs of a task into one row; which folds are open
+  // has to survive the 10s poll, or a fold opens under the reader and shuts
+  // itself 90 seconds later.
+  //
+  // The toggle itself is a checkbox revealed by CSS, so the fold works with JS
+  // off. This code only RECORDS the open keys into a cookie; the server stamps
+  // `checked` when it renders (see admin.open_groups). That ordering is the
+  // whole point: re-applying state from script AFTER a swap is what made the
+  // panel flash and what moved the scroll position under the cursor - a
+  // server-stamped fragment arrives in its final shape with nothing to replay.
+  //
+  // One cookie holding every open key, not one cookie per group: the key set is
+  // task names, small but unbounded, and a cookie each would ride along with
+  // every request for the rest of the session.
+  var QUEUE_GROUP_COOKIE = "qopen";
+
+  function recordOpenGroups() {
+    var keys = [];
+    pickAll(document, ".job-group-toggle:checked").forEach(function (el) {
+      keys.push(el.value);
+    });
+    // Session cookie, path-scoped to the admin area: view state, not something
+    // worth persisting past the browser session or sending with every request
+    // for an article.
+    document.cookie =
+      QUEUE_GROUP_COOKIE +
+      "=" +
+      encodeURIComponent(keys.join("|")) +
+      ";path=/admin;samesite=lax";
+  }
+
+  function initQueueGroups(root) {
+    pickAll(root || document, ".job-group-toggle").forEach(function (el) {
+      if (!fresh(el)) return;
+      el.addEventListener("change", recordOpenGroups);
+    });
+  }
+
+  // A <button> inside a <summary> still runs the summary's activation behaviour,
+  // so pressing "run" on a collapsed stage would also expand it - the block would
+  // open and close under the cursor on every click. preventDefault on the bubbled
+  // click cancels that activation; it does not touch htmx, which has already
+  // taken the event, nor a type=button, which has no default of its own.
+  //
+  // Delegated at document level rather than bound per button: these blocks arrive
+  // through htmx swaps, and a listener attached at render time would be gone the
+  // first time the section came back from the server.
+  document.addEventListener("click", function (e) {
+    if (e.target.closest("summary button")) e.preventDefault();
+  });
+
+  /* ===================== relative timestamps ============================ */
+
+  // Retime every <time data-ago> from its own `datetime` attribute.
+  //
+  // This is what lets the polled fragments answer 204 for minutes at a stretch:
+  // if the age were baked into the HTML, "2m ago" becoming "3m ago" would change
+  // the rendered output - and so the state digest - while nothing had actually
+  // happened, forcing a full re-render on a timer. Mirrors templating._ago's
+  // thresholds; the pair is duplicated on purpose (one renders, one retimes) and
+  // pinned by test_queue_render.py.
+  function agoText(seconds) {
+    var span = Math.abs(seconds);
+    var text;
+    if (span < 60) text = Math.round(span) + "s";
+    else if (span < 3600) text = Math.round(span / 60) + "m";
+    else if (span < 86400) text = Math.round(span / 3600) + "h";
+    else text = Math.round(span / 86400) + "d";
+    if (seconds < 0) return "in " + text;
+    if (seconds < 45) return "just now";
+    return text + " ago";
+  }
+
+  function retimeAgo(root) {
+    var now = Date.now();
+    pickAll(root || document, "time[data-ago][datetime]").forEach(function (el) {
+      var at = Date.parse(el.getAttribute("datetime"));
+      if (!isNaN(at)) el.textContent = agoText((now - at) / 1000);
+    });
+  }
+
+  // 30s: half the coarsest thing the text can express short of an hour, so a
+  // displayed age is never more than one step stale. Costs no network and
+  // touches only text nodes, so it neither reflows the table nor scrolls it.
+  setInterval(function () { retimeAgo(document); }, 30000);
+
   /* ===================== per-load initialization ======================== */
 
   function onLoad(root) {
     root = root || document;
     pickAll(root, ".post-audio[data-post-id]").forEach(initNarration);
     pickAll(root, "form[data-weight-form]").forEach(initWeights);
+    initQueueGroups(root);
+    retimeAgo(root);
     hydrateRich(root);
     if (document.querySelector(".admin-sidebar-nav")) syncNav();
   }

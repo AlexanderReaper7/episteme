@@ -1,6 +1,6 @@
 {% import "admin/_macros.html" as ui %}
 {# The catalog <tbody>. Returned on its own by create/toggle/delete (hx-target
-   #voice-rows) so a mutation swaps just the rows — a reorder or delete can move the
+   #voice-rows) so a mutation swaps just the rows - a reorder or delete can move the
    default, so the whole body re-renders. Each row carries its own edit payload in
    `data-edit` (tojson escapes <>&' so it's safe in the single-quoted attribute) so the
    editor prefills from the clicked row with no page-level state; drag-reorder and
@@ -19,13 +19,25 @@
     <td>{{ v.provider }}{% if v.provider_voice_id and v.provider_voice_id != v.id %} <span class="muted mono">→ {{ v.provider_voice_id }}</span>{% endif %}</td>
     <td>{{ ui.kv_chips(v.params) }}</td>
     <td><span class="voice-state-chip {{ 'is-on' if v.enabled else 'is-off' }}">{{ 'enabled' if v.enabled else 'off' }}</span></td>
+    {# Icon-only, the exception the admin rule allows: edit / enable / delete are
+       universal actions, not domain nouns, and the row already says which voice
+       they act on. Each carries a tooltip AND an accessible name naming the voice,
+       so the control reads correctly out of its row context too. The enabled state
+       stays spelled out in the chip to the left. #}
     <td class="voice-row-actions">
-      <button type="button" class="voice-edit-btn">edit</button>
-      <button hx-post="/admin/voices/{{ v.id }}/toggle"
-              hx-target="#voice-rows" hx-swap="outerHTML">{{ 'disable' if v.enabled else 'enable' }}</button>
-      <button hx-post="/admin/voices/{{ v.id }}/delete"
+      <button type="button" class="voice-edit-btn icon-btn icon-press"
+              title="Edit {{ v.label }}" aria-label="Edit {{ v.label }}">{{ ico.icon("edit") }}</button>
+      <button class="icon-btn icon-press"
+              title="{{ 'Disable' if v.enabled else 'Enable' }} {{ v.label }}"
+              aria-label="{{ 'Disable' if v.enabled else 'Enable' }} {{ v.label }}"
+              aria-pressed="{{ 'true' if v.enabled else 'false' }}"
+              hx-post="/admin/voices/{{ v.id }}/toggle"
+              hx-target="#voice-rows" hx-swap="outerHTML">{{ ico.icon("toggle-on" if v.enabled else "toggle-off") }}</button>
+      <button class="icon-btn icon-press danger"
+              title="Delete {{ v.label }}" aria-label="Delete {{ v.label }}"
+              hx-post="/admin/voices/{{ v.id }}/delete"
               hx-target="#voice-rows" hx-swap="outerHTML"
-              hx-confirm="Delete voice {{ v.label }}?" class="danger">delete</button>
+              hx-confirm="Delete voice {{ v.label }}?">{{ ico.icon("delete") }}</button>
     </td>
   </tr>
 {% endfor %}

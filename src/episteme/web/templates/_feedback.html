@@ -2,80 +2,116 @@
    button swaps this whole block back in, so the rendered state always comes from
    the database rather than from client-side bookkeeping.
 
-   `signals` is {kind: feedback_id} for signals already recorded on this post —
+   `fb` is one context object (web/feedback.py builds it for a single post and for
+   a whole feed page), so the fragment has exactly one contract wherever it is
+   rendered from. `fb.signals` is {kind: feedback_id} for signals already on this post -
    an active button posts the undo for its own event id, which is exact (the
    profile is replayed without it), not an approximate reversal.
+
+   `fb.variant` says which surface this is on, and EVERY hx-post carries it. The
+   fragment replaces itself, so a URL that omits it would let the next render
+   guess - which is exactly how a feed card used to come back wearing the
+   article page's hide-source button.
 
    Sits above the card's stretched .card-link via z-index, the same way the
    provenance link does; on the article page there is no stretched link to clear.
 
    No counts, no streaks, no badges: these controls exist to steer the feed, not
    to score the reader (spec §8, "no dark patterns"). #}
-<div class="feedback" id="feedback-{{ post_id }}" data-post-id="{{ post_id }}">
-  {% for kind, label, title in [
-       ("like", "Like", "More like this"),
-       ("dislike", "Dislike", "Less like this"),
-       ("save", "Save", "Keep this")] %}
-  {% set existing = signals.get(kind) %}
+{% set ctx = "post_id=" ~ fb.post_id ~ "&variant=" ~ fb.variant %}
+{# The rating is the whole gesture. Topic chips are a refinement of it - "this
+   part of what I just rated" - so the direction is INHERITED and never chosen
+   again: after a dislike, a chip can only mean less. With no rating there is
+   nothing to be specific about, so no chips are offered at all.
+
+   `save` deliberately sets no direction. It is a bookmark, not a statement about
+   the subject (and it feeds nothing into the profile - see recommend/profile.py). #}
+{% set direction = "less_topic" if fb.signals.get("dislike")
+                   else ("more_topic" if fb.signals.get("like") else none) %}
+<div class="feedback" id="feedback-{{ fb.post_id }}" data-post-id="{{ fb.post_id }}">
+  {% for kind, icon_name, title in [
+       ("like", "like", "More like this"),
+       ("dislike", "dislike", "Less like this"),
+       ("save", "save", "Save for later")] %}
+  {% set existing = fb.signals.get(kind) %}
+  {# Icon-only, so `title` (the tooltip the reader hovers) and `aria-label` (the
+     accessible name) both have to be here - the glyph itself is aria-hidden. #}
   <button type="button"
-          class="feedback-btn feedback-btn--{{ kind }} {{ 'is-active' if existing else '' }}"
+          class="feedback-btn feedback-btn--icon feedback-btn--{{ kind }} icon-press {{ 'is-active' if existing else '' }}"
           title="{{ title }}"
+          aria-label="{{ title }}"
           aria-pressed="{{ 'true' if existing else 'false' }}"
           {% if existing %}
-          hx-post="/feedback/{{ existing }}/undo?post_id={{ post_id }}"
+          hx-post="/feedback/{{ existing }}/undo?{{ ctx }}"
           {% else %}
-          hx-post="/feedback?kind={{ kind }}&post_id={{ post_id }}"
+          hx-post="/feedback?kind={{ kind }}&amp;{{ ctx }}"
           {% endif %}
-          hx-target="#feedback-{{ post_id }}"
+          hx-target="#feedback-{{ fb.post_id }}"
           hx-swap="outerHTML">
-    {{ label }}
+    {{ ico.toggle(icon_name) }}
   </button>
   {% endfor %}
 
-  {% if with_topics and post_topics %}
-  <span class="feedback-sep" aria-hidden="true">·</span>
+  {% if fb.post_topics %}
   {# The label is what the reader reads; the slug is what the signal is filed
-     under, and posting the slug is what makes the button keep working after the
+     under, and posting the slug is what makes the chip keep working after the
      topic has been renamed (`topics.resolve` finds it at the exact-slug tier). #}
-  {% for topic in post_topics %}
-  {% set more_id = topic_signals.get((topic.slug, "more_topic")) %}
-  {% set less_id = topic_signals.get((topic.slug, "less_topic")) %}
-  <span class="feedback-topic">
-    <span class="feedback-topic-name">{{ topic.label }}</span>
-    <button type="button" class="feedback-btn feedback-btn--tiny {{ 'is-active' if more_id else '' }}"
-            title="More {{ topic.label }}" aria-label="More {{ topic.label }}"
-            {% if more_id %}
-            hx-post="/feedback/{{ more_id }}/undo?post_id={{ post_id }}"
-            {% else %}
-            hx-post="/feedback?kind=more_topic&post_id={{ post_id }}&topic={{ topic.slug | urlencode }}"
-            {% endif %}
-            hx-target="#feedback-{{ post_id }}" hx-swap="outerHTML">more</button>
-    <button type="button" class="feedback-btn feedback-btn--tiny {{ 'is-active' if less_id else '' }}"
-            title="Less {{ topic.label }}" aria-label="Less {{ topic.label }}"
-            {% if less_id %}
-            hx-post="/feedback/{{ less_id }}/undo?post_id={{ post_id }}"
-            {% else %}
-            hx-post="/feedback?kind=less_topic&post_id={{ post_id }}&topic={{ topic.slug | urlencode }}"
-            {% endif %}
-            hx-target="#feedback-{{ post_id }}" hx-swap="outerHTML">less</button>
-  </span>
+  {# Any chip already picked keeps the row (and its separator) alive even after the
+     rating is undone - see the orphan case below. #}
+  {% set steered = fb.topic_signals.keys() | map(attribute=0) | list %}
+  {% if direction or fb.post_topics | selectattr("slug", "in", steered) | first %}
+  <span class="feedback-sep" aria-hidden="true">·</span>
+  {% if direction %}
+  <span class="feedback-lead">{{ "Less of" if direction == "less_topic" else "More of" }}</span>
+  {% endif %}
+  {% endif %}
+  {% for topic in fb.post_topics %}
+  {% set more_id = fb.topic_signals.get((topic.slug, "more_topic")) %}
+  {% set less_id = fb.topic_signals.get((topic.slug, "less_topic")) %}
+  {% set chosen = more_id or less_id %}
+  {% if chosen %}
+  {# Already picked: pressed, and it undoes its own event. Rendered even when the
+     rating that gave it meaning has since been undone - the topic event still
+     exists, so hiding the chip would make a recorded signal unreachable. The
+     unpicked chips disappear with the direction; this one keeps its own words. #}
+  <button type="button"
+          class="feedback-btn feedback-btn--topic is-active {{ 'is-less' if less_id else '' }}"
+          title="You asked for {{ 'less' if less_id else 'more' }} {{ topic.label }} - click to undo"
+          aria-pressed="true"
+          hx-post="/feedback/{{ chosen }}/undo?{{ ctx }}"
+          hx-target="#feedback-{{ fb.post_id }}" hx-swap="outerHTML">{{ topic.label }}</button>
+  {% elif direction %}
+  <button type="button"
+          class="feedback-btn feedback-btn--topic {{ 'is-less' if direction == 'less_topic' else '' }}"
+          title="{{ 'Less' if direction == 'less_topic' else 'More' }} {{ topic.label }}"
+          aria-pressed="false"
+          hx-post="/feedback?kind={{ direction }}&amp;{{ ctx }}&amp;topic={{ topic.slug | urlencode }}"
+          hx-target="#feedback-{{ fb.post_id }}" hx-swap="outerHTML">{{ topic.label }}</button>
+  {% endif %}
   {% endfor %}
   {% endif %}
 
-  {% if with_topics and post_sources %}
+  {% if fb.variant == "article" and fb.post_sources %}
+  {# Article page only. Hiding an outlet REMOVES its content from the feed rather
+     than ranking it down, which is too destructive to sit on a card the reader is
+     skimming past. #}
   <span class="feedback-sep" aria-hidden="true">·</span>
-  {% for source in post_sources %}
-  {% set hidden_id = source_signals.get(source.id) %}
-  <button type="button" class="feedback-btn feedback-btn--tiny {{ 'is-active' if hidden_id else '' }}"
-          title="{{ 'Show' if hidden_id else 'Hide' }} everything from {{ source.name }}"
+  {% for source in fb.post_sources %}
+  {% set hidden_id = fb.source_signals.get(source.id) %}
+  {% set source_title = ('Show' if hidden_id else 'Hide') ~ ' everything from ' ~ source.name %}
+  <button type="button"
+          class="feedback-btn icon-press {{ 'is-active' if hidden_id else '' }}"
+          title="{{ source_title }}"
+          aria-label="{{ source_title }}"
+          aria-pressed="{{ 'true' if hidden_id else 'false' }}"
           {% if hidden_id %}
-          hx-post="/feedback/{{ hidden_id }}/undo?post_id={{ post_id }}"
+          hx-post="/feedback/{{ hidden_id }}/undo?{{ ctx }}"
           {% else %}
-          hx-post="/feedback?kind=hide_source&post_id={{ post_id }}&source_id={{ source.id }}"
+          hx-post="/feedback?kind=hide_source&amp;{{ ctx }}&amp;source_id={{ source.id }}"
           hx-confirm="Hide everything from {{ source.name }}? This removes its content from the feed, not just ranks it lower."
           {% endif %}
-          hx-target="#feedback-{{ post_id }}" hx-swap="outerHTML">
-    {{ 'unhide' if hidden_id else 'hide' }} {{ source.name }}
+          hx-target="#feedback-{{ fb.post_id }}" hx-swap="outerHTML">
+    {{ ico.icon("show-source" if hidden_id else "hide-source") }}{{ source.name }}
   </button>
   {% endfor %}
   {% endif %}

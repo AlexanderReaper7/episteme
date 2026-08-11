@@ -2,7 +2,7 @@
 {% set banner = item.media_refs | banner_image %}
 <article class="card">
   {% if banner %}
-  {# Hotlinked (never cached, per spec §6) — remove the banner if the remote image is gone. #}
+  {# Hotlinked (never cached, per spec §6) - remove the banner if the remote image is gone. #}
   <a class="card-banner" href="{{ item.url }}" target="_blank" rel="noopener noreferrer">
     <img src="{{ banner }}" alt="" loading="lazy"
          onerror="this.closest('.card-banner').remove()">
@@ -27,7 +27,7 @@
 {% else %}
 {% if first_page %}
 <p class="empty-state">
-  No items yet — the worker fetches feeds on its schedule. Trigger a run now with:
+  No items yet - the worker fetches feeds on its schedule. Trigger a run now with:
   <code>docker compose exec worker procrastinate --app=episteme.worker.app.app defer episteme.ingest_all '{}'</code>
 </p>
 {% endif %}

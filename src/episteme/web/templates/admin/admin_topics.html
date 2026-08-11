@@ -27,7 +27,7 @@
   <h2>Unclaimed labels</h2>
   <p class="muted admin-form-hint">
     Topic labels in use on stories or posts that no vocabulary entry claims. These
-    are what the bootstrap still has to fold in — an empty list is the healthy
+    are what the bootstrap still has to fold in - an empty list is the healthy
     steady state.
   </p>
   <span class="kv-chips">
@@ -42,28 +42,28 @@
   <h2>Bootstrap</h2>
   <p class="muted admin-form-hint">
     Two phases on purpose. <strong>Propose</strong> clusters every free-text topic
-    already in the database and writes a proposal — it changes nothing else.
+    already in the database and writes a proposal - it changes nothing else.
     <strong>Apply</strong> creates the vocabulary rows and rewrites the topic array
     on every story and post through it. Read the proposal before applying: a bad
     clustering pass is far easier to reject here than to unpick afterwards.
   </p>
   <p class="stage-controls">
     <button hx-post="/admin/defer/propose_topics" hx-target="#queue" hx-swap="innerHTML">
-      propose vocabulary
+      {{ ico.icon("run") }} propose vocabulary
     </button>
     {% if proposal and proposal["clusters"] %}
     <button hx-post="/admin/defer/apply_topics" hx-target="#queue" hx-swap="innerHTML"
             hx-confirm="Apply this proposal? It creates the vocabulary and rewrites the topics of every story and post.">
-      apply proposal
+      {{ ico.icon("run") }} apply proposal
     </button>
     <button hx-post="/admin/topics/proposal/discard" hx-target="#admin-main"
-            hx-confirm="Discard the proposal?">discard</button>
+            hx-confirm="Discard the proposal?">{{ ico.icon("delete") }} discard</button>
     {% endif %}
   </p>
 
   {% if proposal and proposal["clusters"] %}
   <p class="muted admin-form-hint">
-    Proposed {{ proposal.proposed_at | dt }} — {{ proposal["clusters"] | length }} topics
+    Proposed {{ proposal.proposed_at | dt }} - {{ proposal["clusters"] | length }} topics
     from {{ proposal.raw_label_count }} raw labels.
   </p>
   <table class="admin-table">
@@ -86,7 +86,7 @@
   </table>
   {% elif proposal and proposal.applied_at %}
   <p class="muted">
-    Last applied {{ proposal.applied_at | dt }} — {{ proposal.topics_created }} topics
+    Last applied {{ proposal.applied_at | dt }} - {{ proposal.topics_created }} topics
     created, {{ proposal.rows_rewritten }} rows rewritten.
   </p>
   {% else %}

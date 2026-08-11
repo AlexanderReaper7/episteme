@@ -58,6 +58,32 @@ def test_empty_log_is_an_empty_profile():
     assert state.blocked_sources == []
 
 
+def test_saving_is_bookmarking_and_moves_nothing():
+    """A save says "I want to find this again", not "show me more of this" — a
+    reader saves things to read later, to check a number in, to send to someone.
+    The event is still recorded (the button renders from it, and the log stays
+    canonical so this can be retuned later); it just steers nothing."""
+    state = replay(
+        [
+            _event(
+                "save",
+                embedding=_vec(1.0, 0.0),
+                topics=["marine biology"],
+                source_ids=[7],
+                difficulty="advanced",
+            )
+        ],
+        now=NOW,
+    )
+    assert state.liked_centroid is None
+    assert state.disliked_centroid is None
+    assert state.topic_weights == {}
+    assert state.source_weights == {}
+    assert state.difficulty_weights == {}
+    # It IS an event, though: the log counts it, so undo and replay stay exact.
+    assert state.event_count == 1
+
+
 def test_like_builds_the_liked_centroid_and_nudges_its_topics():
     state = replay(
         [_event("like", embedding=_vec(1.0, 0.0), topics=["marine biology"])], now=NOW

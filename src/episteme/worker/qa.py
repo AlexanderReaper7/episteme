@@ -60,6 +60,7 @@ from ..llm.schemas import (
     section_param_schema,
 )
 from ..models import Post, SourceItem, Story
+from . import pending
 from .control import pause_requested
 
 log = logging.getLogger("episteme.qa")
@@ -597,15 +598,8 @@ async def qa_posts(
     if post_id is not None:
         query = select(Post.id).where(Post.id == post_id, Post.kind != "aggregate")
     else:
-        query = (
-            select(Post.id)
-            .where(
-                Post.quality_score.is_(None),
-                Post.status == "published",
-                Post.kind != "aggregate",
-            )
-            .order_by(Post.id)
-        )
+        # Shared with the admin page's "N due" count - see worker/pending.py.
+        query = pending.qa_pending().order_by(Post.id)
         if limit is not None:
             query = query.limit(limit)
     # Ids, not instances: a failed post's rollback() expires every object in the

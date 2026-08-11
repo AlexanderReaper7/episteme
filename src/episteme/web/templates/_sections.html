@@ -1,4 +1,4 @@
-{# One renderer per section type (spec §6). Malformed data never reaches here —
+{# One renderer per section type (spec §6). Malformed data never reaches here -
    sections are schema-validated at the LLM boundary, and image/video URLs are
    closed-set validated + attribution-stamped by the pipeline. #}
 {% for section in post.sections %}
@@ -14,7 +14,7 @@
     </div>
 
   {% elif section.type == "image" %}
-    {# Hotlinked; link rot is accepted — onerror removes the whole figure but keeps
+    {# Hotlinked; link rot is accepted - onerror removes the whole figure but keeps
        nothing broken on the page (decided constraint). #}
     <figure class="section-image">
       <img src="{{ section.url }}" alt="{{ section.caption }}" loading="lazy"
@@ -22,7 +22,7 @@
       <figcaption>
         {{ section.caption }}
         {% if section.attribution %}
-        <span class="attribution">— <a href="{{ section.source_url }}" target="_blank"
+        <span class="attribution">- <a href="{{ section.source_url }}" target="_blank"
             rel="noopener noreferrer">{{ section.attribution }}</a></span>
         {% endif %}
       </figcaption>
@@ -44,7 +44,7 @@
       <figcaption>
         {{ section.caption }}
         {% if section.attribution %}
-        <span class="attribution">— <a href="{{ section.source_url }}" target="_blank"
+        <span class="attribution">- <a href="{{ section.source_url }}" target="_blank"
             rel="noopener noreferrer">{{ section.attribution }}</a></span>
         {% endif %}
       </figcaption>
@@ -52,14 +52,14 @@
 
   {% elif section.type == "quiz" %}
     {# One heading for the whole check, however many questions it holds. Each
-       question is independently answerable, and nothing is scored across them —
+       question is independently answerable, and nothing is scored across them -
        the check exists to tell the reader what landed, not to grade them.
 
        Choices render in STORED order and data-answer is the STORED index; app.js
        permutes the buttons in the DOM on every page view. That has to happen there
        and not here: this page is served with an ETag hashing `post.sections`, so a
        server-side shuffle was thrown away by the first 304 (and by
-       stale-while-revalidate) and every re-read served the identical order — the one
+       stale-while-revalidate) and every re-read served the identical order - the one
        thing randomising the choices exists to prevent. Each button keeps its own
        data-index, so the marked answer follows its text through any permutation and
        nothing has to be recomputed. `or []` keeps a hand-edited row from raising. #}
@@ -74,7 +74,13 @@
         <p class="quiz-question">{{ q.question }}</p>
         <div class="quiz-choices">
           {% for choice in q.choices or [] %}
-          <button type="button" class="quiz-choice" data-index="{{ loop.index0 }}">{{ choice }}</button>
+          {# Both marks ship with every choice and CSS reveals the one the answered
+             state calls for - the glyph has to be able to appear on ANY button (a
+             wrong pick marks the picked one AND the correct one), and inserting it
+             from JS afterwards would mean two places that know how a result looks. #}
+          <button type="button" class="quiz-choice" data-index="{{ loop.index0 }}"
+            ><span class="quiz-mark">{{ ico.icon("quiz-correct", "quiz-mark-ok") }}{{ ico.icon("quiz-wrong", "quiz-mark-bad") }}</span
+            >{{ choice }}</button>
           {% endfor %}
         </div>
         <p class="quiz-explanation" hidden>{{ q.explanation }}</p>
@@ -122,7 +128,7 @@
       <ul>
         {% for src in section["items"] %}
         <li>
-          <a href="{{ src.url }}" target="_blank" rel="noopener noreferrer">{{ src.title }}</a>
+          <a href="{{ src.url }}" target="_blank" rel="noopener noreferrer">{{ ico.icon("external-link") }} {{ src.title }}</a>
           <span class="source-name">{{ src.outlet }}</span>
         </li>
         {% endfor %}
@@ -135,7 +141,7 @@
       <ul>
         {% for src in section["items"] %}
         <li>
-          <a href="{{ src.url }}" target="_blank" rel="noopener noreferrer">{{ src.title }}</a>
+          <a href="{{ src.url }}" target="_blank" rel="noopener noreferrer">{{ ico.icon("external-link") }} {{ src.title }}</a>
           <span class="source-name">{{ src.outlet }}</span>
         </li>
         {% endfor %}

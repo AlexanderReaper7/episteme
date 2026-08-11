@@ -14,6 +14,22 @@ class Settings(BaseSettings):
     # worker beats every 10s, so the 60s threshold can never catch a running job.
     stalled_job_recovery_cron: str = "*/5 * * * *"
     stalled_job_heartbeat_seconds: float = 60.0
+    # Job-history retention, tiered by what a row is worth in hindsight rather
+    # than by age alone. procrastinate never prunes finished jobs, and the two
+    # self-firing housekeeping crons write ~1100 rows/day between them against
+    # ~5 real pipeline jobs — so an age-only window either keeps a year of
+    # heartbeats or throws away the pipeline history with them. A finished job is
+    # deleted when its terminal event is older than its class's window; its
+    # `procrastinate_events` rows go with it (ON DELETE CASCADE). Waiting and
+    # running jobs are never touched. Any window <= 0 keeps that class forever.
+    # Failures outlive successes in every class: they are the rows you go looking
+    # for, and 42 of them sat unnoticed here behind a page that only ever showed
+    # the most recent 50 jobs.
+    job_history_maintenance_days: int = 2  # governor, stalled-recovery, schedulers
+    job_history_ingest_days: int = 7  # ingest_all, ingest_source
+    job_history_work_days: int = 90  # pipeline stages, topics, backup
+    job_history_failed_days: int = 90  # any class, any non-succeeded outcome
+    job_history_prune_cron: str = "30 4 * * *"  # after the 03:00 pipeline
     feed_page_size: int = 20
     # Background-revalidation grace window (seconds) for the feed + post HTML pages
     # (web/app.py). These pages are served `max-age=0, stale-while-revalidate=N`:
@@ -167,9 +183,10 @@ class Settings(BaseSettings):
     # Per-signal strength. Explicit topic steering counts for more than a single
     # like, and a dislike is not a mirror-image of a like: this feed optimizes
     # learning value, so it should be readier to add than to subtract.
+    # (There is deliberately no `feedback_save_weight`: a save is a bookmark, not
+    # approval, and it feeds nothing into the profile — see profile._CONTENT_SIGNALS.)
     feedback_like_weight: float = 1.0
     feedback_dislike_weight: float = 0.8
-    feedback_save_weight: float = 1.5
     feedback_topic_step: float = 2.0  # more_topic / less_topic
     # A like/dislike also nudges the post's topics and sources, but weakly — it is
     # a signal about one post, not a declaration about a whole subject area.

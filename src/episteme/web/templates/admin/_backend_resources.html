@@ -1,6 +1,6 @@
 {# GPU contention, polled on its own timer. Separate from _backend.html because
-   this probe costs ~3.5s on the host — the per-process GPU counter has an
-   irreducible PDH sampling floor — so it loads after the page paints and never
+   this probe costs ~3.5s on the host - the per-process GPU counter has an
+   irreducible PDH sampling floor - so it loads after the page paints and never
    blocks a click. #}
 {# hx-target="this": .admin-main sets an inherited hx-target, see _backend_log.html. #}
 <div id="backend-resources"
@@ -34,7 +34,7 @@
     <div class="mini-row">
       <dt class="mini-row-label">games running</dt>
       {# From Windows' own Game Bar catalogue, so it needs no hand-maintained
-         list. Context for a human reading the panel — the governor decides on
+         list. Context for a human reading the panel - the governor decides on
          measured load, not on this. #}
       <dd class="mini-row-value">{{ resources.games_running | join(', ') }}</dd>
     </div>

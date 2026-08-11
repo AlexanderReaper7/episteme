@@ -39,9 +39,15 @@ PROFILE_ID = 1
 
 # Signals that speak about the *content* of one post: they move the centroids and
 # spill weakly onto that post's topics and sources.
+#
+# `save` is deliberately NOT here (user decision, 2026-08-03): saving is
+# bookmarking — "I want to find this again" — which is not the same claim as "show
+# me more of this". A reader saves things to read later, to check a number in, to
+# send to someone; treating that as approval trains the feed on an intention the
+# reader never expressed. It is still recorded in the feedback log (it is a real
+# thing the reader did, and the button renders from it), it just moves nothing.
 _CONTENT_SIGNALS = {
     "like": lambda: settings.feedback_like_weight,
-    "save": lambda: settings.feedback_save_weight,
     "dislike": lambda: -settings.feedback_dislike_weight,
 }
 

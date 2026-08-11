@@ -26,9 +26,10 @@ from ..llm.observe import llm_context
 from ..llm.prompts import SUMMARIZE_SYSTEM, TRIAGE_SYSTEM, WRITER_AGENT_SYSTEM
 from ..llm.schemas import SourceSummary, TriageResult
 from ..models import LlmCall, PipelineRun, Post, PostAudio, SourceItem, Story
-from ..recommend import blocks, profile, scorers, scoring, topics
+from ..recommend import profile, scorers, scoring, topics
 from ..tts import build_script, default_voice_id, get_voice, script_hash, synthesize_to_file
 from ..tts.store import upsert_post_audio as _upsert_post_audio
+from . import pending
 from .app import app
 from .control import pause_requested
 from .qa import qa_posts
@@ -75,9 +76,9 @@ async def embed_new_items(session: AsyncSession, limit: int | None = None) -> in
         except LLMError as exc:
             log.warning("Topic embedding backfill skipped: %s", exc)
 
-    query = (
-        select(SourceItem).where(SourceItem.embedding.is_(None)).order_by(SourceItem.id)
-    )
+    # The predicate lives in `pending` because the admin page counts the same rows;
+    # two copies of "what this stage picks up" would agree until one was edited.
+    query = pending.embed_pending().order_by(SourceItem.id)
     if limit is not None:
         query = query.limit(limit)
     items = (await session.execute(query)).scalars().all()
@@ -102,10 +103,8 @@ async def embed_new_items(session: AsyncSession, limit: int | None = None) -> in
 
 async def cluster_items(session: AsyncSession, limit: int | None = None) -> int:
     # No pause check: pure DB work, done in seconds — nothing worth interrupting.
-    query = (
-        select(SourceItem)
-        .where(SourceItem.embedding.is_not(None), SourceItem.story_id.is_(None))
-        .order_by(SourceItem.published_at.asc().nulls_last(), SourceItem.id)
+    query = pending.cluster_pending().order_by(
+        SourceItem.published_at.asc().nulls_last(), SourceItem.id
     )
     if limit is not None:
         query = query.limit(limit)
@@ -165,7 +164,7 @@ async def triage_stories(
         # Explicit target: re-triage regardless of current status (testing lever).
         query = select(Story).where(Story.id == story_id)
     else:
-        query = select(Story).where(Story.status == "new", Story.item_count > 0)
+        query = pending.triage_pending()
         if limit is not None:
             query = query.limit(limit)
     stories = (await session.execute(query)).scalars().all()
@@ -601,13 +600,9 @@ async def write_posts(
         # they simply never consume main-model minutes while the block stands.
         candidates = (
             await session.execute(
-                select(Story)
-                .where(
-                    Story.status == "triaged",
-                    Story.triage_decision == "write",
-                    *blocks.filters(profile_state, Story.id),
+                pending.write_pending(profile_state).order_by(
+                    Story.rank_score.desc().nulls_last(), Story.last_item_at.desc()
                 )
-                .order_by(Story.rank_score.desc().nulls_last(), Story.last_item_at.desc())
             )
         ).scalars().all()
         stories = await _rank_write_queue(session, candidates, profile_state)
