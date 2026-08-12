@@ -20,6 +20,7 @@ Watch the next pipeline run rather than assuming these.
   2. **A reader-requested story reaching a published post.** The proposal, the approval and the queueing are verified; the write itself has never finished. See the write-budget item below.
   3. `demote_story` **absent** from the tool list in `/post/{id}/provenance` for `origin="user"`. Blocked on 2, since there is no post to inspect.
   4. `?force=true` makes an in-flight turn fail cleanly as an `LLMError` rather than hanging. The 409 and the governor's restraint are verified; the forced-unload-mid-generation leg is not, because no turn would start on a contended GPU.
+  5. **A reader-requested story writing through a pause and reaching a post.** The exemption itself is verified (see 0037's consequences: condense ran under a live governor pause where the same job previously returned 0 in 0.068s). What has still never been seen is the main-model pass finishing, for the budget reason below.
 
 ## Watched failing, not yet fixed
 

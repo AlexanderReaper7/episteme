@@ -469,6 +469,29 @@ def _user_first(stories: Sequence[Story]) -> list[Story]:
     return sorted(stories, key=lambda story: story.origin != "user")
 
 
+def _pause_stops(story: Story) -> bool:
+    """Whether a pause is a reason not to write THIS story.
+
+    A pause brakes work the machine chose to do: the governor saw GPU contention,
+    or you said stop. A story with `origin="user"` is neither. You approved a card
+    and that approval deferred the write, so it is foreground work in the same
+    sense a chat turn is. The pause it would otherwise wait behind is often one
+    the request itself provoked, since the governor reads the chat turn's own GPU
+    load as contention (observed 2026-08-12: the approval deferred job 43858,
+    which succeeded in 0.068s having written nothing).
+
+    Applied at BOTH of the write stage's pause checks, like `_user_first` at both
+    of `_rank_write_queue`'s exits, so "the reader's request does not wait" is one
+    rule rather than a property of one code path.
+
+    This overrides a *deliberate* pause too, not only the governor's. Asking for
+    an article is the newer instruction, and a request that silently does nothing
+    is the failure mode 0037 is trying to avoid; the writer says so either way,
+    because `_write_article_from_url` reports the pause in the same breath.
+    """
+    return story.origin != "user"
+
+
 async def _rank_write_queue(
     session: AsyncSession, candidates: Sequence[Story], profile_state
 ) -> list[Story]:
@@ -628,12 +651,15 @@ async def write_posts(
     # gets a generation-attempt uuid here; every call of the attempt (condense
     # now, the write loop in pass 2) carries it, so the post stamp is exact.
     prepared: dict[int, tuple[list[SourceItem], str, int, str]] = {}
+    held_for_pause = 0
     for story in stories:
-        if await pause_requested(session):
-            # Don't start main-model work on a pause: condense output is cheap to
-            # redo next run, the write pass is minutes of GPU per story.
-            log.info("write stage pausing before main-model pass (%d condensed)", len(prepared))
-            return 0
+        # Don't start main-model work on a pause: condense output is cheap to
+        # redo next run, the write pass is minutes of GPU per story. `continue`
+        # rather than `break` so the rule is about the story, not its position:
+        # a reader-requested one later in the queue is still written.
+        if _pause_stops(story) and await pause_requested(session):
+            held_for_pause += 1
+            continue
         attempt = uuid.uuid4().hex
         items = await _story_items(session, story)
         with llm_context(story_id=story.id, attempt_id=attempt):
@@ -650,18 +676,29 @@ async def write_posts(
             attempt,
         )
 
+    if held_for_pause:
+        log.info(
+            "write stage paused: %d stories held, %d reader-requested condensed anyway",
+            held_for_pause,
+            len(prepared),
+        )
+        if not prepared:
+            return 0
+
     # Pass 2 (main): one agentic loop per story. Topic minting is held back to pass 3
     # (see `_resolve_deferred_topics`) so nothing in here can reach the fast model.
     written = 0
     deferred_topics: list[tuple[int, list[str], dict[str, str]]] = []
     deadline = time.monotonic() + settings.write_budget_seconds
-    for story in stories:
+    # Iterating `prepared` rather than `stories` makes the KeyError below structurally
+    # impossible: a story pass 1 skipped cannot be reached with no seed to write from.
+    for story in [story for story in stories if story.id in prepared]:
         if time.monotonic() > deadline:
             log.info("write stage hit wall-clock budget (%ds)", settings.write_budget_seconds)
             break
-        if await pause_requested(session):
+        if _pause_stops(story) and await pause_requested(session):
             log.info("write stage pausing after %d posts", written)
-            break
+            continue
         items, seed, source_chars, attempt = prepared[story.id]
         # The reader asked for this one, so the writer is not offered the option
         # of declining it: `demote_story` is withheld from the tool list rather

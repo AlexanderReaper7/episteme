@@ -56,7 +56,16 @@ services:
     build: .
     # --reload-dir scopes the watcher to source only (default watches the cwd,
     # which would include .venv baked into the image).
-    command: uvicorn episteme.web.app:app --host 0.0.0.0 --port 8200 --reload --reload-dir src
+    #
+    # --timeout-graceful-shutdown is not a tuning knob, it is what makes reload
+    # terminate at all. Uvicorn waits for open connections to close, and an SSE
+    # stream never closes on its own: the admin log pane (0034) and every chat
+    # turn (0038) hold one. Without the cap, a source edit wedges the container
+    # in "Waiting for connections to close" until it is killed by hand, and every
+    # request in the meantime hangs rather than failing. (Watched 2026-08-12.)
+    command: >
+      uvicorn episteme.web.app:app --host 0.0.0.0 --port 8200
+      --reload --reload-dir src --timeout-graceful-shutdown 5
     init: true
     environment: *env
     # Bind-mount source over the baked-in copy so edits reload without a rebuild.

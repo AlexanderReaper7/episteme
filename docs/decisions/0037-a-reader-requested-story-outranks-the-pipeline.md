@@ -2,7 +2,7 @@
 
 - Date: 2026-08-11
 - Status: accepted
-- Rule: `Story.origin == "user"` means first in the write queue, no `demote_story`, no thin-gate. The interactive lease means the models are not pulled out from under a turn.
+- Rule: `Story.origin == "user"` means written immediately and through a pause, first in the write queue, no `demote_story`, no thin-gate. The interactive lease means the models are not pulled out from under a turn.
 
 ## Context
 
@@ -37,6 +37,25 @@ The mechanism is a TTL in `app_state`, not a lock — a web process that dies mi
 
 The governor keeps its two halves apart on purpose. It may still **pause** during a conversation (that is the whole point, the game needs the card); it may not **unload**.
 
+## A pause does not hold a requested story (added 2026-08-12)
+
+Priority was originally ordering only, and that turned out not to be priority at all. Approval already defers `write?story_id=N` immediately, so the story never waited for the 03:00 cron; what it waited for was the **pause flag**, because `write_posts` returned 0 at its first check. Watched live: the approval deferred job 43858, which succeeded in 0.068 seconds having written nothing, and the reader was told "queued". "Start it now" meant "maybe tonight".
+
+So the rule became explicit about what a pause is *for*:
+
+```python
+def _pause_stops(story: Story) -> bool:
+    """A pause brakes work the machine chose to do. A story the reader asked for
+    is not that."""
+    return story.origin != "user"
+```
+
+Applied at both of the write stage's pause checks, the same shape as `_user_first` at both of `_rank_write_queue`'s exits. Pass 1 `continue`s rather than `break`s, so the exemption is a property of the story and not of its position in the queue, and pass 2 iterates `prepared` rather than `stories`, which makes "written without a seed" a `KeyError` that cannot be reached rather than one guarded by hand.
+
+This overrides a **deliberate** pause too, not only the governor's. Asking for an article is the newer instruction, and the circularity is real: the governor reads the chat turn's own GPU load as contention, so the request routinely provokes the pause that would have held it. The cost is that "pause everything, I am gaming" no longer means everything; the writer's tool result says so in the same breath, and turning it back into a resume-only wait is one predicate.
+
+The test is an **AST check** rather than a behavioural one: exercising `write_posts` needs a database and a model, and the failure mode is a third pause check added later without the guard. It reads `write_posts`'s source and asserts every `pause_requested` call sits in an `and` with `_pause_stops`. Verified to fail for that reason by removing one guard (`assert 1 == 2`). `tests/test_icons.py` reads source for the same reason.
+
 ## On politeness (0005, 0006)
 
 The plan flagged this as a possible exception to "all source HTTP goes through `polite_get`", to be written down rather than absorbed silently. On implementation it turned out not to be one: `research.fetch_page` reaches the network through `_pinned_get` → `ingest.http.polite_get`, so a typed URL gets the same throttle and the same honest User-Agent as any source fetch, plus an SSRF guard the source path does not have.
@@ -53,5 +72,7 @@ What a typed URL genuinely skips is the **manual robots.txt check performed befo
 ## Consequences
 
 - A requested story is written even when the page is thin, which is exactly what was asked for and also the way to waste a main-model hour. Watched, not prevented.
+- **`POST /api/pipeline/pause` no longer stops a reader-requested write**, by construction. The remaining brake is `POST /api/llm/unload?force=true`, which makes the writer fail as an `LLMError`. Anything gentler needs the pause to carry an author the exemption respects, which is the same authored-pause machinery 0024 already describes and this deliberately did not build yet.
+- The exemption was watched working 2026-08-12: with `pipeline_pause.paused = true` (governor, `resource`, a game holding the GPU), `write?story_id=1031` ran condense through the fast model (55s, 1271 prompt tokens) and entered the main-model pass. The same job before the change returned 0 in 0.068s.
 - `chat_lease_seconds` is 180 and refreshed per turn. A turn longer than that can still be unloaded under it. The wall clock on a chat turn is 240s, so this is reachable; if it bites, refresh mid-turn rather than raise the TTL.
 - Contention remains: a chat turn during a `fast`-model stage forces a swap of roughly 100 seconds each way. The fix is a third resident model on its own port, which is a VRAM budget decision, not a code change.

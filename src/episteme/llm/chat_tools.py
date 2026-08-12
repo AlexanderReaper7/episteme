@@ -245,24 +245,25 @@ async def _write_article_from_url(ctx: ChatContext, args: dict) -> str:
             stage="write", story_id=story.id
         )
 
-    # Priority is not a bypass: a paused pipeline still stops the write stage at
-    # its first check, so the job succeeds having done nothing and the story
-    # waits for the resume. Saying "queued" and stopping there would be a lie the
-    # reader only discovers by an article never appearing, so the pause and its
-    # author are part of the answer. *(Found live 2026-08-12: the governor had
-    # paused on GPU contention caused by the chat turn itself.)*
+    # A pause no longer holds this story — `pipeline._pause_stops` exempts
+    # `origin="user"`, so the job just deferred writes through it. It is still
+    # worth saying, because the usual author is the governor and the usual reason
+    # is GPU contention, which means slow rather than never: the same contention
+    # took a write turn from 35 to 1.3 tokens per second on 2026-08-12. A reader
+    # who is told "starting now" and waits forty minutes should have been told why.
     from ..worker.control import pause_state
 
     state = await pause_state(ctx.session)
     if state.get("paused"):
         return (
-            f"Story {story.id} is queued as job {job_id}, first in the write queue — but "
-            f"the pipeline is currently PAUSED ({state.get('reason') or 'no reason given'}), "
-            "so nothing will be written until it resumes. Tell the reader that."
+            f"Started. Story {story.id} is writing now as job {job_id}, ahead of the queue "
+            f"and through the pause ({state.get('reason') or 'no reason given'}), which does "
+            "not hold work the reader asked for. Warn them it will be slow: something else "
+            "is using the GPU, which is what paused the pipeline."
         )
     return (
-        f"Queued. Story {story.id} is at the front of the write queue as job {job_id}; "
-        "the article appears in the feed when the writer finishes it."
+        f"Started. Story {story.id} is writing now as job {job_id}, ahead of anything else "
+        "in the queue; the article appears in the feed when the writer finishes it."
     )
 
 

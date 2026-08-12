@@ -6,13 +6,17 @@ This is the highest-leverage place the profile acts — it changes what gets
 ranking: a cold profile must change nothing at all.
 """
 
+import ast
+import inspect
+import textwrap
 from types import SimpleNamespace
 
 import pytest
 
 from episteme.config import settings
 from episteme.recommend.profile import ProfileState, describe
-from episteme.worker.pipeline import _rank_write_queue, _writer_seed
+from episteme.worker import pipeline
+from episteme.worker.pipeline import _pause_stops, _rank_write_queue, _writer_seed
 
 
 # --- The reader digest ------------------------------------------------------------
@@ -198,6 +202,49 @@ async def test_affinity_still_orders_everything_the_reader_did_not_ask_for():
     ]
     ordered = await _rank_write_queue(_FakeSession(), stories, profile)
     assert [s.id for s in ordered] == [3, 2, 1]
+
+
+async def test_a_pause_holds_the_pipelines_own_stories():
+    assert _pause_stops(_story(1, 9.0)) is True
+
+
+async def test_a_pause_does_not_hold_a_story_the_reader_asked_for():
+    """The reader approved a card; that approval deferred the write. Waiting for a
+    resume would make "start it now" mean "maybe tonight", and the pause is very
+    often one the request itself provoked."""
+    assert _pause_stops(_story(1, None, origin="user")) is False
+
+
+def _calls_named(node: ast.AST, name: str) -> list[ast.Call]:
+    return [
+        n
+        for n in ast.walk(node)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == name
+    ]
+
+
+async def test_every_pause_check_in_the_write_stage_exempts_the_reader():
+    """The rule is one policy, so it has to hold at every site, not at the two that
+    exist today. Read the stage's AST rather than its behaviour: exercising
+    `write_posts` needs a database and a model, and a third pause check added
+    without the guard would silently reinstate the wait this test exists to
+    prevent. Mirrors `tests/test_icons.py`, which reads source for the same reason.
+    """
+    fn = ast.parse(textwrap.dedent(inspect.getsource(pipeline.write_posts))).body[0]
+    checks = _calls_named(fn, "pause_requested")
+    guarded = [
+        node
+        for node in ast.walk(fn)
+        if isinstance(node, ast.BoolOp)
+        and isinstance(node.op, ast.And)
+        and _calls_named(node, "pause_requested")
+        and _calls_named(node, "_pause_stops")
+    ]
+    assert checks, "write_posts no longer checks for a pause at all"
+    assert len(guarded) == len(checks), (
+        f"{len(checks)} pause checks, {len(guarded)} guarded by _pause_stops — "
+        "an unguarded one makes a reader-requested story wait for the resume"
+    )
 
 
 # --- Hard blocks ------------------------------------------------------------------
