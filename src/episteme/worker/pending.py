@@ -18,7 +18,7 @@ is the one stage whose "due" is not a predicate over indexed columns.
 
 from __future__ import annotations
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
@@ -43,11 +43,18 @@ def triage_pending() -> Select:
 
 def write_pending(profile: ProfileState) -> Select:
     """Blocked stories are excluded rather than demoted: the block is a display
-    decision and must not destroy pipeline state, so it takes the profile."""
+    decision and must not destroy pipeline state, so it takes the profile.
+
+    A reader-requested story is exempt from the block. A block says "stop putting
+    this in front of me"; naming a URL says "put this in front of me", and the
+    later, more specific instruction wins. Without the exemption a request could
+    be swallowed with no error anywhere, which is the failure mode blocks are
+    most prone to (see blocks.escape_like)."""
+    block_filters = blocks.filters(profile, Story.id)
     return select(Story).where(
         Story.status == "triaged",
         Story.triage_decision == "write",
-        *blocks.filters(profile, Story.id),
+        *([or_(Story.origin == "user", and_(*block_filters))] if block_filters else []),
     )
 
 

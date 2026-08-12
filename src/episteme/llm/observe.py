@@ -53,6 +53,17 @@ def llm_conversation():
         _conversation.reset(token)
 
 
+def current_chain_id() -> str | None:
+    """The chain the enclosing `llm_conversation()` is writing under, if any.
+
+    Exposed so a durable record outside `llm_calls` can point INTO it: a chat
+    message row stores this and the raw exchange stays joinable even though the
+    two tables have different retention (llm_calls is pruned, the conversation
+    is not)."""
+    conv = _conversation.get()
+    return conv.chain_id if conv is not None else None
+
+
 def _hash_messages(messages: list) -> str:
     return hashlib.sha256(
         json.dumps(messages, sort_keys=True, default=str).encode()

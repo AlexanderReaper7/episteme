@@ -16,7 +16,8 @@ Two failure conventions, split by what the caller can do about it:
 
 The same split governs the timeouts, which is why there are three rather than
 one. A read is a measurement someone is waiting on — the dashboard renders
-`/status` on page load and polls `/logs` every 3s — so it must give up in
+`/status` on page load, and `/logs` is polled once a second for as long as
+somebody has the log pane open — so it must give up in
 seconds; a hung agent that blocked those for the length of a model load would
 take the admin page down with it. An action legitimately takes minutes: the
 agent holds `/start` until both ports answer, and `/restart` pays for a stop
@@ -99,11 +100,17 @@ class HostAgent:
         own htmx fragment and the governor polls it on a cron."""
         return await self._read("/resources")
 
-    async def logs(self, which: str = "router", tail: int | None = None) -> dict | None:
-        return await self._read(
-            "/logs",
-            params={"which": which, "tail": tail or settings.llm_log_tail_lines},
-        )
+    async def logs(
+        self, which: str = "router", tail: int | None = None, since: int | None = None
+    ) -> dict | None:
+        """`since` is a byte offset (the previous call's `next_offset`): the agent
+        then returns only what was written after it, which is what lets the log
+        pane append rather than re-render a whole tail. Omitted, it is a plain
+        tail read. Sent only when set, so a tail read's request is unchanged."""
+        params: dict[str, int | str] = {"which": which, "tail": tail or settings.llm_log_tail_lines}
+        if since is not None:
+            params["since"] = since
+        return await self._read("/logs", params=params)
 
     # --- actions (raise) -----------------------------------------------------
 

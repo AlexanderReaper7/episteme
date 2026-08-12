@@ -563,6 +563,304 @@
   // touches only text nodes, so it neither reflows the table nor scrolls it.
   setInterval(function () { retimeAgo(document); }, 30000);
 
+  /* ==================== llama.cpp log stream (admin) ===================== */
+
+  // The pane is APPEND-ONLY. It used to re-fetch its whole 300-line tail every
+  // 3s and swap it in, which discarded the operator's text selection and reset
+  // their scrollback on every tick - while they were reading it. The server now
+  // pushes only the lines written since the last byte offset (see
+  // api.api_llm_logs_stream) and we append them as their own text node; existing
+  // nodes are never rewritten, so a selection spanning them survives.
+  //
+  // Exactly one stream can be open, because there is exactly one pane. Tracking
+  // the ELEMENT rather than a boolean is what makes this idempotent under
+  // htmx:load, which fires for every swap anywhere on the page: same element,
+  // nothing to do; different or gone, close the old one first - an htmx swap
+  // discards the node without telling us, and an orphaned EventSource would go
+  // on polling the host agent for a pane nobody can see.
+  var LOG_MAX_LINES = 5000;
+  var logStream = null;
+  var logPane = null;
+
+  function logPart(pane, sel) {
+    var box = pane.closest("#backend-log");
+    return box ? box.querySelector(sel) : null;
+  }
+
+  function appendLog(pane, lines) {
+    if (!lines.length) return;
+    var node = document.createTextNode(lines.join("\n") + "\n");
+    node.lineCount = lines.length;
+    pane.appendChild(node);
+    var total = Number(pane.dataset.logLines || 0) + lines.length;
+    // Drop whole leading nodes rather than re-slicing text: not touching what is
+    // already rendered is the entire point of this pane.
+    while (total > LOG_MAX_LINES && pane.firstChild && pane.firstChild !== node) {
+      total -= pane.firstChild.lineCount || 0;
+      pane.removeChild(pane.firstChild);
+    }
+    pane.dataset.logLines = total;
+  }
+
+  function syncLogStream() {
+    var pane = document.querySelector("[data-log-stream]");
+    if (pane === logPane) return;
+    if (logStream) { logStream.close(); logStream = null; }
+    logPane = pane;
+    if (!pane) return;
+
+    // The server-rendered snapshot is one untracked node: give it its line count
+    // and a trailing newline so every later append is uniform.
+    if (pane.firstChild) {
+      pane.firstChild.lineCount = Number(pane.dataset.logLines || 0);
+      if (pane.textContent.slice(-1) !== "\n") pane.appendChild(document.createTextNode("\n"));
+    }
+
+    var stream = new EventSource(pane.dataset.logStream);
+    logStream = stream;
+
+    function paint(e, replace) {
+      if (stream !== logStream) return;  // a swap raced us; this stream is stale
+      var data = JSON.parse(e.data);
+      if (replace) {
+        pane.textContent = "";
+        pane.dataset.logLines = 0;
+        // A reset after a backlog overrun skipped bytes. Say so, rather than
+        // splicing two distant parts of the log into one continuous-looking pane.
+        if (data.gap_bytes) {
+          appendLog(pane, ["… " + Math.round(data.gap_bytes / 1024) + " KB skipped …"]);
+        }
+      }
+      appendLog(pane, data.lines || []);
+      var status = logPart(pane, "[data-log-status]");
+      if (status) status.textContent = "";
+      var note = logPart(pane, "[data-log-note]");
+      if (note && data.exists) note.remove();
+      var size = logPart(pane, "[data-log-size]");
+      if (size && data.exists) size.textContent = (data.size_bytes / 1024).toFixed(1) + " KB";
+    }
+
+    function say(text) {
+      if (stream !== logStream) return;
+      var status = logPart(pane, "[data-log-status]");
+      if (status) status.textContent = text;
+    }
+
+    stream.addEventListener("reset", function (e) { paint(e, true); });
+    stream.addEventListener("lines", function (e) { paint(e, false); });
+    // The agent being down is a normal state - it is optional infrastructure, and
+    // watching it restart is a reason to have this pane open - so neither failure
+    // closes anything: the server keeps polling through `unavailable`, and
+    // EventSource reconnects itself after a transport `error`. Only the status
+    // line changes. (Two events, not one: a server-sent `error` would land on the
+    // same handler as the transport's own, distinguishable only by `data`.)
+    stream.addEventListener("unavailable", function (e) { say(JSON.parse(e.data).detail); });
+    stream.addEventListener("error", function () { say("reconnecting…"); });
+  }
+
+  /* ===================== the assistant rail ============================= */
+
+  /* Reads the turn stream with fetch() + ReadableStream rather than EventSource,
+     because the request is a POST with a body. That is also why the rail is not
+     htmx: htmx swaps a finished response, and the whole point here is the
+     unfinished one.
+
+     The rail lives outside #main-content, so it survives boosted navigation -
+     including mid-stream. `currentPostId` therefore has to be re-read from the
+     URL on every navigation instead of captured when the panel was built. */
+
+  var chatBusy = false;
+
+  function currentPostId() {
+    var m = /^\/post\/(\d+)/.exec(window.location.pathname);
+    return m ? m[1] : null;
+  }
+
+  function chatLog() { return document.querySelector("[data-chat-log]"); }
+
+  function scrollChat() {
+    var log = chatLog();
+    if (log) log.scrollTop = log.scrollHeight;
+  }
+
+  function chatBubble(role) {
+    var log = chatLog();
+    if (!log) return null;
+    var empty = log.querySelector(".chat-empty");
+    if (empty) empty.remove();
+    var div = document.createElement("div");
+    div.className = "chat-msg chat-msg-" + role + " chat-msg-streaming";
+    log.appendChild(div);
+    scrollChat();
+    return div;
+  }
+
+  // Append a text NODE rather than rewriting textContent: a rewrite collapses any
+  // selection the reader has made in the scrollback, on every single token.
+  function chatAppend(bubble, text) {
+    if (!bubble || !text) return;
+    bubble.appendChild(document.createTextNode(text));
+    scrollChat();
+  }
+
+  async function chatFetchInto(url, place) {
+    var res = await fetch(url, { headers: { "HX-Request": "true" } });
+    if (!res.ok) return;
+    var wrap = document.createElement("div");
+    wrap.innerHTML = await res.text();
+    var node = wrap.firstElementChild;
+    if (node) place(node);
+    scrollChat();
+  }
+
+  // One SSE frame parser for both streams. The event NAME carries the type, so a
+  // frame is (event, data) and nothing has to sniff the payload.
+  function chatFrames(chunk, onEvent) {
+    chunk.split("\n\n").forEach(function (frame) {
+      var name = null;
+      var data = "";
+      frame.split("\n").forEach(function (line) {
+        if (line.indexOf("event:") === 0) name = line.slice(6).trim();
+        else if (line.indexOf("data:") === 0) data += line.slice(5).trim();
+      });
+      if (!name) return;
+      var parsed = {};
+      try { parsed = data ? JSON.parse(data) : {}; } catch (err) { return; }
+      onEvent(name, parsed);
+    });
+  }
+
+  async function chatStream(url, options) {
+    if (chatBusy) return;
+    chatBusy = true;
+    var form = document.querySelector("[data-chat-form]");
+    if (form) form.classList.add("is-busy");
+    var bubble = null;
+    var status = null;
+
+    function note(text) {
+      if (!status) {
+        status = document.createElement("div");
+        status.className = "chat-status";
+        var log = chatLog();
+        if (log) log.appendChild(status);
+      }
+      status.textContent = text;
+      scrollChat();
+    }
+
+    try {
+      var res = await fetch(url, options);
+      if (!res.ok || !res.body) { note("The assistant is unreachable (" + res.status + ")."); return; }
+      var reader = res.body.getReader();
+      var decoder = new TextDecoder();
+      var buffer = "";
+      for (;;) {
+        var step = await reader.read();
+        if (step.done) break;
+        buffer += decoder.decode(step.value, { stream: true });
+        // Keep the trailing partial frame; frames are separated by a blank line.
+        var cut = buffer.lastIndexOf("\n\n");
+        if (cut < 0) continue;
+        var whole = buffer.slice(0, cut);
+        buffer = buffer.slice(cut + 2);
+        chatFrames(whole, function (name, data) {
+          if (name === "text") {
+            if (!bubble) bubble = chatBubble("assistant");
+            if (status) { status.remove(); status = null; }
+            chatAppend(bubble, data.delta || "");
+          } else if (name === "tool") {
+            note("using " + (data.name || "a tool") + "…");
+          } else if (name === "saved") {
+            // Swap the raw stream for the server's rendered Markdown, so a live
+            // answer and a reloaded one are the same HTML.
+            var streamed = bubble;
+            bubble = null;
+            chatFetchInto("/chat/message/" + data.id, function (node) {
+              if (streamed) streamed.replaceWith(node); else chatLog().appendChild(node);
+            });
+          } else if (name === "proposal") {
+            chatFetchInto("/chat/proposal/" + data.id, function (node) {
+              chatLog().appendChild(node);
+            });
+          } else if (name === "resolved") {
+            var card = document.querySelector('[data-proposal="' + data.id + '"]');
+            if (card) card.remove();
+          } else if (name === "result") {
+            note(data.text || "");
+            status = null;  // keep it: it is the outcome, not a transient
+          } else if (name === "error") {
+            note(data.message || "Something went wrong.");
+            status = null;
+          }
+        });
+      }
+    } catch (err) {
+      note("The connection dropped: " + err);
+    } finally {
+      chatBusy = false;
+      if (form) form.classList.remove("is-busy");
+    }
+  }
+
+  function initChat(root) {
+    var rail = pick(root, "[data-chat]");
+    if (!rail || rail.dataset.chatReady) return;
+    rail.dataset.chatReady = "1";
+
+    rail.querySelectorAll("[data-chat-toggle]").forEach(function (button) {
+      button.addEventListener("click", function () {
+        var open = rail.classList.toggle("is-open");
+        rail.querySelectorAll("[data-chat-toggle]").forEach(function (b) {
+          if (b.hasAttribute("aria-expanded")) b.setAttribute("aria-expanded", String(open));
+        });
+        if (open) {
+          scrollChat();
+          var box = rail.querySelector("textarea");
+          if (box) box.focus();
+        }
+      });
+    });
+
+    var form = rail.querySelector("[data-chat-form]");
+    if (form) {
+      form.addEventListener("submit", function (e) {
+        e.preventDefault();
+        var box = form.querySelector("textarea");
+        var text = (box.value || "").trim();
+        if (!text || chatBusy) return;
+        var bubble = chatBubble("user");
+        if (bubble) bubble.textContent = text;
+        box.value = "";
+        var body = new FormData();
+        body.append("text", text);
+        var postId = currentPostId();
+        chatStream("/chat/turn" + (postId ? "?post_id=" + postId : ""), {
+          method: "POST",
+          body: body,
+        });
+      });
+      // Enter sends, Shift+Enter is a newline - the convention every chat box uses.
+      form.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" && !e.shiftKey && e.target.tagName === "TEXTAREA") {
+          e.preventDefault();
+          form.requestSubmit();
+        }
+      });
+    }
+
+    // Delegated, because approval cards arrive after this runs - both from the
+    // live stream and from a re-fetched scrollback.
+    rail.addEventListener("click", function (e) {
+      var button = e.target.closest ? e.target.closest("[data-chat-resolve]") : null;
+      if (!button) return;
+      var id = button.dataset.chatResolve;
+      var approve = button.dataset.approve;
+      button.closest(".chat-proposal").classList.add("is-resolving");
+      chatStream("/chat/proposal/" + id + "/resolve?approve=" + approve, { method: "POST" });
+    });
+  }
+
   /* ===================== per-load initialization ======================== */
 
   function onLoad(root) {
@@ -572,6 +870,10 @@
     initQueueGroups(root);
     retimeAgo(root);
     hydrateRich(root);
+    initChat(root);
+    // Queried from the document, not `root`: the pane may have been removed by a
+    // swap somewhere else entirely, and that stream still needs closing.
+    syncLogStream();
     if (document.querySelector(".admin-sidebar-nav")) syncNav();
   }
 

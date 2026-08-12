@@ -1,0 +1,40 @@
+{# The docked rail. It lives OUTSIDE <main>, so a boosted navigation - which
+   swaps only #main-content - cannot destroy it: the conversation, the scrollback
+   and an in-flight stream all survive going feed -> article -> feed.
+
+   `hx-target="this"` on the wrapper is not optional: <body> sets
+   hx-target="#main-content" and every control in here would otherwise swap the
+   page instead of the rail. #}
+<aside id="chat-rail" class="chat-rail" data-chat
+       data-session="{{ chat_session_id }}"
+       hx-target="this" hx-swap="outerHTML">
+  <button type="button" class="chat-toggle" data-chat-toggle
+          aria-expanded="false" aria-controls="chat-body"
+          title="Assistant" aria-label="Assistant">{{ ico.icon("chat") }}</button>
+
+  <div class="chat-body" id="chat-body">
+    <header class="chat-head">
+      <h2>Assistant</h2>
+      <button type="button" class="chat-new" hx-post="/chat/new"
+              title="Start a new conversation">{{ ico.icon("restart") }} new</button>
+      <button type="button" class="chat-close" data-chat-toggle
+              title="Close" aria-label="Close">{{ ico.icon("remove") }}</button>
+    </header>
+
+    <div class="chat-log" data-chat-log>
+      {% if not messages %}
+      <p class="muted chat-empty">
+        Ask about the article you have open, search what you have read, or paste a
+        link and ask for an article about it. Anything that writes asks you first.
+      </p>
+      {% endif %}
+      {% for m in messages %}{% include "_chat_message.html" %}{% endfor %}
+    </div>
+
+    <form class="chat-form" data-chat-form>
+      <textarea name="text" rows="2" required
+                placeholder="Ask something, or paste a URL"></textarea>
+      <button type="submit" title="Send" aria-label="Send">{{ ico.icon("send") }}</button>
+    </form>
+  </div>
+</aside>

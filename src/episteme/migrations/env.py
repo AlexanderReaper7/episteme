@@ -168,6 +168,23 @@ async def run_async_migrations() -> None:
         # about to change rather than from a caller's belief about it.
         if applies_ddl():
             await backup_before_migrating(connection, target=_destination_revision())
+            # ...and then give the connection back untouched. Those reads opened
+            # a transaction (SQLAlchemy 2.0 commits as you go), and alembic's
+            # `begin_transaction()` yields without owning one when a transaction
+            # is already open — so its commit never fires, `engine.connect()`
+            # rolls back on exit, and the migration reports success having
+            # changed nothing. That is not hypothetical: it is what this code
+            # did between 2026-08-02 and 2026-08-11. The backup only reads, so
+            # rolling back discards nothing.
+            await connection.rollback()
+        # Fail loudly if that ever stops holding: a migration that silently does
+        # not apply is the worst failure this file can produce, because every
+        # signal downstream (the log line, the exit code, `status`) says it did.
+        if connection.in_transaction():
+            raise RuntimeError(
+                "alembic was handed a connection with an open transaction; its "
+                "commit would be suppressed and the migration silently discarded"
+            )
         await connection.run_sync(do_run_migrations)
     await engine.dispose()
 

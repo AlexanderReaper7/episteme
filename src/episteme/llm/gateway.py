@@ -1,7 +1,7 @@
 """LLM gateway — the single module through which all model access flows.
 
-Code asks for a *role* (`main`, `fast`, `embed`); config maps each role to a
-model name **and a base URL** on an OpenAI-compatible endpoint (spec §7).
+Code asks for a *role* (`main`, `fast`, `embed`, `chat`); config maps each role
+to a model name **and a base URL** on an OpenAI-compatible endpoint (spec §7).
 Structured output is enforced twice: the JSON schema is sent as a
 `response_format` so llama.cpp constrains generation grammatically, and the
 response is validated with the same pydantic model client-side, with
@@ -16,9 +16,11 @@ on its own port today; health, the admin view and unload all derive the split
 from the resolved URLs.
 """
 
+import json
 import logging
 import math
 import time
+from collections.abc import AsyncIterator
 from typing import Literal, TypeVar
 
 import httpx
@@ -30,8 +32,8 @@ from .observe import record_llm_call
 
 log = logging.getLogger("episteme.llm")
 
-Role = Literal["main", "fast", "embed"]
-ROLES: tuple[Role, ...] = ("main", "fast", "embed")
+Role = Literal["main", "fast", "embed", "chat"]
+ROLES: tuple[Role, ...] = ("main", "fast", "embed", "chat")
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -100,6 +102,68 @@ def holds_vram(model: dict) -> bool:
     return ((model.get("status") or {}).get("value")) not in (None, "unloaded")
 
 
+class StreamAccumulator:
+    """Rebuilds one complete assistant message from `chat/completions` deltas.
+
+    A streamed response is the same message as a non-streamed one, taken apart.
+    This puts it back together so that `chat_stream`'s final product is
+    shape-identical to what `chat_messages` returns — which is the property that
+    lets `run_tool_loop`, `observe`, and every caller stay ignorant of streaming.
+
+    The part that is not obvious: **tool-call arguments arrive as string
+    fragments across chunks**, keyed by `index`, and only the FIRST fragment
+    carries `id` and `function.name`. Concatenating per index is the whole
+    algorithm; appending per *arrival* instead would interleave two parallel
+    tool calls into one unparseable JSON string.
+
+    A separate class rather than a closure so it is unit-testable against
+    recorded chunk sequences without an HTTP layer.
+    """
+
+    def __init__(self) -> None:
+        self._content: list[str] = []
+        self._tool_calls: dict[int, dict] = {}
+        self.finish_reason: str | None = None
+        self.usage: dict = {}
+
+    def feed(self, chunk: dict) -> str:
+        """Absorb one parsed `data:` payload; return the text delta it carried
+        (empty string when it carried none), so the caller can forward it."""
+        self.usage = chunk.get("usage") or self.usage
+        choices = chunk.get("choices") or []
+        if not choices:
+            # Usage-only final chunk (stream_options.include_usage).
+            return ""
+        choice = choices[0]
+        self.finish_reason = choice.get("finish_reason") or self.finish_reason
+        delta = choice.get("delta") or {}
+        for call in delta.get("tool_calls") or []:
+            slot = self._tool_calls.setdefault(
+                call.get("index", 0),
+                {"id": "", "type": "function", "function": {"name": "", "arguments": ""}},
+            )
+            if call.get("id"):
+                slot["id"] = call["id"]
+            function = call.get("function") or {}
+            if function.get("name"):
+                slot["function"]["name"] = function["name"]
+            # `or ""` and not `.get(..., "")`: a chunk may carry an explicit null.
+            slot["function"]["arguments"] += function.get("arguments") or ""
+        text = delta.get("content") or ""
+        if text:
+            self._content.append(text)
+        return text
+
+    def message(self) -> dict:
+        """The assembled assistant message. `content` is None rather than "" when
+        empty, matching what a non-streaming server sends alongside tool calls."""
+        content = "".join(self._content)
+        message: dict = {"role": "assistant", "content": content or None}
+        if self._tool_calls:
+            message["tool_calls"] = [self._tool_calls[i] for i in sorted(self._tool_calls)]
+        return message
+
+
 def grammar_safe(schema: object) -> object:
     """Deep-copy `schema` with grammar-incompilable constraints removed."""
     if isinstance(schema, dict):
@@ -124,11 +188,17 @@ class LLMGateway:
     # --- endpoint resolution ------------------------------------------------
 
     def endpoint_for(self, role: Role) -> str:
-        """The base URL serving `role`: its own override, else the default."""
+        """The base URL serving `role`: its own override, else the default.
+
+        `chat` falls back through `main` rather than straight to the default,
+        because "the assistant runs wherever the writer runs" is the property that
+        keeps an interactive turn from triggering a model swap. Moving main to its
+        own server would otherwise silently leave chat behind on the shared one."""
         override = {
             "main": settings.llm_main_base_url,
             "fast": settings.llm_fast_base_url,
             "embed": settings.llm_embed_base_url,
+            "chat": settings.llm_chat_base_url or settings.llm_main_base_url,
         }[role]
         return _normalize(override or settings.llm_base_url)
 
@@ -159,6 +229,7 @@ class LLMGateway:
             "main": settings.llm_model_main,
             "fast": settings.llm_model_fast,
             "embed": settings.llm_model_embed,
+            "chat": settings.llm_model_chat or settings.llm_model_main,
         }[role]
 
     def model_for(self, role: Role) -> str:
@@ -416,6 +487,96 @@ class LLMGateway:
             completion_tokens=usage.get("completion_tokens"),
         )
         return message
+
+    async def chat_stream(
+        self,
+        role: Role,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        temperature: float = 0.3,
+    ) -> AsyncIterator[dict]:
+        """`chat_messages`, streamed. Yields `{"type": "text", "delta": str}` as
+        tokens arrive and finally exactly one `{"type": "message", "message": {...}}`
+        carrying the assembled assistant message, identical in shape to what
+        `chat_messages` returns.
+
+        The terminal event is how a caller gets the result: a bare async generator
+        has no return value an `async for` can see. Callers that only want the
+        finished message should use `chat_messages`; this exists for the one caller
+        with a human watching (`llm/chat.py`), because a tool loop on the main model
+        behind a model swap is minutes of silence otherwise.
+
+        Observability is unchanged: one `record_llm_call` at the end, from the
+        assembled message, so a streamed turn and a blocking one are the same row.
+        `LLMError` remains the whole contract, including for a stream that dies
+        halfway — the partial text already yielded is the caller's to discard.
+        """
+        payload: dict = {
+            "model": self.model_for(role),
+            "messages": messages,
+            "temperature": temperature,
+            "stream": True,
+            # Streamed responses carry no usage block by default; without this the
+            # llm_calls row for every chat turn would have null token counts.
+            "stream_options": {"include_usage": True},
+        }
+        if settings.llm_disable_thinking:
+            payload["chat_template_kwargs"] = {"enable_thinking": False}
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
+
+        accumulator = StreamAccumulator()
+        start = time.monotonic()
+        request = {"messages": messages, "tools": bool(tools), "streamed": True}
+        try:
+            async with self.client_for(role).stream(
+                "POST", "/chat/completions", json=payload
+            ) as response:
+                if response.status_code != 200:
+                    # The body has not been read yet on a streaming response, and
+                    # raise_for_status would report the status with no detail.
+                    await response.aread()
+                    response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line.startswith("data:"):
+                        continue  # blank separators and `:` keep-alive comments
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        break
+                    delta = accumulator.feed(json.loads(data))
+                    if delta:
+                        yield {"type": "text", "delta": delta}
+        except Exception as exc:
+            await record_llm_call(
+                role=role,
+                model=payload["model"],
+                kind="tool-chat",
+                duration_ms=int((time.monotonic() - start) * 1000),
+                request=request,
+                error=str(exc),
+            )
+            raise _as_llm_error(exc) from exc
+
+        message = accumulator.message()
+        usage = accumulator.usage
+        log.info(
+            "%s stream: %s prompt + %s completion tokens",
+            role,
+            usage.get("prompt_tokens", "?"),
+            usage.get("completion_tokens", "?"),
+        )
+        await record_llm_call(
+            role=role,
+            model=payload["model"],
+            kind="tool-chat",
+            duration_ms=int((time.monotonic() - start) * 1000),
+            request=request,
+            response=message,
+            prompt_tokens=usage.get("prompt_tokens"),
+            completion_tokens=usage.get("completion_tokens"),
+        )
+        yield {"type": "message", "message": message}
 
     async def complete_json(
         self,

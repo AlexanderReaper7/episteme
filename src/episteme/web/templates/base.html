@@ -59,5 +59,11 @@
   <main id="main-content">
     {% block content %}{% endblock %}
   </main>
+  {# Sibling of <main>, not inside it: boosted navigation swaps #main-content, so
+     anything in there is destroyed on every click. A shell fetched on load rather
+     than rendered inline, so the conversation's state never enters a page's ETag
+     (see web/chat.py). #}
+  <aside id="chat-rail" class="chat-rail chat-rail-loading"
+         hx-get="/chat/panel" hx-trigger="load" hx-target="this" hx-swap="outerHTML"></aside>
 </body>
 </html>

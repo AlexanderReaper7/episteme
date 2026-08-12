@@ -105,9 +105,13 @@ class _FakeSession:
         return _Result(self._rows)
 
 
-def _story(story_id, rank_score, topics=(), centroid=None):
+def _story(story_id, rank_score, topics=(), centroid=None, origin="ingest"):
     return SimpleNamespace(
-        id=story_id, rank_score=rank_score, topics=list(topics), centroid=centroid
+        id=story_id,
+        rank_score=rank_score,
+        topics=list(topics),
+        centroid=centroid,
+        origin=origin,
     )
 
 
@@ -169,6 +173,31 @@ async def test_untriaged_rank_score_is_treated_as_zero_not_as_an_error():
 
 async def test_empty_queue_is_handled():
     assert await _rank_write_queue(_FakeSession(), [], ProfileState(event_count=5)) == []
+
+
+# --- A story the reader asked for -------------------------------------------------
+
+
+async def test_a_requested_story_is_written_before_anything_the_pipeline_chose():
+    """Priority, not just privilege. The stage stops at `max_writes_per_run` and at
+    a wall clock, so a request that merely survived the ranking could still never
+    reach the model; it has to be at the front."""
+    stories = [_story(1, 9.0), _story(2, None, origin="user"), _story(3, 8.0)]
+    ordered = await _rank_write_queue(_FakeSession(), stories, ProfileState())
+    assert [s.id for s in ordered] == [2, 1, 3]
+
+
+async def test_affinity_still_orders_everything_the_reader_did_not_ask_for():
+    """The exemption is not a second ranking policy. Requested stories move to the
+    front; below them the queue is exactly what affinity produced."""
+    profile = ProfileState(topic_weights={"marine-biology": 5.0}, event_count=3)
+    stories = [
+        _story(1, 6.0, topics=["astronomy"]),
+        _story(2, 5.0, topics=["marine biology"]),
+        _story(3, 0.0, origin="user"),
+    ]
+    ordered = await _rank_write_queue(_FakeSession(), stories, profile)
+    assert [s.id for s in ordered] == [3, 2, 1]
 
 
 # --- Hard blocks ------------------------------------------------------------------
@@ -260,9 +289,9 @@ def test_like_wildcards_in_a_keyword_are_matched_literally(keyword, expected):
     Asserted on the pattern rather than the SQL because that is where the escaping
     has to happen; the compiled statement below proves the ESCAPE clause travels
     with it."""
-    from episteme.recommend.blocks import _escape_like
+    from episteme.recommend.blocks import escape_like
 
-    assert f"%{_escape_like(keyword)}%" == expected
+    assert f"%{escape_like(keyword)}%" == expected
 
 
 def test_the_escape_character_is_declared_to_postgres():

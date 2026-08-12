@@ -1,36 +1,51 @@
-{# Live tail of llama-server's log. Polling, not SSE: htmx polling is what every
-   other live surface in /admin uses, and a streaming transport for a 3-second
-   refresh would be a second mechanism earning nothing.
+{# Live tail of llama-server's log.
+
+   Rendered ONCE (per log choice) and then kept current by a server-sent event
+   stream, not by an htmx poll. The poll it replaced re-fetched the whole
+   300-line tail every 3s and swapped it in, which threw away the operator's
+   text selection and scrollback on every tick - while they were reading. The
+   stream carries only the bytes written since the last offset, and app.js
+   appends them, so nothing already on screen is touched.
+
+   The snapshot below is what makes the handover seamless: `next_offset` tells
+   the stream where this render stopped, so it resumes without re-sending a
+   single line. It is also the whole no-JS story - a static tail rather than a
+   blank box.
 
    The scroll box is `column-reverse`, which pins the view to the newest line
-   with no JS and no scroll bookkeeping across swaps. #}
-{# hx-target="this" is NOT redundant: .admin-main sets hx-target="#admin-main",
-   and htmx INHERITS hx-target down the tree — so a self-replacing fragment that
-   relies on the default target silently swallows the whole page instead. Every
-   partial in this directory names its target for that reason. #}
-<div id="backend-log"
-     hx-get="/admin/partials/backend-log?which={{ which }}"
-     hx-trigger="every 3s"
-     hx-target="this"
-     hx-swap="outerHTML">
+   with no JS and no scroll bookkeeping: appended content grows away from
+   scrollTop 0, so the tail stays put while a reader scrolled up stays put too. #}
+{# hx-target="this" is NOT redundant on the buttons: .admin-main sets
+   hx-target="#admin-main", and htmx INHERITS hx-target down the tree - so a
+   fragment that relies on the default target silently swallows the whole page
+   instead. Every partial in this directory names its target for that reason. #}
+<div id="backend-log">
   <div class="log-head">
     {% for name in logs_available %}
     <button class="{{ 'primary' if name == which else '' }}"
             hx-get="/admin/partials/backend-log?which={{ name }}"
             hx-target="#backend-log" hx-swap="outerHTML">{{ name }}</button>
     {% endfor %}
-    {% if log and log.exists %}
-    <span class="muted mono">{{ '%.1f'|format(log.size_bytes / 1024) }} KB</span>
-    {% endif %}
+    <span class="muted mono" data-log-size>{% if log and log.exists %}{{ '%.1f'|format(log.size_bytes / 1024) }} KB{% endif %}</span>
+    <span class="muted mono log-status" data-log-status></span>
   </div>
+  {% if not agent_enabled %}
+  <p class="muted" style="font-size: 0.82rem;">Log unavailable - no control agent is configured.</p>
+  {% else %}
   {% if not log %}
-  <p class="muted" style="font-size: 0.82rem;">Log unavailable — the control agent is not reachable.</p>
+  <p class="muted" style="font-size: 0.82rem;" data-log-note>
+    Control agent unreachable - the pane fills as soon as it answers.
+  </p>
   {% elif not log.exists %}
   {# Expected before the first start after the launcher gained --log-file. #}
-  <p class="muted" style="font-size: 0.82rem;">
-    No log yet at <code class="mono">{{ log.path }}</code> — it is written from the next start onward.
+  <p class="muted" style="font-size: 0.82rem;" data-log-note>
+    No log yet at <code class="mono">{{ log.path }}</code> - it is written from the next start onward.
   </p>
-  {% else %}
-  <div class="log-pane"><pre class="mono">{{ log.lines | join('\n') }}</pre></div>
+  {% endif %}
+  {# Present even when the snapshot came back empty: the stream keeps trying, so
+     a log that appears (or an agent that comes back) fills this without a
+     reload - which the old poll gave us and must not be lost. #}
+  <div class="log-pane"><pre class="mono" data-log-stream="/api/llm/logs/stream?which={{ which }}{% if since is not none %}&amp;since={{ since }}{% endif %}"
+       data-log-lines="{{ log.lines | length if log else 0 }}">{% if log %}{{ log.lines | join('\n') }}{% endif %}</pre></div>
   {% endif %}
 </div>

@@ -7,6 +7,7 @@ plain dict builders — the ORM models are the schema."""
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
@@ -42,6 +43,7 @@ from ..models import (
 )
 from ..recommend import feedback, profile, topics
 from ..recommend.scoring import defer_rescore
+from ..recommend.search import search_posts
 from ..tts import (
     build_script,
     default_voice_id,
@@ -607,12 +609,18 @@ async def api_pipeline_pause():
     worker stops at the next unit boundary — one story/post/batch — and unloads
     the decode models itself; if nothing is running, models are unloaded now.
     The flag persists until /pipeline/resume, so scheduled runs stay no-ops."""
-    from ..worker.control import set_paused
+    from ..worker.control import set_paused, unload_unless_interactive
 
     async with SessionLocal() as session:
         await set_paused(session, True)
     running = await _pipeline_job_running()
-    unloaded = [] if running else await gateway.unload_models()
+    # The unload here is a side effect of pausing the PIPELINE, not a request to
+    # take the models away, so an interactive turn survives it. `/llm/unload` is
+    # the lever for actually insisting, and it 409s instead of skipping quietly.
+    unloaded: list[str] = []
+    if not running:
+        async with SessionLocal() as session:
+            unloaded = await unload_unless_interactive(session)
     return {"paused": True, "worker_running": running, "unloaded_models": unloaded}
 
 
@@ -635,10 +643,23 @@ async def api_pipeline_resume(run: bool = Query(True)):
 
 
 @router.post("/llm/unload")
-async def api_llm_unload():
+async def api_llm_unload(force: bool = Query(False)):
     """Unload all decode models immediately (frees VRAM). Standalone lever —
     does NOT pause the pipeline; in-flight LLM calls will fail and a running
-    worker will reload models on its next call. Pair with /pipeline/pause."""
+    worker will reload models on its next call. Pair with /pipeline/pause.
+
+    409s while an interactive chat turn holds the models, because unloading
+    under one kills a stream somebody is watching. `?force=true` is the escape
+    hatch, the same shape /llm/backend/stop already uses: we did not do it, and
+    here is how to insist."""
+    from ..worker.control import interactive_held
+
+    if not force:
+        async with SessionLocal() as session:
+            if await interactive_held(session):
+                raise HTTPException(
+                    409, "An interactive chat turn holds the models; retry with ?force=true"
+                )
     return {"unloaded_models": await gateway.unload_models()}
 
 
@@ -683,11 +704,116 @@ async def api_llm_resources():
 
 
 @router.get("/llm/logs")
-async def api_llm_logs(which: str = Query("router"), tail: int | None = Query(None)):
-    logs = await host_agent.logs(which, tail)
+async def api_llm_logs(
+    which: str = Query("router"),
+    tail: int | None = Query(None),
+    since: int | None = Query(None, ge=0),
+):
+    """A snapshot. `since` (a previous `next_offset`) asks for only what was
+    written after it — the same delta the stream below is built on, for scripts
+    that would rather poll than hold a connection open."""
+    logs = await host_agent.logs(which, tail, since)
     if logs is None:
         raise HTTPException(status_code=503, detail="Host agent unavailable")
     return logs
+
+
+def _sse(event: str, payload: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(payload)}\n\n"
+
+
+@router.get("/llm/logs/stream")
+async def api_llm_logs_stream(
+    request: Request,
+    which: str = Query("router"),
+    since: int | None = Query(None, ge=0),
+):
+    """The log pane's transport: server-sent events carrying only the lines
+    written since the last offset.
+
+    It replaces a 3s htmx poll that re-fetched and re-swapped the entire 300-line
+    tail. Two things were wrong with that beyond the bytes: swapping the pane
+    destroyed any text selection the operator had made in it, and reset their
+    scrollback — precisely while they were reading the thing they came for.
+
+    **The browser is pushed to; only the container→host leg polls.** A `tail -f`
+    held open across the Docker boundary would put a long-lived connection on
+    the optional, restartable host agent and give it a tailing loop in a
+    threadpool worker, to save a delta read that is a file seek. The offset
+    protocol makes that leg stateless and idempotent instead, and it is the same
+    one `GET /llm/logs?since=` exposes.
+
+    Pass `since` to continue an already-rendered tail without re-sending it: the
+    admin fragment renders a snapshot server-side and hands us its `next_offset`,
+    so the pane never flashes. Events:
+
+    * `reset` — replace the pane's contents (first payload, a restart-truncated
+      log, or a backlog past the window; `gap_bytes` says what was skipped)
+    * `lines` — append these
+    * `unavailable` — the agent is unreachable; the stream keeps trying, because
+      an agent restart is a normal thing to be watching the log for
+
+    Failure is an event rather than a closed connection for that last reason:
+    the stream must outlive the process it reports on. It is NOT named `error`,
+    which SSE dispatches onto the same handler as EventSource's own transport
+    error — one of which carries `data` and one of which does not.
+    """
+    if not host_agent.enabled:
+        raise HTTPException(status_code=503, detail="Host agent unavailable")
+
+    interval = settings.llm_log_stream_interval_seconds
+
+    async def events():
+        offset = since
+        # First payload replaces whatever the pane holds unless the caller told
+        # us where its snapshot ended.
+        replace = since is None
+        silent = 0.0
+        while not await request.is_disconnected():
+            payload = await host_agent.logs(which, since=offset)
+            if payload is None:
+                yield _sse(
+                    "unavailable",
+                    {"detail": f"Control agent unreachable at {settings.llm_host_agent_url}"},
+                )
+                silent = 0.0
+            else:
+                offset = payload.get("next_offset", offset)
+                # No `next_offset` at all means an agent from before the offset
+                # protocol — it runs on the host and is deployed separately from
+                # this container, so that skew is a normal state. Every answer is
+                # then a full tail, and treating it as a replace degrades exactly
+                # to the poll this stream came from instead of appending the same
+                # 300 lines once a second.
+                reset = replace or payload.get("reset") or "next_offset" not in payload
+                if reset or payload.get("lines"):
+                    yield _sse(
+                        "reset" if reset else "lines",
+                        {
+                            "lines": payload.get("lines", []),
+                            "size_bytes": payload.get("size_bytes", 0),
+                            "gap_bytes": payload.get("gap_bytes", 0),
+                            "exists": payload.get("exists", False),
+                            "path": payload.get("path"),
+                        },
+                    )
+                    silent = 0.0
+                replace = False
+            # A quiet log is the normal state (llama-server logs on request), so
+            # the connection has to prove it is alive on its own.
+            silent += interval
+            if silent >= 15:
+                yield ": keep-alive\n\n"
+                silent = 0.0
+            await asyncio.sleep(interval)
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        # no-store because a cached event stream is a lie about liveness;
+        # X-Accel-Buffering for any reverse proxy that would otherwise buffer.
+        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.post("/llm/backend/start")
@@ -871,6 +997,21 @@ async def api_posts(limit: int = Query(50, ge=1, le=500), offset: int = Query(0,
             .scalars()
             .all()
         )
+    return [_post_dict(p) for p in posts]
+
+
+# Declared above `/posts/{post_id}`: routes match in declaration order, and
+# `post_id: int` would reject "search" as a 422 rather than fall through to here.
+@router.get("/posts/search")
+async def api_posts_search(
+    q: str = Query(..., min_length=1),
+    limit: int = Query(10, ge=1, le=50),
+):
+    """Find published feature posts: literal title/summary match merged above
+    semantic neighbours (recommend.search). Exposed as its own endpoint so the
+    ranking is scriptable and checkable without going through the assistant."""
+    async with SessionLocal() as session:
+        posts = await search_posts(session, q, limit=limit)
     return [_post_dict(p) for p in posts]
 
 

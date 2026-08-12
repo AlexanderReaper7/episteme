@@ -2353,3 +2353,211 @@ main {
   word-break: break-word;
   color: var(--muted);
 }
+
+/* --- The assistant rail ----------------------------------------------------
+   Docked to the right, fixed, and OUTSIDE `<main>` in the DOM (base.html), so a
+   boosted navigation cannot destroy a conversation or an in-flight stream.
+
+   Collapsed it is a single round button; open it is a column. `position: fixed`
+   rather than a grid track deliberately: making it a track would reflow every
+   page in the app on open, and the rail is a transient overlay, not part of the
+   reading layout. z-index sits above `.site-header` (10), which is sticky. */
+
+.chat-rail {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+}
+
+/* The shell before /chat/panel answers: nothing to see, no layout shift. */
+.chat-rail-loading { display: none; }
+
+.chat-toggle {
+  display: grid;
+  place-items: center;
+  width: 3rem;
+  height: 3rem;
+  border-radius: 50%;
+  border: 1px solid var(--border-hover);
+  background: var(--card-bg);
+  color: var(--text);
+  cursor: pointer;
+  box-shadow: 0 8px 30px color-mix(in srgb, var(--bg) 45%, transparent);
+}
+
+.chat-toggle:hover { background: var(--card-hover); color: var(--accent); }
+
+.chat-body {
+  display: none;
+  flex-direction: column;
+  width: min(30rem, calc(100vw - 2rem));
+  height: min(38rem, calc(100vh - 6rem));
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card-bg);
+  box-shadow: 0 8px 30px color-mix(in srgb, var(--bg) 45%, transparent);
+  overflow: hidden;
+}
+
+.chat-rail.is-open .chat-body { display: flex; }
+/* The round button IS the open affordance; once open, the header's close button
+   takes over, so keeping both would be two controls for one state. */
+.chat-rail.is-open .chat-toggle { display: none; }
+
+.chat-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.chat-head h2 {
+  margin: 0;
+  font-size: 0.95rem;
+  flex: 1;
+}
+
+.chat-head button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.78rem;
+  padding: 0.2rem 0.45rem;
+  cursor: pointer;
+}
+
+.chat-head button:hover { color: var(--text); border-color: var(--border-hover); }
+
+.chat-log {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.chat-empty { margin: 0; font-size: 0.85rem; }
+
+.chat-msg {
+  border-radius: 10px;
+  padding: 0.5rem 0.7rem;
+  max-width: 92%;
+  overflow-wrap: anywhere;
+}
+
+.chat-msg > :first-child { margin-top: 0; }
+.chat-msg > :last-child { margin-bottom: 0; }
+
+.chat-msg-user {
+  align-self: flex-end;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.chat-msg-assistant {
+  align-self: flex-start;
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+
+/* While tokens are arriving the bubble holds raw text nodes, not rendered
+   Markdown, so newlines have to survive on their own. It is swapped for the
+   server's rendering the moment the turn is saved (app.js). */
+.chat-msg-streaming { white-space: pre-wrap; }
+
+.chat-status {
+  align-self: flex-start;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-style: italic;
+}
+
+/* An approval card is deliberately not a bubble: it is the one thing in the rail
+   that does something, and it should not read as more conversation. */
+.chat-proposal {
+  border: 1px solid var(--warn);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--warn) 8%, transparent);
+  padding: 0.6rem 0.7rem;
+}
+
+.chat-proposal-what { margin: 0 0 0.4rem; }
+
+.chat-proposal-note {
+  margin: 0 0 0.5rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.chat-proposal.is-resolving { opacity: 0.5; pointer-events: none; }
+
+.chat-proposal-actions { display: flex; gap: 0.5rem; }
+
+.chat-proposal-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  border-radius: 6px;
+  padding: 0.3rem 0.6rem;
+  cursor: pointer;
+  font-size: 0.82rem;
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border-hover);
+}
+
+.chat-approve:hover { border-color: var(--ok); color: var(--ok); }
+.chat-reject:hover { border-color: var(--bad-fg); color: var(--bad-fg); }
+
+.chat-proposal-approved { color: var(--ok); }
+.chat-proposal-rejected { color: var(--bad-muted); }
+
+.chat-form {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-end;
+  padding: 0.6rem;
+  border-top: 1px solid var(--border);
+}
+
+.chat-form textarea {
+  flex: 1;
+  resize: vertical;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.45rem 0.6rem;
+  font: inherit;
+}
+
+.chat-form button {
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border-hover);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  padding: 0.45rem 0.6rem;
+  cursor: pointer;
+}
+
+.chat-form button:hover { color: var(--accent); }
+
+/* One flag for the whole in-flight state, set by app.js: the send control is
+   disabled and the caret says why, rather than a spinner that says only that
+   something is happening. */
+.chat-form.is-busy textarea,
+.chat-form.is-busy button { opacity: 0.5; pointer-events: none; }

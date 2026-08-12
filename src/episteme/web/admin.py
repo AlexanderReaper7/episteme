@@ -720,9 +720,12 @@ async def queue_partial(
 # --- llama.cpp backend panel ------------------------------------------------------
 #
 # Three fragments on three different clocks, because they cost three very
-# different amounts: process status is ~1ms and rides the page load, the log tail
-# is cheap enough to poll every 3s, and the GPU probe is ~3.5s and polls every
-# 30s. Splitting them is what keeps a slow sensor off the critical path.
+# different amounts: process status is ~1ms and rides the page load, the GPU
+# probe is ~3.5s and polls every 30s, and the log is not on a clock here at all —
+# it renders once and is then pushed to over SSE (api.api_llm_logs_stream), which
+# is the only one of the three where re-fetching the whole answer would destroy
+# something the reader was doing. Splitting them keeps a slow sensor off the
+# critical path.
 
 
 @router.get("/partials/backend-resources", response_class=HTMLResponse)
@@ -739,13 +742,28 @@ async def backend_resources_partial(request: Request):
 
 @router.get("/partials/backend-log", response_class=HTMLResponse)
 async def backend_log_partial(request: Request, which: str = "router"):
+    log = await host_agent.logs(which)
     return templates.TemplateResponse(
         request,
         "admin/_backend_log.html",
         {
-            "log": await host_agent.logs(which),
+            # A snapshot, rendered once. The pane is kept current by the SSE
+            # stream from here on, resuming at this snapshot's `next_offset` so
+            # nothing is re-sent and nothing flashes — see api.api_llm_logs_stream.
+            "log": log,
+            # Resolved HERE, not in the template, so that a missing offset is one
+            # absent query parameter rather than an empty one. The agent runs on
+            # the host and this runs in a container: they are deployed separately,
+            # so an agent predating the offset protocol is a normal state, and
+            # `?since=` (empty) is a 422 that an EventSource then retries forever.
+            "since": (log or {}).get("next_offset"),
             "which": which,
             "logs_available": ["router", "embed"],
+            # The stream is only offered when there is an agent to stream from;
+            # an EventSource against a permanently-503 route would reconnect
+            # forever. Unreachable is different from unconfigured: the stream
+            # rides out an agent restart, which is exactly when the log matters.
+            "agent_enabled": host_agent.enabled,
         },
     )
 

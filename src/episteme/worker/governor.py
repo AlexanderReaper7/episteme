@@ -40,7 +40,14 @@ from ..db import SessionLocal
 from ..llm import gateway
 from ..llm.host import host_agent
 from .app import app
-from .control import RESOURCE, mark_contended, pause_state, pipeline_job_running, set_paused
+from .control import (
+    RESOURCE,
+    mark_contended,
+    pause_state,
+    pipeline_job_running,
+    set_paused,
+    unload_unless_interactive,
+)
 
 log = logging.getLogger("episteme.governor")
 
@@ -184,7 +191,13 @@ async def govern_resources() -> dict:
             # Nothing was running, so the VRAM a sleeping router still holds is
             # handed back now rather than at 03:00. When something IS running it
             # unloads at its own next unit boundary (pipeline.py).
-            await gateway.unload_models()
+            #
+            # A fresh session, and the interactive lease re-checked inside it: the
+            # governor may pause the pipeline while the reader is mid-conversation
+            # (that is the point, the game needs the card), but pulling the model
+            # out from under a turn they are watching stream is a different act.
+            async with SessionLocal() as session:
+                await unload_unless_interactive(session)
     elif action == "resume":
         log.info("Resource governor resumed the pipeline: %s", reason)
         # Imported here, not at module scope: pipeline imports the world, and

@@ -33,7 +33,7 @@ def test_ansi_escapes_are_stripped_from_log_lines(agent, tmp_path, monkeypatch):
         "\x1b[34m0.00.193.237\x1b[0m \x1b[32mI\x1b[0m srv listening on http://127.0.0.1:5001\n",
         encoding="utf-8",
     )
-    lines = agent.logs(which="router", tail=10)["lines"]
+    lines = agent.read_log(which="router", tail=10)["lines"]
     assert lines == ["0.00.193.237 I srv listening on http://127.0.0.1:5001"]
 
 
@@ -45,29 +45,114 @@ def test_log_tail_reads_a_bounded_window_of_a_huge_file(agent, tmp_path, monkeyp
     (tmp_path / "router.log").write_text(
         "".join(f"line {i:06d} {'x' * 300}\n" for i in range(20_000)), encoding="utf-8"
     )
-    result = agent.logs(which="router", tail=5)
+    result = agent.read_log(which="router", tail=5)
     assert len(result["lines"]) == 5
     assert result["lines"][-1].startswith("line 019999")
     assert all(not line.startswith("ine") for line in result["lines"])
+
+
+def _write(path, text):
+    with path.open("a", encoding="utf-8", newline="") as handle:
+        handle.write(text)
+
+
+def test_delta_read_returns_only_what_was_appended(agent, tmp_path, monkeypatch):
+    """The whole point of the offset protocol: a live pane appends what arrived
+    instead of re-fetching a 300-line tail every few seconds, which is both ~99%
+    less data and the only way the reader's text selection and scrollback in the
+    pane survive an update."""
+    monkeypatch.setattr(agent, "LOG_DIR", tmp_path)
+    path = tmp_path / "router.log"
+    _write(path, "first\nsecond\n")
+
+    tail = agent.read_log(which="router")
+    assert tail["lines"] == ["first", "second"]
+
+    # Nothing new: an empty answer, and the offset does not move.
+    idle = agent.read_log(which="router", since=tail["next_offset"])
+    assert idle["lines"] == [] and idle["next_offset"] == tail["next_offset"]
+
+    _write(path, "third\n")
+    delta = agent.read_log(which="router", since=idle["next_offset"])
+    assert delta["lines"] == ["third"]
+    assert delta["reset"] is False
+    assert delta["next_offset"] == delta["size_bytes"]
+
+
+def test_a_half_written_line_is_withheld_until_it_is_complete(agent, tmp_path, monkeypatch):
+    """The server is writing while we read. Shipping the bytes so far would
+    render a truncated line, and — worse — advancing past them would make the
+    rest of that line arrive as a line of its own."""
+    monkeypatch.setattr(agent, "LOG_DIR", tmp_path)
+    path = tmp_path / "router.log"
+    _write(path, "done\n")
+    start = agent.read_log(which="router")["next_offset"]
+
+    _write(path, "half a li")
+    partial = agent.read_log(which="router", since=start)
+    assert partial["lines"] == []
+    assert partial["next_offset"] == start  # stayed put, deliberately
+
+    _write(path, "ne\n")
+    assert agent.read_log(which="router", since=partial["next_offset"])["lines"] == ["half a line"]
+
+
+def test_a_truncated_log_tells_the_caller_to_reset(agent, tmp_path, monkeypatch):
+    """The launcher truncates the log on every start, so an offset held across a
+    restart points into the middle of a different file. Appending onto it would
+    splice the new run's output into the old run's, with a mangled first line."""
+    monkeypatch.setattr(agent, "LOG_DIR", tmp_path)
+    path = tmp_path / "router.log"
+    _write(path, "old run, many lines\n" * 50)
+    stale = agent.read_log(which="router")["next_offset"]
+
+    path.write_text("new run\n", encoding="utf-8")
+    after = agent.read_log(which="router", since=stale)
+    assert after["reset"] is True
+    assert after["lines"] == ["new run"]
+    assert after["gap_bytes"] == 0  # nothing was skipped, the file simply restarted
+
+
+def test_a_backlog_past_the_window_resets_and_measures_the_gap(agent, tmp_path, monkeypatch):
+    """A delta read is bounded by the same window as a tail read — a pane left
+    open through a noisy night must not pull the whole file. The caller is told
+    to replace rather than append, and how much it missed, so it can admit the
+    discontinuity instead of quietly splicing two distant parts of the log."""
+    monkeypatch.setattr(agent, "LOG_DIR", tmp_path)
+    path = tmp_path / "router.log"
+    _write(path, "".join(f"line {i:06d} {'x' * 300}\n" for i in range(2_000)))
+
+    result = agent.read_log(which="router", tail=5, since=0)
+    assert result["reset"] is True
+    assert len(result["lines"]) == 5
+    assert result["lines"][-1].startswith("line 001999")
+    assert result["gap_bytes"] == result["size_bytes"] - 5 * 400
+    # The tail-read rule still holds: no truncated line at the head of the window.
+    assert all(line.startswith("line ") for line in result["lines"])
 
 
 def test_unknown_log_is_404(agent):
     from fastapi import HTTPException
 
     with pytest.raises(HTTPException) as exc:
-        agent.logs(which="../../etc/passwd")
+        agent.read_log(which="../../etc/passwd")
     assert exc.value.status_code == 404
 
 
 def test_missing_log_reports_absence_rather_than_failing(agent, tmp_path, monkeypatch):
     """Expected before the first start after the launcher gained --log-file."""
     monkeypatch.setattr(agent, "LOG_DIR", tmp_path)
-    assert agent.logs(which="router") == {
+    assert agent.read_log(which="router") == {
         "log": "router",
         "path": str(tmp_path / "router.log"),
         "exists": False,
         "lines": [],
+        "next_offset": 0,
+        "reset": False,
     }
+    # A caller holding an offset from before a restart must DROP what it shows,
+    # not sit waiting to append onto a file that no longer exists.
+    assert agent.read_log(which="router", since=900)["reset"] is True
 
 
 def test_concurrent_starts_launch_exactly_once(agent, monkeypatch):

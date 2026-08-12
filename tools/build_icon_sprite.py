@@ -62,6 +62,14 @@ ICONS = {
     # rather than a decoration: a marker cannot be transformed, so rotating it
     # from collapsed to open is only possible once it is an element we own.
     "disclosure": "chevron--right",
+    # --- the assistant rail
+    "chat": "chat",
+    "send": "send--alt",
+    "search": "search",
+    # Approve/reject on a proposal card. Reject reuses `remove` (close): it is the
+    # same act as dismissing anything else, and a second X would be two glyphs for
+    # one meaning.
+    "approve": "checkmark",
     # --- card meta
     "article": "document",
     "aggregate": "layers",

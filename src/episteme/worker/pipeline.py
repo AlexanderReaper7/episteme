@@ -31,7 +31,7 @@ from ..tts import build_script, default_voice_id, get_voice, script_hash, synthe
 from ..tts.store import upsert_post_audio as _upsert_post_audio
 from . import pending
 from .app import app
-from .control import pause_requested
+from .control import pause_requested, unload_unless_interactive
 from .qa import qa_posts
 
 log = logging.getLogger("episteme.pipeline")
@@ -455,6 +455,20 @@ async def _demote(session: AsyncSession, story: Story, reason: str) -> None:
     await ensure_aggregate_post(session, story)
 
 
+def _user_first(stories: Sequence[Story]) -> list[Story]:
+    """Reader-requested stories to the front, whatever quality says about the rest.
+
+    Applied at BOTH of `_rank_write_queue`'s exits, so "the reader outranks the
+    pipeline" is one rule rather than a property of one code path. `sorted` is
+    stable, so within each group the ordering it was handed survives intact.
+
+    This is what makes the request *prioritised* rather than merely privileged:
+    the stage's wall-clock budget and `max_writes_per_run` cut from the tail, so
+    a story that is last in the queue is a story that may not be written
+    tonight."""
+    return sorted(stories, key=lambda story: story.origin != "user")
+
+
 async def _rank_write_queue(
     session: AsyncSession, candidates: Sequence[Story], profile_state
 ) -> list[Story]:
@@ -479,7 +493,7 @@ async def _rank_write_queue(
     `write_queue_affinity_weight` points of quality, never more.
     """
     if not candidates or not profile_state.event_count:
-        return list(candidates)
+        return _user_first(candidates)
     source_rows = (
         await session.execute(
             select(SourceItem.story_id, SourceItem.source_id)
@@ -514,7 +528,7 @@ async def _rank_write_queue(
         "Write queue ordered by quality+affinity: %s",
         ", ".join(f"story {story.id}={total:.2f}" for total, story in scored[:5]),
     )
-    return [story for _, story in scored]
+    return _user_first([story for _, story in scored])
 
 
 def _ordered_labels(raw_labels: list[str], resolved: dict[str, str]) -> list[str]:
@@ -649,9 +663,16 @@ async def write_posts(
             log.info("write stage pausing after %d posts", written)
             break
         items, seed, source_chars, attempt = prepared[story.id]
+        # The reader asked for this one, so the writer is not offered the option
+        # of declining it: `demote_story` is withheld from the tool list rather
+        # than refused in dispatch, which means the model never spends a step on
+        # a choice we were never going to honour (see agent.writer_tools).
+        requested = story.origin == "user"
         try:
             with llm_context(stage="write", story_id=story.id, attempt_id=attempt):
-                outcome = await run_writer_loop(WRITER_AGENT_SYSTEM, seed)
+                outcome = await run_writer_loop(
+                    WRITER_AGENT_SYSTEM, seed, allow_demote=not requested
+                )
         except Exception as exc:
             log.warning("Writer loop failed for story %d: %s", story.id, exc)
             continue
@@ -660,13 +681,25 @@ async def write_posts(
         if outcome.decision != "write" or outcome.draft is None:
             await _demote(session, story, outcome.reason or "writer demoted")
             await session.commit()
-            log.info("Story %d demoted by writer: %s", story.id, outcome.reason)
+            # For a reader-requested story this is never an editorial decline —
+            # the tool to decline was not on the table. It means the loop ended
+            # without a draft that validates, which is a failure, and the
+            # aggregate card is the fallback rather than the verdict.
+            log.info(
+                "Story %d %s: %s",
+                story.id,
+                "produced no valid draft (reader-requested)" if requested else "demoted by writer",
+                outcome.reason,
+            )
             continue
 
         # Deterministic thin-gate backstop: a bare caption that even research couldn't
         # expand is aggregated, not written — reliable where model judgment wasn't.
+        # Skipped for a reader-requested story: the gate exists to spend the nightly
+        # budget well, and the reader spending it on a short page is their call.
+        # `ingest_url` already refused the pages that are genuinely empty.
         available_chars = source_chars + outcome.gathered_chars
-        if available_chars < settings.min_write_chars:
+        if not requested and available_chars < settings.min_write_chars:
             await _demote(session, story, f"Too thin to write ({available_chars} chars after research)")
             await session.commit()
             log.info("Story %d aggregated: only %d chars after research", story.id, available_chars)
@@ -947,7 +980,7 @@ async def run_pipeline() -> None:
             run.status = "paused"
             run.finished_at = datetime.now(UTC)
             await session.commit()
-            await gateway.unload_models()
+            await unload_unless_interactive(session)
             return
 
         if down := await gateway.unavailable_endpoints():
@@ -1004,7 +1037,7 @@ async def run_pipeline() -> None:
         run.finished_at = datetime.now(UTC)
         await session.commit()
         if paused:  # free VRAM for whatever prompted the pause
-            await gateway.unload_models()
+            await unload_unless_interactive(session)
         await _prune_expired(session)
 
 
@@ -1086,7 +1119,7 @@ async def pipeline_stage(
         run.finished_at = datetime.now(UTC)
         await session.commit()
         if paused:
-            await gateway.unload_models()
+            await unload_unless_interactive(session)
 
 
 @app.periodic(cron=settings.pipeline_cron)

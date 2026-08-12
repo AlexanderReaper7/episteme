@@ -2,6 +2,7 @@
 enforces budgets, and produces the schema-constrained draft in-conversation."""
 
 import json
+import time
 
 import episteme.llm.agent as agent
 from episteme.config import settings
@@ -259,3 +260,92 @@ async def test_loop_stops_at_max_steps(monkeypatch):
     outcome = await agent.run_writer_loop("sys", "seed")
     assert gw.tool_turns == 3  # capped at enrich_max_steps, no runaway
     assert outcome.decision == "write"  # still drafts from what it has
+
+
+# --- the `turn` seam ---------------------------------------------------------
+# `run_tool_loop` is shared by the writer, QA and the streaming chat agent, which
+# differ in exactly one line: how a turn is taken. The tests above already prove
+# the writer still works; these pin the seam itself, so a change to the loop that
+# quietly special-cases the injected path is a failure rather than a surprise in
+# the browser.
+
+_SCRIPT = [
+    _assistant_toolcall("look", '{"q": "a"}', "c1"),
+    _assistant_toolcall("look", '{"q": "b"}', "c2"),
+    _assistant_final("that is everything"),
+]
+
+
+async def _run_once(turn, gateway_script):
+    """One identical run of the loop, driven either by a `turn` or by the gateway."""
+    seen: list[tuple[str | None, dict]] = []
+
+    async def dispatch(name, args):
+        seen.append((name, args))
+        return agent.ToolReply(f"result for {args.get('q')}")
+
+    messages = [{"role": "system", "content": "sys"}, {"role": "user", "content": "go"}]
+    closing = await agent.run_tool_loop(
+        messages,
+        [{"type": "function", "function": {"name": "look"}}],
+        dispatch,
+        max_steps=6,
+        deadline=time.monotonic() + 30,
+        turn=turn,
+    )
+    return closing, messages, seen
+
+
+async def test_an_injected_turn_changes_nothing_but_where_the_message_came_from(monkeypatch):
+    """The seam's whole claim. Asserted by running one script both ways and
+    comparing the transcripts rather than by hand-written assertions per branch:
+    a divergence anywhere in dispatch, the budgets or the exits then shows up as a
+    diff, and the equivalence stays checked as the loop grows."""
+    gw = ScriptedGateway(list(_SCRIPT))
+    monkeypatch.setattr(agent, "gateway", gw)
+    through_gateway = await _run_once(None, gw)
+
+    scripted = list(_SCRIPT)
+    saw: list[int] = []
+
+    async def turn(messages, tools):
+        # The loop passes the live transcript and the same tool list every time;
+        # the streaming agent relies on both to build its request.
+        saw.append(len(messages))
+        assert tools == [{"type": "function", "function": {"name": "look"}}]
+        return scripted.pop(0)
+
+    exploded = ScriptedGateway([])
+
+    async def refuse(*a, **kw):
+        raise AssertionError("the gateway must not be called when `turn` is supplied")
+
+    exploded.chat_messages = refuse
+    monkeypatch.setattr(agent, "gateway", exploded)
+    through_turn = await _run_once(turn, exploded)
+
+    assert through_turn == through_gateway
+    assert saw == [2, 4, 6]  # two seeds, then +1 assistant +1 tool result per turn
+
+
+async def test_a_stopping_tool_ends_an_injected_run_before_the_next_turn(monkeypatch):
+    """What the chat agent's permission gate is built on: a write tool parks the
+    loop by returning `stop=True`, and nothing may ask the model for another turn
+    after that — the next thing to happen is the reader approving a card."""
+    turns = 0
+
+    async def turn(messages, tools):
+        nonlocal turns
+        turns += 1
+        return _assistant_toolcall("propose", "{}", f"c{turns}")
+
+    async def dispatch(name, args):
+        return agent.ToolReply("awaiting approval", stop=True)
+
+    messages: list[dict] = []
+    closing = await agent.run_tool_loop(
+        messages, [], dispatch, max_steps=6, deadline=time.monotonic() + 30, turn=turn
+    )
+    assert turns == 1
+    assert closing == ""
+    assert messages[-1]["content"] == "awaiting approval"

@@ -22,9 +22,12 @@ from .profile import ProfileState
 _LIKE_ESCAPE = "\\"
 
 
-def _escape_like(keyword: str) -> str:
-    """A blocked keyword is matched as a literal substring, so LIKE's own
+def escape_like(keyword: str) -> str:
+    """Reader-typed text matched as a literal substring, so LIKE's own
     wildcards have to be neutralized before it becomes a pattern.
+
+    Public because `recommend.search` needs exactly this for the same reason:
+    two escapers is the shape that drifts until one of them stops escaping.
 
     Unescaped, `%` in a keyword matches everything — one block would empty the
     feed AND the write queue with no error anywhere — and `_` quietly
@@ -61,7 +64,7 @@ def filters(
             .exists()
         )
     for keyword in profile.blocked_keywords:
-        pattern = f"%{_escape_like(keyword)}%"
+        pattern = f"%{escape_like(keyword)}%"
         # Match through the story's items, not only the caller's own text: an
         # aggregate card has no title or summary of its own (it renders from its
         # items), so a post-level-only match would miss most of the feed.

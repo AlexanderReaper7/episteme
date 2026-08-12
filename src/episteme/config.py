@@ -88,6 +88,14 @@ class Settings(BaseSettings):
     # 4B (2560 dims, gateway truncates to EMBEDDING_DIM) preferred for quality;
     # swap to "Octen-Embedding-0.6B.f16" (native 1024) if speed matters more.
     llm_model_embed: str = "Octen-Embedding-4B.Q8_0"
+    # The user-facing assistant (llm/chat.py). Both empty means "whatever main
+    # uses", which is the default and not laziness: sharing main's server is what
+    # keeps an interactive turn from forcing a model swap while `write` is running.
+    # The cost is the other direction — chatting while the FAST model is resident
+    # (triage, condense) does force a swap, ~100s each way, and stalls the stage.
+    # Point these at a third llama-server to decouple the assistant entirely.
+    llm_chat_base_url: str = ""  # "" -> llm_main_base_url -> llm_base_url
+    llm_model_chat: str = ""  # "" -> llm_model_main
     llm_timeout_seconds: float = 600.0
     llm_max_json_retries: int = 2
     llm_disable_thinking: bool = True
@@ -108,8 +116,9 @@ class Settings(BaseSettings):
     llm_host_agent_url: str = ""  # e.g. http://host.docker.internal:5003
     # Three timeouts, because reads and actions want opposite things (see
     # llm/host.py). Reads are on the dashboard's critical path — /status rides
-    # the page load, /logs polls every 3s — so a hung agent must give up in
-    # seconds rather than take the admin page down with it.
+    # the page load, /logs is polled once a second behind the log stream — so a
+    # hung agent must give up in seconds rather than take the admin page down
+    # with it.
     llm_host_agent_read_timeout_seconds: float = 15.0
     # Actions block until the host has finished: the agent holds /start until
     # both ports answer (launcher 120s + port wait 60s worst case), so a ceiling
@@ -118,6 +127,10 @@ class Settings(BaseSettings):
     # /restart is a stop and a start inside one request, so ~the sum of both.
     llm_host_agent_restart_timeout_seconds: float = 360.0
     llm_log_tail_lines: int = 300
+    # How often the log stream asks the agent for the bytes written since its
+    # last offset. This is the browser-invisible leg: the pane is pushed over
+    # SSE, and only this hop polls (a delta read is a file seek, no PowerShell).
+    llm_log_stream_interval_seconds: float = 1.0
     # A graceful stop pauses the pipeline and waits for the worker to finish its
     # current unit — one story, measured at up to ~570s for a main-model write —
     # so the wait is bounded and reports back rather than killing anything. The
@@ -172,6 +185,20 @@ class Settings(BaseSettings):
     # research couldn't expand). Model-driven demotion proved unreliable — the writer
     # picked "skip" on rich material — so this is a code-level content-volume check.
     min_write_chars: int = 1200
+
+    # --- User-facing assistant (llm/chat.py, web/chat.py) ---
+    # Budgets follow the per-stage pattern (enrich_*, qa_*) rather than inventing
+    # a new shape. Smaller than the writer's because a human is watching: a turn
+    # that thinks for four minutes has already failed as a conversation.
+    chat_max_steps: int = 8  # tool-call turns before the model must answer
+    chat_wall_clock_seconds: int = 240  # hard cap on one turn's tool loop
+    chat_max_searches: int = 4  # web_search calls per turn
+    chat_max_fetches: int = 4  # fetch_page calls per turn
+    chat_history_turns: int = 20  # messages replayed into a new turn's context
+    # How long one interactive turn claims the models for (worker/control.py).
+    # A TTL, not a lock: a web process that dies mid-turn must not strand VRAM.
+    # Refreshed on every turn, so a long conversation holds continuously.
+    chat_lease_seconds: int = 180
 
     # --- Interest profile (recommend/profile.py) ---
     # The profile is REPLAYED from the feedback log, so these are not "learning

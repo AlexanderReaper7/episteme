@@ -15,6 +15,16 @@ Watch the next pipeline run rather than assuming these.
 - **A writer run producing a multi-question quiz** (0025).
 - **Chart, diagram, timeline, glossary and video sections** emitted on a suitable story. The write path was verified 2026-07-19, but not every section type has been seen in output.
 - **A pipeline stage running after an agent-driven backend start** (0023).
+- **The assistant rail** (0036, 0037, 0038). Watched running 2026-08-12; what is left is listed below, the rest moved out.
+  1. The rail survives feed → article → feed with its scrollback and an in-flight stream intact, and `?post_id=` follows the navigation rather than the panel's birth. Not checked in a browser at all yet, only over `curl`.
+  2. **A reader-requested story reaching a published post.** The proposal, the approval and the queueing are verified; the write itself has never finished. See the write-budget item below.
+  3. `demote_story` **absent** from the tool list in `/post/{id}/provenance` for `origin="user"`. Blocked on 2, since there is no post to inspect.
+  4. `?force=true` makes an in-flight turn fail cleanly as an `LLMError` rather than hanging. The 409 and the governor's restraint are verified; the forced-unload-mid-generation leg is not, because no turn would start on a contended GPU.
+
+## Watched failing, not yet fixed
+
+- **The writer's turn cost outgrows `llm_timeout_seconds` on a dense source.** Story 1031 (a Nature paper, reader-requested) ran four write turns on prompts of 1902 → 5825 → 9598 → 14435 tokens in 49s → 69s → 111s → 153s, then spent the full 600s cap on the fifth and died as `ReadTimeout`, leaving no post. Prompt eval fell from 143 to 15.8 tok/s across the run; at that rate the fifth turn's ~16.6k-token prompt needs ~1000s of prompt processing before a single token is generated, so the cap could not have been met. A game took the GPU partway through (09:29:19, before the fourth turn ended) and made the last turn hopeless, but **the decay from 35 to 1.3 tok/s happened before the game started** and is the real finding: `main` is a 21.7 GB 35B MoE on a 10 GB card, so every turn on a growing prompt is CPU-bound. This is not specific to the assistant; the assistant just routes reader-chosen URLs, which are the worst case, into it.
+- **A reader-requested story that fails is retried at the head of the queue forever.** `_user_first` sorts on `origin == "user"` alone and nothing counts attempts, so story 1031 is still `status=triaged, origin=user` and will take the main model first on every subsequent run, ahead of everything the ranker chose. Nothing tells the reader either: they approved a card, were told "queued, first in the write queue", and the failure is visible only in `/admin/jobs`.
 
 ## Known content-quality gaps
 

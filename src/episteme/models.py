@@ -75,6 +75,12 @@ class Story(Base):
     __tablename__ = "stories"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    # Who asked for this story. "ingest" is the pipeline's own clustering; "user"
+    # is an explicit request through the assistant, which outranks the pipeline:
+    # the writer is offered no `demote_story`, the thin-gate does not apply, and
+    # it sorts to the front of the write queue. A property of the story rather
+    # than of the job, so it survives a retry and a later rewrite.
+    origin: Mapped[str] = mapped_column(String(20), default="ingest")
     # new -> triaged (decision recorded) -> written | aggregated | skipped
     status: Mapped[str] = mapped_column(String(20), default="new")
     triage_decision: Mapped[str | None] = mapped_column(String(20))
@@ -430,6 +436,47 @@ def job_class(task_name: str) -> str:
     if task_name in _INGEST_TASKS:
         return JOB_CLASS_INGEST
     return JOB_CLASS_WORK
+
+
+class ChatMessage(Base):
+    """One turn of the reader's conversation with the assistant (`llm.chat`).
+
+    Durable because approval is: a `role="proposal"` row is a write the model
+    asked to perform and has NOT performed, and that question has to survive a
+    reload, a restart, and the reader wandering off for an hour. Stream state
+    could not carry it, which is the whole reason this table exists rather than
+    an in-memory deque.
+
+    A proposal stores the *call*, not its rendering: `tool_name`, `tool_args`
+    and `tool_call_id` reconstruct the exact assistant/tool message pair the
+    model sees when the loop resumes, so an approved write continues a real
+    conversation instead of a paraphrase of one. The sentence on the approval
+    card is `chat_tools.describe(args)`, computed at render time — derivable, so
+    not stored. `content` is NULL while a proposal is pending and holds the
+    tool's result (or the rejection note) afterwards.
+
+    There is no `seq`: `id` already orders a session's rows by insertion, which
+    is conversation order. `llm_calls` still holds the raw exchange for
+    provenance, joined by `chain_id`, and is prunable — this table is not."""
+
+    __tablename__ = "chat_messages"
+    __table_args__ = (Index("ix_chat_messages_session", "session_id", "id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    session_id: Mapped[str] = mapped_column(String(36))  # uuid4, one per conversation
+    role: Mapped[str] = mapped_column(String(20))  # user | assistant | proposal
+    content: Mapped[str | None] = mapped_column(Text)
+    # What the reader was looking at when they typed. A link for context and for
+    # the UI; goes NULL when the retention prune removes an archived post.
+    post_id: Mapped[int | None] = mapped_column(ForeignKey("posts.id", ondelete="SET NULL"))
+    tool_name: Mapped[str | None] = mapped_column(String(50))
+    tool_args: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    tool_call_id: Mapped[str | None] = mapped_column(String(64))
+    proposal_status: Mapped[str | None] = mapped_column(String(20))  # pending|approved|rejected
+    chain_id: Mapped[str | None] = mapped_column(String(36))  # -> llm_calls.chain_id
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
 
 class LlmCall(Base):

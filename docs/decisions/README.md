@@ -21,6 +21,7 @@ Nothing here is edited to reflect later changes. A decision that was replaced ge
 | [0004](0004-embeddings-truncated-to-1024-dimensions.md) | Embeddings are truncated to 1024 dimensions | 2026-07-16 |
 | [0010](0010-transcripts-are-stored-as-deltas.md) | Tool-loop transcripts are stored as deltas | 2026-07-17 |
 | [0027](0027-every-llm-authored-field-is-grammar-constrained.md) | Every LLM-authored field is grammar-constrained, including the chart spec | 2026-08-02 |
+| [0038](0038-chat-streams-over-sse-on-a-fourth-role.md) | Chat streams over SSE, on a fourth role, through the writer's tool loop | 2026-08-11 |
 
 ## The pipeline
 
@@ -33,6 +34,13 @@ Nothing here is edited to reflect later changes. A decision that was replaced ge
 | [0025](0025-quizzes-are-mandatory-and-never-scored.md) | Every feature carries a quiz; the reader is never scored | 2026-08-02 |
 | [0026](0026-qa-is-a-tool-harness.md) | QA edits by section index, and gets no network tools | 2026-08-02 |
 | [0028](0028-the-qa-screenshot-is-conditional.md) | QA screenshots only charts and diagrams | 2026-08-02 |
+| [0037](0037-a-reader-requested-story-outranks-the-pipeline.md) | A reader-requested story outranks the pipeline, and says so in a column | 2026-08-11 |
+
+## The assistant
+
+| # | decision | date |
+|---|---|---|
+| [0036](0036-the-assistant-proposes-the-user-disposes.md) | The assistant proposes, the reader disposes: a write tool never executes | 2026-08-11 |
 
 ## Recommendation
 

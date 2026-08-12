@@ -1,0 +1,33 @@
+{# One stored chat row. Three shapes, one template, because the panel appends
+   these from the live stream AND renders them back from the scrollback after a
+   reload - two templates would drift the moment one of them gained a class. #}
+{% if m.role == "proposal" %}
+<div class="chat-proposal" id="chat-msg-{{ m.id }}" data-proposal="{{ m.id }}"
+     data-status="{{ m.proposal_status }}">
+  <p class="chat-proposal-what">{{ m.content }}</p>
+  {% if m.proposal_status == "pending" %}
+  <p class="muted chat-proposal-note">Nothing has happened yet. This runs only if you approve it.</p>
+  <div class="chat-proposal-actions">
+    <button type="button" class="chat-approve" data-chat-resolve="{{ m.id }}" data-approve="true">
+      {{ ico.icon("approve") }} Approve
+    </button>
+    <button type="button" class="chat-reject" data-chat-resolve="{{ m.id }}" data-approve="false">
+      {{ ico.icon("remove") }} Reject
+    </button>
+  </div>
+  {% else %}
+  {# The branch is outside the icon call on purpose: tests/test_icons.py reads every
+     string literal in the first argument as a glyph that must exist, so a status
+     value sitting in there would be reported as a missing symbol. #}
+  {% set settled = m.proposal_status == "approved" %}
+  <p class="chat-proposal-note chat-proposal-{{ m.proposal_status }}">
+    {% if settled %}{{ ico.icon("approve") }}{% else %}{{ ico.icon("remove") }}{% endif %}
+    {{ m.proposal_status }}
+  </p>
+  {% endif %}
+</div>
+{% else %}
+<div class="chat-msg chat-msg-{{ m.role }}" id="chat-msg-{{ m.id }}">
+  {{ (m.content or "") | markdown }}
+</div>
+{% endif %}

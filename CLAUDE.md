@@ -20,6 +20,7 @@ Phases 1 to 4 are built and live. "Live" and "tested" are different claims:
 | rich content sections (3) | write path live-verified 2026-07-19 |
 | recommendation, feed ranking (4) | live since 2026-07-30 |
 | host control agent, resource governor | live-verified 2026-08-01 |
+| assistant rail, reader-requested articles (5) | built 2026-08-11, NOT yet watched running |
 
 **Read [CLAUDE-TODO.md](CLAUDE-TODO.md) before claiming a path works.** It holds the paths that were rewritten but not yet observed running, and the open content-quality gaps.
 
@@ -89,7 +90,17 @@ GET    /api/jobs?status=failed&class=work&limit=20 # scheduler|maintenance|inges
 # records its author; the governor may only clear its own (0024).
 POST   /api/pipeline/pause
 POST   /api/pipeline/resume
+# 409 while an interactive chat turn holds the lease; ?force=true to insist. Every
+# AUTOMATIC unload goes through control.unload_unless_interactive instead (0037).
 POST   /api/llm/unload  # free VRAM now, no pause
+
+# The assistant rail (0036, 0037, 0038). HTML routes, no /api prefix; the turn
+# itself is text/event-stream. One conversation at a time, id in app_state.
+GET    /chat/panel  # the rail; base.html fetches it on load, outside <main>
+POST   /chat/new
+POST   /chat/turn  # form field `text`, ?post_id= for "the article I am reading"
+POST   /chat/proposal/{id}/resolve?approve=true  # the ONLY path to a write handler
+GET    /api/posts/search?q=deep-sea+biology&limit=5  # semantic + literal, merged
 
 # llama.cpp lifecycle, logs and GPU sensing via the host agent (0023). It runs on
 # the HOST, not in compose; everything here 503s cleanly when it is absent. Set
@@ -145,11 +156,13 @@ uv run tools/build_icon_sprite.py
 Names to navigate by. The reasoning is in the numbered decision.
 
 - **Everything is a plugin surface** (spec §11, 0002): `ingest/registry.py`, `recommend/scorers.py`.
-- **LLM access goes only through `llm/gateway.py`** (0003). Ask for a role (`main`/`fast`/`embed`), never a model or a URL. **`LLMError` is its whole error contract**, because every caller degrades against `except LLMError`. Schemas in `llm/schemas.py`.
+- **LLM access goes only through `llm/gateway.py`** (0003). Ask for a role (`main`/`fast`/`embed`/`chat`), never a model or a URL. **`LLMError` is its whole error contract**, because every caller degrades against `except LLMError`. Schemas in `llm/schemas.py`. `chat_stream` is `chat_messages` streamed, terminating in one `{"type": "message"}` of identical shape (0038).
 - **Pipeline** (`worker/pipeline.py`): embed → cluster (pgvector cosine, 5-day window, incremental centroids) → triage (fast model) → write (0008) → qa (`worker/qa.py`, 0026). Async functions in procrastinate tasks, role-batched by the orchestrator so each model loads once per run. **`sources` and `further_reading` are built in code, never from LLM text** (0007).
 - **Sections**: nine-member typed union in `llm/schemas.py`, media closed-set (0013, 0027). One branch per type in `_sections.html`.
 - **Recommendation** (`recommend/`, spec §8). **The `feedback` table is canonical, everything else derived** (0017). Vocabulary in `topics` (0018, 0019). Affinity stored, freshness in the query (0020). Topic chips inherit the rating's direction (0030). `blocks.py` defines a hard block once.
 - **Observability** (`llm/observe.py`): every gateway call persisted to `llm_calls`, so one choke point covers even JSON-repair retries. Stage and story tagged by contextvar, never in gateway signatures. Deltas 0010, post scoping 0012.
+- **The assistant** (`llm/chat.py` + `llm/chat_tools.py`, `web/chat.py`, 0036). **A `writes=True` tool is NEVER executed from `dispatch`** — it raises `WriteProposed`, and `execute_approved` is the only other path to a handler. Do not add a "just this once" branch; the gate is structural because a per-handler check is a convention that fails silently. Tool table + `validate_registry` in `chat_tools.py`, `tests/test_chat_tools.py` parametrizes the property over the registry.
+- **One tool loop** (`agent.run_tool_loop`), shared by writer, QA and chat. Chat enters through the injected `turn` seam (0038); a second loop is the thing that is not wanted. Reader-requested stories: `Story.origin == "user"`, first in the queue, no `demote_story`, no thin-gate (0037). Interactive lease in `worker/control.py`: every AUTOMATIC unload goes through `unload_unless_interactive`.
 - **Narration** (`src/episteme/tts/`, 0035). `script.build_script` is the seam an LLM preprocessing pass replaces.
 - **Jobs**: procrastinate on Postgres, no broker. Worker and web are one image, two entrypoints; crons in settings. Stalls 0016, retention 0032.
 - **Schema is Alembic**, migrations inside the package so `COPY src ./src` ships them. **No `create_all` anywhere**, deliberately (0014). `bootstrap.py` adopts-or-upgrades, applies the procrastinate schema guarded (`schema --apply` is NOT idempotent), then seeds sources. Backup 0015.
@@ -190,7 +203,8 @@ Running `upgrade` from the host stops with that container command rather than mi
 
 ## Constraints decided with the user (do not silently revisit)
 
-- Single-user forever: no auth, no user/profile columns.
+- Single-user forever: no auth, no user/profile columns. The approval card is therefore the ONLY thing between a model and an effect (0036); nothing else is checking.
+- A chat tool that reads settings exposes a **curated allowlist**, never `settings.model_dump()`. `.env` holds `FISH_API_KEY` and the database password.
 - Always dark mode: true-black OLED theme, full-width grid (4K screen). No light theme.
 - Media is hotlinked, never cached locally; `image` rendering must degrade via `onerror` (remove banner), since link rot is accepted.
 - Zero manipulative mechanics (spec §1). Entertainment and education blended, "a good Reddit".

@@ -2,10 +2,11 @@
    start/stop/restart handlers (hx-target="#backend"), so an action swaps just
    this block rather than reloading the dashboard.
 
-   Only the process view lives here. GPU measurements and the log tail are
-   separate fragments on their own polls: /resources costs ~3.5s on the host
-   (per-process GPU counters have an irreducible sampling floor) and must never
-   sit on the critical path of anything a click waits for. #}
+   Only the process view lives here. GPU measurements and the log are separate
+   fragments on their own clocks: /resources costs ~3.5s on the host (per-process
+   GPU counters have an irreducible sampling floor) and must never sit on the
+   critical path of anything a click waits for, while the log renders once and is
+   then streamed into (_backend_log.html). #}
 <div id="backend">
   {# The agent is optional infrastructure: it being down must degrade this panel,
      not the dashboard. Inference is unaffected either way - llama.cpp does not

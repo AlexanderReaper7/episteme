@@ -192,6 +192,7 @@ def endpoints(monkeypatch):
     monkeypatch.setattr(settings, "llm_main_base_url", "")
     monkeypatch.setattr(settings, "llm_fast_base_url", "")
     monkeypatch.setattr(settings, "llm_embed_base_url", "")
+    monkeypatch.setattr(settings, "llm_chat_base_url", "")
     monkeypatch.setattr(settings, "llm_model_embed", "test-embed")
     return settings
 
@@ -201,7 +202,7 @@ def test_roles_collapse_onto_one_endpoint_when_they_share_a_url(endpoints):
     and they must share ONE client — a per-role client pool would double-probe and
     double-connect to a single llama-server."""
     gateway = _gateway_with(lambda r: httpx.Response(200, json={"data": []}))
-    assert gateway.endpoints() == {"http://shared.test/v1": ["main", "fast", "embed"]}
+    assert gateway.endpoints() == {"http://shared.test/v1": ["main", "fast", "embed", "chat"]}
     assert gateway.client_for("main") is gateway.client_for("embed")
 
 
@@ -233,6 +234,24 @@ async def test_every_role_can_be_moved_to_its_own_endpoint(endpoints, monkeypatc
     assert seen == ["shared.test", "fast.test", "embed.test"]
 
 
+def test_chat_follows_main_rather_than_the_shared_default(endpoints, monkeypatch):
+    """`chat` inherits through `main`, not straight to llm_base_url. Moving main to
+    its own server must take the assistant with it: the whole reason chat defaults
+    to main's server is that sharing it means an interactive turn never forces a
+    model swap, and a chat left behind on the default would break exactly that."""
+    monkeypatch.setattr(endpoints, "llm_main_base_url", "http://writer.test/v1")
+    monkeypatch.setattr(endpoints, "llm_model_main", "big-model")
+    gateway = _gateway_with(lambda r: httpx.Response(200, json={"data": []}))
+    assert gateway.endpoint_for("chat") == "http://writer.test/v1"
+    assert gateway.model_for("chat") == "big-model"
+
+    # An explicit override still wins, in both dimensions independently.
+    monkeypatch.setattr(endpoints, "llm_chat_base_url", "http://assistant.test/v1")
+    monkeypatch.setattr(endpoints, "llm_model_chat", "small-model")
+    assert gateway.endpoint_for("chat") == "http://assistant.test/v1"
+    assert gateway.model_for("chat") == "small-model"
+
+
 async def test_endpoint_status_reports_roles_and_inventory_per_endpoint(endpoints, monkeypatch):
     monkeypatch.setattr(endpoints, "llm_embed_base_url", "http://embed.test/v1")
 
@@ -245,7 +264,7 @@ async def test_endpoint_status_reports_roles_and_inventory_per_endpoint(endpoint
     assert rows == [
         {
             "url": "http://shared.test/v1",
-            "roles": ["main", "fast"],
+            "roles": ["main", "fast", "chat"],
             "available": True,
             "models": [{"id": "m", "status": "loaded"}],
         },

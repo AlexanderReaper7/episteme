@@ -27,14 +27,19 @@ loading screens" the design exists to prevent. Both live here rather than in a
 worker process that any redeploy would forget.
 """
 
-from datetime import UTC, datetime
+import logging
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..config import settings
 from ..models import AppState
 
+log = logging.getLogger("episteme.control")
+
 PAUSE_KEY = "pipeline_pause"
+LEASE_KEY = "interactive_lease"
 
 MANUAL = "manual"
 RESOURCE = "resource"
@@ -119,6 +124,76 @@ async def _write(session: AsyncSession, value: dict) -> None:
         session.add(state)
     state.value = value
     await session.commit()
+
+
+async def hold_interactive(session: AsyncSession, seconds: float | None = None) -> None:
+    """Claim the models for a turn the reader is watching.
+
+    A TTL, not a lock, and that asymmetry is the whole design. Chat runs in the
+    **web** process, which `pipeline_job_running` cannot see: it counts
+    procrastinate jobs, and a chat turn is not a job. A real lock held by a
+    process that can be killed by `docker compose up -d web` would strand the
+    GPU with nobody left to release it; an expiring lease heals itself in
+    `chat_lease_seconds` no matter how the holder died. Refreshed every turn, so
+    a long conversation stays covered without asking for a long lease.
+    """
+    until = datetime.now(UTC) + timedelta(
+        seconds=settings.chat_lease_seconds if seconds is None else seconds
+    )
+    state = await session.get(AppState, LEASE_KEY)
+    if state is None:
+        state = AppState(key=LEASE_KEY)
+        session.add(state)
+    state.value = {"until": until.isoformat()}
+    await session.commit()
+
+
+async def interactive_held(session: AsyncSession) -> bool:
+    """Is somebody waiting on a model right now? Expired leases read as False, so
+    nothing has to clean them up."""
+    value = (
+        await session.execute(select(AppState.value).where(AppState.key == LEASE_KEY))
+    ).scalar() or {}
+    until = value.get("until")
+    if not until:
+        return False
+    try:
+        expires = datetime.fromisoformat(until)
+    except ValueError:
+        return False
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=UTC)
+    return expires > datetime.now(UTC)
+
+
+async def release_interactive(session: AsyncSession) -> None:
+    """Give the lease back early, when a turn ends before its TTL does."""
+    state = await session.get(AppState, LEASE_KEY)
+    if state is None:
+        return
+    state.value = {}
+    await session.commit()
+
+
+async def unload_unless_interactive(session: AsyncSession) -> list[str]:
+    """Hand VRAM back, unless the reader is mid-conversation.
+
+    Every automatic unload goes through here rather than calling
+    `gateway.unload_models()` directly, so "do not evict a model somebody is
+    watching stream" is one rule with one implementation. The gateway itself
+    stays database-free (0003), which is why the check lives on this side of the
+    call instead of inside it.
+
+    `POST /api/llm/unload` deliberately does NOT route through here: an explicit
+    manual unload is the reader overruling themselves, and it says so with a 409
+    plus `?force=true` rather than silently doing nothing.
+    """
+    from ..llm import gateway
+
+    if await interactive_held(session):
+        log.info("Skipping unload: an interactive turn holds the models")
+        return []
+    return await gateway.unload_models()
 
 
 async def pipeline_job_running(session: AsyncSession) -> bool:

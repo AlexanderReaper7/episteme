@@ -5,6 +5,7 @@ host agent, or a database — the same reason `sweep_stalled_jobs` takes its
 manager as an argument.
 """
 
+import json
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -261,7 +262,8 @@ async def test_pause_does_not_unload_a_model_out_from_under_a_running_story(monk
 
     monkeypatch.setattr(settings, "resource_governor_enabled", True)
     monkeypatch.setattr(settings, "llm_host_agent_url", "http://agent.test")
-    monkeypatch.setattr(gov, "SessionLocal", _FakeDB())
+    # The lease read goes through the same session; nothing is held.
+    monkeypatch.setattr(gov, "SessionLocal", _FakeDB(_FakeSession({})))
     monkeypatch.setattr(gov.host_agent, "resources", _async(BUSY))
     monkeypatch.setattr(gov, "_our_models_loaded", _async(True))
     monkeypatch.setattr(gov, "pause_state", _async(_state(False)))
@@ -276,6 +278,53 @@ async def test_pause_does_not_unload_a_model_out_from_under_a_running_story(monk
     monkeypatch.setattr(gov, "pipeline_job_running", _async(False))
     assert (await gov.govern_resources())["action"] == "pause"
     assert unloads == ["unloaded"]
+
+
+async def test_a_live_chat_turn_survives_the_governors_unload(monkeypatch):
+    """The second half of the same safety property, for the half the governor
+    cannot see. `pipeline_job_running` counts procrastinate jobs, and a chat turn
+    is not a job — it runs in the web process. Without the lease the governor
+    would pause (correctly) and then unload (destroying a stream the reader is
+    watching), which is the exact failure the running-job guard above prevents
+    for the worker."""
+    from datetime import UTC, datetime, timedelta
+
+    from episteme.worker import governor as gov
+
+    unloads = []
+
+    async def fake_unload():
+        unloads.append("unloaded")
+        return []
+
+    held = {"until": (datetime.now(UTC) + timedelta(seconds=60)).isoformat()}
+    monkeypatch.setattr(settings, "resource_governor_enabled", True)
+    monkeypatch.setattr(settings, "llm_host_agent_url", "http://agent.test")
+    monkeypatch.setattr(gov, "SessionLocal", _FakeDB(_FakeSession(held)))
+    monkeypatch.setattr(gov.host_agent, "resources", _async(BUSY))
+    monkeypatch.setattr(gov, "_our_models_loaded", _async(True))
+    monkeypatch.setattr(gov, "pause_state", _async(_state(False)))
+    monkeypatch.setattr(gov, "set_paused", _async(None))
+    monkeypatch.setattr(gov, "pipeline_job_running", _async(False))
+    monkeypatch.setattr(gov.gateway, "unload_models", fake_unload)
+
+    # Still pauses: the game does need the card, and the pipeline is the thing
+    # that yields. Only the eviction is withheld.
+    assert (await gov.govern_resources())["action"] == "pause"
+    assert unloads == []
+
+
+async def test_an_expired_lease_holds_nothing(monkeypatch):
+    """A TTL rather than a lock, because the holder can die. A web process killed
+    mid-turn must not strand 20GB of VRAM until someone notices."""
+    from datetime import UTC, datetime, timedelta
+
+    from episteme.worker.control import interactive_held
+
+    stale = {"until": (datetime.now(UTC) - timedelta(seconds=1)).isoformat()}
+    assert await interactive_held(_FakeSession(stale)) is False
+    assert await interactive_held(_FakeSession({})) is False
+    assert await interactive_held(_FakeSession({"until": "not a timestamp"})) is False
 
 
 def test_the_periodic_is_registered_only_when_the_governor_is_on(monkeypatch):
@@ -414,7 +463,21 @@ async def test_log_tail_defaults_to_the_configured_size(agent_url, monkeypatch):
         return httpx.Response(200, json={"lines": []})
 
     await _agent(handler).logs("embed")
+    # No `since` on a tail read: the parameter is what distinguishes "give me the
+    # last N lines" from "give me what came after byte N", so it must be absent
+    # rather than sent as some sentinel the agent has to interpret.
     assert seen == {"which": "embed", "tail": "42"}
+
+
+async def test_a_delta_read_forwards_the_offset(agent_url):
+    seen = {}
+
+    def handler(request):
+        seen.update(dict(request.url.params))
+        return httpx.Response(200, json={"lines": [], "next_offset": 900})
+
+    await _agent(handler).logs("router", since=900)
+    assert seen["since"] == "900"
 
 
 async def test_reads_and_actions_get_timeouts_sized_for_what_they_wait_on(
@@ -524,3 +587,176 @@ async def test_graceful_stop_restores_a_pause_it_found_rather_than_clearing_it(m
         await api.api_llm_backend_stop(force=False)
 
     assert entries[-1] == ("restore_pause", before)
+
+
+# --- the log stream (web/api.py) ----------------------------------------------
+#
+# The pane used to re-fetch its entire 300-line tail every 3s over htmx and swap
+# it in. These cover what replaced it: a byte offset carried across calls, so the
+# browser is sent only what was appended.
+
+
+class _FakeStreamRequest:
+    """Only `is_disconnected` is touched by the handler. Disconnects after N
+    polls, which is how these tests terminate an otherwise endless generator."""
+
+    def __init__(self, polls):
+        self.polls = polls
+
+    async def is_disconnected(self):
+        self.polls -= 1
+        return self.polls < 0
+
+
+async def _drive(monkeypatch, payloads, since=None):
+    """Run the stream against a scripted agent and return (events, offsets asked
+    for)."""
+    from episteme.web import api
+
+    monkeypatch.setattr(settings, "llm_host_agent_url", "http://agent.test")
+    monkeypatch.setattr(settings, "llm_log_stream_interval_seconds", 0)
+    asked = []
+
+    async def fake_logs(which, since=None):
+        asked.append(since)
+        return payloads[min(len(asked) - 1, len(payloads) - 1)]
+
+    monkeypatch.setattr(api.host_agent, "logs", fake_logs)
+    response = await api.api_llm_logs_stream(
+        request=_FakeStreamRequest(len(payloads)), which="router", since=since
+    )
+    chunks = [chunk async for chunk in response.body_iterator]
+    events = []
+    for chunk in chunks:
+        if chunk.startswith(":"):
+            continue
+        name = chunk.split("\n", 1)[0].removeprefix("event: ")
+        events.append((name, json.loads(chunk.split("data: ", 1)[1])))
+    return events, asked
+
+
+async def test_the_stream_sends_a_tail_once_and_then_only_what_was_appended(monkeypatch):
+    """The bytes are the small part of it: re-swapping the whole pane also threw
+    away the operator's text selection and scrollback, every 3 seconds, while
+    they were reading it."""
+    events, asked = await _drive(monkeypatch, [
+        {"lines": ["a", "b"], "next_offset": 10, "exists": True, "size_bytes": 10},
+        {"lines": ["c"], "next_offset": 12, "exists": True, "size_bytes": 12},
+        {"lines": [], "next_offset": 12, "exists": True, "size_bytes": 12},
+    ])
+
+    assert [name for name, _ in events] == ["reset", "lines"]
+    assert events[0][1]["lines"] == ["a", "b"]
+    assert events[1][1]["lines"] == ["c"]
+    # Each poll resumes where the last one ended; a quiet log emits nothing at all.
+    assert asked == [None, 10, 12]
+
+
+async def test_the_stream_resumes_a_server_rendered_snapshot_without_resending_it(monkeypatch):
+    """The admin fragment renders a tail and hands over its `next_offset`, so the
+    handover neither re-sends those lines nor blanks the pane to redraw them."""
+    events, asked = await _drive(
+        monkeypatch,
+        [{"lines": ["new"], "next_offset": 90, "exists": True, "size_bytes": 90}],
+        since=42,
+    )
+    assert asked == [42]
+    assert [name for name, _ in events] == ["lines"]   # append, not replace
+
+
+async def test_a_truncated_log_reaches_the_browser_as_a_replace(monkeypatch):
+    """The launcher truncates the log on every start. Appending the new run onto
+    the old one is exactly the splice the reset flag exists to prevent."""
+    events, _ = await _drive(
+        monkeypatch,
+        [{"lines": ["fresh"], "next_offset": 6, "reset": True, "gap_bytes": 0, "exists": True}],
+        since=5000,
+    )
+    assert events[0][0] == "reset"
+
+
+async def test_an_unreachable_agent_does_not_close_the_stream(monkeypatch):
+    """Watching llama.cpp restart is a reason to have this pane open, so the
+    agent going away has to be an event, not the end of the connection — the
+    stream must outlive the process it reports on."""
+    events, _ = await _drive(monkeypatch, [
+        None,
+        {"lines": ["back"], "next_offset": 5, "exists": True, "size_bytes": 5},
+    ])
+    assert [name for name, _ in events] == ["unavailable", "reset"]
+    assert "unreachable" in events[0][1]["detail"]
+
+
+async def test_the_stream_is_refused_outright_when_no_agent_is_configured(monkeypatch):
+    """An EventSource retries forever. Against a feature that is switched off,
+    that is a reconnect loop with nothing to reconnect to — so the fragment does
+    not offer the stream, and the route says so if something asks anyway."""
+    from episteme.web import api
+
+    monkeypatch.setattr(settings, "llm_host_agent_url", "")
+    with pytest.raises(HTTPException) as exc:
+        await api.api_llm_logs_stream(request=_FakeStreamRequest(1), which="router", since=None)
+    assert exc.value.status_code == 503
+
+
+# --- the log fragment (admin/_backend_log.html) -------------------------------
+
+
+def _render_log(**ctx):
+    from episteme.web.templating import templates
+
+    base = dict(which="router", logs_available=["router", "embed"], agent_enabled=True,
+                since=None)
+    return templates.env.get_template("admin/_backend_log.html").render(**{**base, **ctx})
+
+
+def test_the_log_fragment_does_not_poll():
+    """Regression: this fragment used to re-fetch and re-swap its entire tail
+    every 3s, which discarded the reader's selection and scrollback each tick.
+    The stream replaced the poll — it did not join it."""
+    html = _render_log(log={"exists": True, "size_bytes": 1024, "lines": ["x"]}, since=40)
+    assert "hx-trigger" not in html
+    assert "data-log-stream" in html
+
+
+def test_the_stream_url_resumes_where_the_rendered_snapshot_ended():
+    """The handover: without the offset the stream would re-send the lines that
+    are already on the page, and the pane would blink on every load."""
+    html = _render_log(log={"exists": True, "size_bytes": 1024, "lines": ["x"]}, since=40)
+    assert "since=40" in html
+
+
+def test_an_unreachable_agent_still_gets_a_pane_to_fill():
+    """The old poll recovered on its own when the agent came back. A fragment
+    that rendered only an error message would need a manual reload to ever show
+    anything — worse than what it replaced."""
+    html = _render_log(log=None)
+    assert "data-log-stream" in html and "since=" not in html
+
+
+def test_no_stream_is_offered_when_the_agent_is_switched_off():
+    """An EventSource retries forever, and `llm_host_agent_url` empty is the off
+    switch for the whole feature — there is nothing to reconnect to."""
+    assert "data-log-stream" not in _render_log(agent_enabled=False, log=None)
+
+
+async def test_an_agent_predating_the_offset_protocol_degrades_to_replacing(monkeypatch):
+    """The agent runs on the host and this runs in a container: they are deployed
+    separately, so an agent that answers without `next_offset` is a normal state,
+    not a bug. Appending its answers would re-append the whole tail every second;
+    treating them as replaces is exactly the poll this stream came from."""
+    events, asked = await _drive(monkeypatch, [
+        {"lines": ["a", "b"], "exists": True, "size_bytes": 10},
+        {"lines": ["a", "b"], "exists": True, "size_bytes": 10},
+    ], since=None)
+
+    assert [name for name, _ in events] == ["reset", "reset"]
+    assert asked == [None, None]  # no offset to advance to, so none is claimed
+
+
+def test_a_snapshot_without_an_offset_omits_the_parameter_entirely():
+    """Regression, observed live as a 422 the browser then retried forever: an
+    empty `?since=` is not the same as no `since`, and FastAPI rejects it. The
+    old-agent case is exactly where the value goes missing."""
+    html = _render_log(log={"exists": True, "size_bytes": 8, "lines": ["x"]}, since=None)
+    assert "since" not in html
