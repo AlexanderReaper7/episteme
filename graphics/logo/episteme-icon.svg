@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="Episteme">
+<title>Episteme</title>
+<desc>An elongated octahedron standing in a field of lines that bend toward its lower tip.</desc>
+<path d="M0 128 L26.67 130.87 L37.33 131.39 L48 131.39 L66.67 130.19 L106.67 125.56 L128 124.54 L149.33 125.56 L189.33 130.19 L208 131.39 L218.67 131.39 L229.33 130.87 L256 128" fill="none" stroke="rgb(255,255,255)" stroke-opacity="0.3" stroke-width="2.94" stroke-linecap="round"/>
+<path d="M0 141.35 L16 140.04 L53.33 135.15 L72 133.89 L82.67 133.95 L93.33 134.57 L141.33 140.52 L152 141.31 L162.67 141.55 L173.33 141.21 L184 140.33 L218.67 135.77 L232 134.42 L245.33 133.85 L256 134.05" fill="none" stroke="rgb(255,255,255)" stroke-opacity="0.34" stroke-width="3.13" stroke-linecap="round"/>
+<path d="M0 156.66 L18.67 155.03 L26.67 154.99 L37.33 155.6 L53.33 157.77 L88 164.29 L98.67 165.64 L109.33 166.27 L120 166.09 L130.67 165.13 L141.33 163.54 L173.33 157.61 L184 156.24 L194.67 155.56 L205.33 155.63 L218.67 156.73 L256 162.48" fill="none" stroke="rgb(255,255,255)" stroke-opacity="0.42" stroke-width="3.57" stroke-linecap="round"/>
+<path d="M0 187.6 L40 196.46 L53.33 198.32 L64 198.94 L74.67 198.75 L85.33 197.84 L125.33 191.69 L136 190.52 L146.67 189.96 L157.33 190.09 L168 190.89 L202.67 195.77 L218.67 197.27 L229.33 197.39 L237.33 196.94 L245.33 196.05 L256 194.26" fill="none" stroke="rgb(255,255,255)" stroke-opacity="0.53" stroke-width="4.2" stroke-linecap="round"/>
+<path d="M128 14.69 L170.81 119.76 L128 128.77 Z" fill="rgb(162,170,180)" stroke="rgba(46,49,52,0.2)" stroke-width="0.8" stroke-linejoin="round"/>
+<path d="M128 14.69 L85.19 119.76 L128 128.77 Z" fill="rgb(46,48,51)" stroke="rgba(46,49,52,0.2)" stroke-width="0.8" stroke-linejoin="round"/>
+<path d="M128 216.67 L170.81 119.76 L128 128.77 Z" fill="rgb(123,130,138)" stroke="rgba(46,49,52,0.2)" stroke-width="0.8" stroke-linejoin="round"/>
+<path d="M128 216.67 L85.19 119.76 L128 128.77 Z" fill="rgb(41,43,46)" stroke="rgba(46,49,52,0.2)" stroke-width="0.8" stroke-linejoin="round"/>
+<path d="M0 238.06 L10.67 238.41 L21.33 237.72 L32 236.17 L64 230.13 L74.67 229.08 L85.33 229.03 L93.33 229.69 L104 231.45 L136 239.72 L149.33 242.54 L160 243.78 L170.67 243.89 L181.33 242.81 L192 240.65 L202.67 237.62 L234.67 227.21 L245.33 224.68 L256 223.19" fill="none" stroke="rgb(255,255,255)" stroke-opacity="0.68" stroke-width="5" stroke-linecap="round"/>
+</svg>

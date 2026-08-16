@@ -3,6 +3,8 @@
 - Date: 2026-08-01
 - Status: accepted
 - Rule: `/resources` reports measurements. `worker/governor.py` owns every threshold. An agent that dies leaves no opinion behind.
+- Amended by [0041](0041-the-host-agent-applies-a-configuration-it-is-handed.md), 2026-08-15: the agent also edits `models-preset.ini` and restarts with explicit arguments. The rule above is unchanged, because the caller chooses every value; 0041 is where that line is drawn.
+- Amended by [0042](0042-the-agent-owns-one-console-hidden-behind-a-tray-icon.md), 2026-08-15: it is no longer headless. It owns a console window and a tray icon, and both llama-server windows are gone. Still no policy.
 
 ## Context
 

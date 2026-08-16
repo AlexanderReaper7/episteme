@@ -82,9 +82,14 @@ class HostAgent:
             log.debug("Host agent read %s failed: %s", path, exc)
             return None
 
-    async def _action(self, path: str, *, timeout: float | None = None) -> dict:
+    async def _action(
+        self, path: str, *, timeout: float | None = None, json: dict | None = None
+    ) -> dict:
         return await self._request(
-            "POST", path, timeout=timeout or settings.llm_host_agent_timeout_seconds
+            "POST",
+            path,
+            timeout=timeout or settings.llm_host_agent_timeout_seconds,
+            **({"json": json} if json is not None else {}),
         )
 
     # --- reads (degrade to None) --------------------------------------------
@@ -114,10 +119,15 @@ class HostAgent:
 
     # --- actions (raise) -----------------------------------------------------
 
-    async def start(self) -> dict:
+    async def start(self, *, extra_args: list[str] | None = None) -> dict:
         """Idempotent — the agent no-ops when both ports already answer, so two
-        rapid clicks cannot produce two routers."""
-        return await self._action("/start")
+        rapid clicks cannot produce two routers.
+
+        `extra_args` reaches llama-server through the launcher's passthrough. It
+        exists for benchmark sweeps (0041) and is the *caller's* decision: the
+        agent validates the characters and applies the list, it does not judge
+        the configuration."""
+        return await self._action("/start", json={"extra_args": extra_args or []})
 
     async def stop(self) -> dict:
         """Kills the servers immediately. Callers wanting to not lose work should
@@ -125,15 +135,40 @@ class HostAgent:
         for a unit boundary first."""
         return await self._action("/stop")
 
-    async def restart(self) -> dict:
+    async def restart(self, *, extra_args: list[str] | None = None) -> dict:
         """Its own timeout: the agent runs a stop (kill + port wait) and a start
         (launcher + port wait) inside one request, so the worst case is roughly
         the sum of the other two and comfortably exceeds the action ceiling. A
         restart that succeeded on the host but timed out here would be reported
         to the operator as a failure."""
         return await self._action(
-            "/restart", timeout=settings.llm_host_agent_restart_timeout_seconds
+            "/restart",
+            timeout=settings.llm_host_agent_restart_timeout_seconds,
+            json={"extra_args": extra_args or []},
         )
+
+    # --- model configuration (0041) ------------------------------------------
+    #
+    # A read that degrades to None and two actions that raise, same split as
+    # above. `preset` is a read because a page showing the current configuration
+    # must render without the agent; applying one is an action because a sweep
+    # that silently failed to change anything would produce four identical
+    # variants and a conclusion drawn from them.
+
+    async def preset(self) -> dict | None:
+        """The raw `models-preset.ini` text plus a parsed view of it."""
+        return await self._read("/preset")
+
+    async def apply_preset(self, sections: dict[str, dict]) -> dict:
+        """`{section: {key: value_or_None}}`, None deleting a key. Returns the
+        name of the backup taken first, which is the caller's obligation to hand
+        back to `restore_preset` when the experiment ends. Deliberately not
+        remembered by the agent: it is stateless (0023), and only the caller knows
+        where a multi-variant sweep began."""
+        return await self._action("/preset", json={"sections": sections})
+
+    async def restore_preset(self, backup: str) -> dict:
+        return await self._action("/preset/restore", json={"backup": backup})
 
 
 host_agent = HostAgent()

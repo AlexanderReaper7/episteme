@@ -21,6 +21,7 @@ Nothing here is edited to reflect later changes. A decision that was replaced ge
 | [0004](0004-embeddings-truncated-to-1024-dimensions.md) | Embeddings are truncated to 1024 dimensions | 2026-07-16 |
 | [0010](0010-transcripts-are-stored-as-deltas.md) | Tool-loop transcripts are stored as deltas | 2026-07-17 |
 | [0027](0027-every-llm-authored-field-is-grammar-constrained.md) | Every LLM-authored field is grammar-constrained, including the chart spec | 2026-08-02 |
+| [0041](0041-the-host-agent-applies-a-configuration-it-is-handed.md) | The host agent applies a configuration it is handed, and never decides one | 2026-08-15 |
 | [0038](0038-chat-streams-over-sse-on-a-fourth-role.md) | Chat streams over SSE, on a fourth role, through the writer's tool loop | 2026-08-11 |
 
 ## The pipeline
@@ -72,6 +73,7 @@ Nothing here is edited to reflect later changes. A decision that was replaced ge
 | [0023](0023-the-host-agent-is-a-sensor-not-a-decision-maker.md) | The host control agent is a sensor and actuator, never a decision-maker | 2026-08-01 |
 | [0024](0024-the-governor-brakes-on-contention-not-presence.md) | The governor brakes on contention, not presence; a pause has an author | 2026-08-01 |
 | [0034](0034-logs-stream-as-byte-offset-deltas.md) | Logs stream as byte-offset deltas | 2026-08-03 |
+| [0042](0042-the-agent-owns-one-console-hidden-behind-a-tray-icon.md) | The host agent owns one console, born hidden, behind a tray icon | 2026-08-15 |
 
 ## Narration
 

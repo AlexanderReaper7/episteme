@@ -104,9 +104,21 @@ GET    /api/posts/search?q=deep-sea+biology&limit=5  # semantic + literal, merge
 
 # llama.cpp lifecycle, logs and GPU sensing via the host agent (0023). It runs on
 # the HOST, not in compose; everything here 503s cleanly when it is absent. Set
-# LLM_HOST_AGENT_URL=http://host.docker.internal:5003 in .env.
+# LLM_HOST_AGENT_URL=http://host.docker.internal:5003 in .env. It has a tray icon
+# and one console window, born hidden, shown from the tray (0042). Its deps live
+# in llama_agent.py's PEP-723 header; console.py must NOT grow one of its own.
 #   pwsh hostagent/install-task.ps1   # scheduled task at logon (-Remove, -Force)
 #   uv run hostagent/llama_agent.py   # or a console; log: llama-cpp/logs/agent.log
+#   ./hostagent/run-agent.ps1 -Show   # watch startup; -Spawn is the task's path
+# The tray icon IS the host agent mark, and doubles as the status light: nodes are
+# the decode server, edges the embedder, grey is down (0042, graphics/logo/README).
+#   ./hostagent/open-agent.ps1        # start it, or show the running one; one door
+#   pwsh hostagent/install-shortcut.ps1  # a .lnk for that (-Desktop, -Remove)
+# Its window makes claims pytest cannot reach, so hostagent/tools/ holds the
+# instruments that check them live: capture the window, the taskbar button, the
+# open tray menu, read back what Textual actually painted. Read its README before
+# writing another one - it is also where the win32 traps are written down (DPI
+# virtualization, PrintWindow's blind spot, pystray's cached HMENU).
 GET    /api/llm/backend  # ports, PIDs, uptime
 POST   /api/llm/backend/start  # idempotent (locked)
 POST   /api/llm/backend/restart
@@ -149,6 +161,13 @@ uv lock                                 # re-resolve after editing dependencies
 # _icon_sprite.html is GENERATED. Edit the glyph list in the script, never the
 # sprite; it downloads the pinned @carbon/icons tarball itself (0029).
 uv run tools/build_icon_sprite.py
+
+# So are both logo SVGs: a port of the canvas prototype, which stays the authority
+# on the geometry. graphics/logo/README.md is the spec for what the marks MEAN.
+uv run graphics/logo/build_svg.py
+# The .ico is NOT converted from the SVG - it re-renders console.py's icon_image,
+# so the tray, the taskbar and the shortcut are one picture by construction.
+uv run tools/build_hostagent_ico.py
 ```
 
 ## Architecture (the parts that span multiple files)

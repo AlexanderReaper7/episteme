@@ -37,6 +37,23 @@ def test_ansi_escapes_are_stripped_from_log_lines(agent, tmp_path, monkeypatch):
     assert lines == ["0.00.193.237 I srv listening on http://127.0.0.1:5001"]
 
 
+def test_the_doubled_carriage_return_is_not_a_blank_line(agent, tmp_path, monkeypatch):
+    """Every line llama-server writes on Windows ends "\\r\\r\\n": it emits CRLF and
+    the CRT translates the \\n a second time. splitlines() reads the orphan \\r as
+    a break, so an unfiltered pane is double-spaced - found live 2026-08-15 in
+    the agent console, and present in /admin's pane for as long as it has existed.
+
+    A LONE \\r still splits: llama.cpp rewrites progress in place with it."""
+    monkeypatch.setattr(agent, "LOG_DIR", tmp_path)
+    _write(tmp_path / "router.log", "srv listening\r\r\nque start_loop\r\r\nload 10%\rload 90%\r\r\n")
+    assert agent.read_log(which="router", tail=10)["lines"] == [
+        "srv listening",
+        "que start_loop",
+        "load 10%",
+        "load 90%",
+    ]
+
+
 def test_log_tail_reads_a_bounded_window_of_a_huge_file(agent, tmp_path, monkeypatch):
     """A log that grew overnight must cost a fixed read, not a full slurp — the
     tail seeks from the end. The partial line the seek lands mid-way through is
@@ -181,7 +198,7 @@ def test_concurrent_starts_launch_exactly_once(agent, monkeypatch):
 
     results = []
     threads = [
-        threading.Thread(target=lambda: results.append(agent.start())) for _ in range(4)
+        threading.Thread(target=lambda: results.append(agent.start_servers())) for _ in range(4)
     ]
     for thread in threads:
         thread.start()
@@ -217,7 +234,7 @@ def test_start_reports_failure_when_a_server_never_binds(agent, monkeypatch):
     )
 
     with pytest.raises(HTTPException) as exc:
-        agent.start()
+        agent.start_servers()
     assert exc.value.status_code == 500
     assert "router" in exc.value.detail
     assert "model file not found" in exc.value.detail  # the reason survives
@@ -263,3 +280,100 @@ def test_resources_separates_our_gpu_load_from_everyone_elses(agent, monkeypatch
     assert result["games_running"] == ["bf6"]
     # Busiest first, so the panel shows who is using the GPU.
     assert [p["name"] for p in result["processes"]][:2] == ["bf6", "llama-server"]
+
+
+# --- the model configuration surface (0041) ---------------------------------------
+
+PRESET_TEXT = """\
+; models-preset.ini - per-model llama-server flags.
+; Sections are keyed by GGUF name minus the extension.
+
+[Qwen3-35B-A3B.Q4_K_M]
+; 2026-08-15: `ngl = 999` was removed here. `fit = on` sizes the offload against
+; free VRAM; a hard ngl overrode it and cost 3x throughput for months.
+fit = on
+ctx = 32768
+
+[Octen-Embedding-4B.Q8_0]
+n-gpu-layers = 0
+"""
+
+
+def test_a_preset_edit_preserves_every_comment(agent):
+    """models-preset.ini is half comments, and those comments are the only record
+    of why a setting is what it is. A configparser round-trip would delete more
+    knowledge in one call than the whole benchmarking feature produces."""
+    text, changed = agent._edit_preset(
+        PRESET_TEXT, {"Qwen3-35B-A3B.Q4_K_M": {"ctx": 16384}}
+    )
+    assert "cost 3x throughput for months" in text
+    assert text.count(";") == PRESET_TEXT.count(";")
+    assert "ctx = 16384" in text and "ctx = 32768" not in text
+    assert changed == ["[Qwen3-35B-A3B.Q4_K_M] ctx: 32768 -> 16384"]
+
+
+def test_a_new_key_lands_inside_its_own_section(agent):
+    text, changed = agent._edit_preset(PRESET_TEXT, {"Qwen3-35B-A3B.Q4_K_M": {"batch": 4096}})
+    sections = agent._parse_preset(text)
+    assert sections["Qwen3-35B-A3B.Q4_K_M"]["batch"] == "4096"
+    assert "batch" not in sections["Octen-Embedding-4B.Q8_0"]
+    assert changed == ["[Qwen3-35B-A3B.Q4_K_M] batch = 4096 (added)"]
+
+
+def test_editing_an_earlier_section_does_not_corrupt_a_later_one(agent):
+    """Inserting a line shifts every index after it. Applied bottom-up so a
+    section's recorded bounds are still valid when its turn comes."""
+    text, _ = agent._edit_preset(
+        PRESET_TEXT,
+        {
+            "Qwen3-35B-A3B.Q4_K_M": {"batch": 4096},
+            "Octen-Embedding-4B.Q8_0": {"threads": 8},
+        },
+    )
+    sections = agent._parse_preset(text)
+    assert sections["Qwen3-35B-A3B.Q4_K_M"] == {"fit": "on", "ctx": "32768", "batch": "4096"}
+    assert sections["Octen-Embedding-4B.Q8_0"] == {"n-gpu-layers": "0", "threads": "8"}
+
+
+def test_removing_a_key_comments_it_out_rather_than_deleting_the_line(agent):
+    """A sweep that silently vanished a line is the exact failure the line-based
+    writer exists to avoid, and the restore still puts the original file back."""
+    text, changed = agent._edit_preset(PRESET_TEXT, {"Qwen3-35B-A3B.Q4_K_M": {"fit": None}})
+    assert "; [benchmark] fit = on" in text
+    assert "fit" not in agent._parse_preset(text)["Qwen3-35B-A3B.Q4_K_M"]
+    assert changed == ["[Qwen3-35B-A3B.Q4_K_M] removed fit (was fit = on)"]
+
+
+def test_a_section_that_does_not_exist_yet_is_created(agent):
+    text, _ = agent._edit_preset(PRESET_TEXT, {"New-Model.Q8_0": {"ctx": 8192}})
+    assert agent._parse_preset(text)["New-Model.Q8_0"] == {"ctx": "8192"}
+
+
+def test_an_unchanged_value_is_not_reported_as_a_change(agent):
+    _, changed = agent._edit_preset(PRESET_TEXT, {"Qwen3-35B-A3B.Q4_K_M": {"fit": "on"}})
+    assert changed == []
+
+
+def test_launcher_arguments_cannot_become_powershell(agent):
+    """They are interpolated into a command line assembled by string joining.
+    Not a trust boundary against Episteme, which can already start processes
+    here - but that command line must not be one quote away from arbitrary
+    execution."""
+    assert agent._safe_args(["--ctx-size", "32768", "-ngl", "999"]) == [
+        "--ctx-size", "32768", "-ngl", "999"
+    ]
+    for hostile in ("'; rm -rf /", "$(whoami)", "`whoami`", "a;b", 5):
+        with pytest.raises(Exception):
+            agent._safe_args([hostile])
+
+
+def test_a_backup_path_cannot_escape_the_llama_directory(agent, tmp_path, monkeypatch):
+    """The agent binds loopback only, but a path parameter that writes over
+    arbitrary files is not something to leave resting on the network boundary."""
+    monkeypatch.setattr(agent, "LLAMA_DIR", tmp_path)
+    good = tmp_path / f"{agent.PRESET_BACKUP_PREFIX}20260815-120000"
+    good.write_text("x", encoding="utf-8")
+    assert agent._backup_path(good.name) == good.resolve()
+    for hostile in ("../../etc/passwd", "models-preset.ini", r"C:\Windows\system.ini"):
+        with pytest.raises(Exception):
+            agent._backup_path(hostile)
