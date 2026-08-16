@@ -42,6 +42,11 @@
      beside it, because a glyph fills the whole em box while text only reaches
      cap height. This is the one knob for the whole site's iconography. */
   --icon-scale: 1.5;
+  /* One gap for every seam between admin sections: the vertical stack in
+     .admin-main and the dashboard's .admin-grid, which nests inside it. Two
+     literals here would drift and the dashboard would stop matching the pages
+     around it. */
+  --admin-gap: 1.25rem;
 }
 
 * { box-sizing: border-box; }
@@ -71,6 +76,14 @@ body {
   height: calc(1em * var(--icon-scale));
   flex: none;
   vertical-align: -0.25em;   /* optical baseline for a box taller than cap height */
+  /* AN ICON MUST NEVER DEFINE A BASELINE. An <svg> is a replaced element with no
+     baseline of its own, so a flex container whose glyph is baseline-aligned
+     synthesizes one from that glyph's border box - 1.5em down, well below the
+     text. Every `align-items: baseline` row then drags its words down to meet an
+     icon's bottom edge. `align-self: center` takes the glyph out of baseline
+     alignment entirely, so the row's baseline comes from the first item that
+     actually has one: the text. See the atom rule below for the other half. */
+  align-self: center;
 }
 
 /* Motion. Three icon mechanisms, all pure CSS - no JS, no Lottie runtime,
@@ -113,7 +126,23 @@ body {
 
 /* Controls and labels that mix a glyph with words. Enumerated rather than made a
    utility class: `inline-flex` changes an element's layout, so it is only applied
-   where an icon actually sits beside text. */
+   where an icon actually sits beside text.
+
+   `baseline`, not `center`, and this is the other half of the .icon rule above.
+   An inline-flex box has to hand a baseline outwards to whatever it sits in - a
+   prose line in .article-footnote, an `align-items: baseline` row like
+   .mini-row-value or .site-header - and with no baseline-aligned item it
+   synthesizes one from its FIRST item's border box, which is the glyph. The atom
+   then claims a baseline 1.5em down and the words beside it slide to match.
+   Aligning on baselines makes the atom's own text the item that answers, so the
+   box behaves like the text it stands in for.
+
+   The glyph does not move: it is `align-self: center` above, and it is taller
+   than the words either way, so it still sets the atom's height and still centres
+   against them. Measured 2026-08-16 on /admin at 2560px: the icon's inset inside
+   a .status-badge is 1.75px top and bottom before and after, while the reported
+   gap between the chip's text and its sibling went from 3.95px to 0.36px, and the
+   header nav from 4.30px to 0.44px. */
 .card-kind,
 .card-provenance,
 .site-nav a,
@@ -122,7 +151,7 @@ body {
 .signal-undo,
 .weight-revert,
 .chip-remove {
-  align-items: center;
+  align-items: baseline;
   display: inline-flex;
   gap: 0.3rem;
 }
@@ -421,7 +450,6 @@ main {
 .tune-form textarea:focus { border-color: var(--accent); outline: none; }
 
 .tune-form button, .tune-rebuild, .signal-undo {
-  align-self: flex-start;
   background: transparent;
   border: 1px solid var(--border);
   border-radius: 999px;
@@ -431,6 +459,14 @@ main {
   font-size: 0.8rem;
   padding: 0.3rem 0.9rem;
 }
+
+/* Only the form's own buttons. .tune-form is a COLUMN, so without this a button
+   stretches to the full width of the card; .tune-rebuild and .signal-undo sit in
+   horizontal rows instead, where the same declaration merely opted them out of
+   the row's baseline alignment and pinned their text 4.8px above the timestamp
+   beside them. Measured on /tune, 2026-08-16: removing it moves neither button's
+   box (83.6x30.7 and 93.7x30.7, unchanged) and closes the gap. */
+.tune-form button { align-self: flex-start; }
 
 .tune-form button:hover, .tune-rebuild:hover, .signal-undo:hover {
   border-color: var(--border-hover);
@@ -1212,8 +1248,13 @@ main {
   gap: 0.15rem;
 }
 
+/* Flex rather than the shared inline-flex rule at the top: these rows are the
+   full width of the column, and the glyph has to stay put while a label that
+   outgrows a zoomed-narrow column wraps beside it rather than under it. */
 .admin-sidebar-nav a {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
   padding: 0.35rem 0.6rem;
   border-radius: 8px;
   color: var(--muted);
@@ -1232,10 +1273,20 @@ main {
   color: var(--accent);
 }
 
-.admin-main { min-width: 0; }
+/* Section spacing belongs to the admin content region, not to any one page's
+   inner layout. It used to live only on .admin-grid, which the dashboard is the
+   sole user of, so every other admin page stacked its cards edge to edge. The
+   column is the single source of the gap, so .admin-title carries no bottom
+   margin - a margin here would add to it and only on pages with a title. */
+.admin-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--admin-gap);
+}
 
 .admin-title {
-  margin: 0 0 1.25rem;
+  margin: 0;
   font-size: 1.5rem;
   letter-spacing: 0.01em;
 }
@@ -1424,7 +1475,7 @@ main {
 .admin-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(26rem, 1fr));
-  gap: 1.25rem;
+  gap: var(--admin-gap);
   align-items: start;
 }
 
@@ -1477,7 +1528,7 @@ main {
 /* Status label as a diff-style chip: dark same-hue fill + brighter border,
    legible text on top. Neutral falls back to the plain border/muted tokens. */
 .status-badge {
-  align-items: center;
+  align-items: baseline;   /* a glyph+word atom; see the .icon rule at the top */
   display: inline-flex;
   gap: 0.3rem;
   padding: 0.05rem 0.45rem;
@@ -2384,6 +2435,29 @@ main {
   gap: 0.5rem;
   flex-wrap: wrap;
   margin: 0.75rem 0 0;
+}
+
+/* In-flight lifecycle actions. These are the slowest controls on the site by an
+   order of magnitude - the agent holds /start until both ports answer, and
+   /restart pays for a stop wait, a launcher run and a start wait in sequence, so
+   a click can legitimately be unanswered for a minute. `hx-disabled-elt` alone
+   changes nothing visible (there is no global :disabled rule), which made a
+   pressed button indistinguishable from one that never fired.
+   htmx puts `htmx-request` on the requesting element for exactly the request's
+   lifetime, so the whole state is one class and no JS.
+   The glyph is SWAPPED, not added: the button keeps its width and the row does
+   not reflow under the cursor mid-action. */
+.backend-controls .icon-busy { display: none; }
+.backend-controls .htmx-request .icon-busy { display: inline; }
+.backend-controls .htmx-request .icon-idle { display: none; }
+.backend-controls .htmx-request { cursor: progress; }
+
+/* The siblings go inert too. Only the clicked button is disabled by htmx, so
+   "stop" stayed live during a 40s start - two lifecycle actions racing on one
+   pair of processes, from a panel that could not yet show the first had landed. */
+.backend-controls:has(.htmx-request) button:not(.htmx-request) {
+  opacity: 0.45;
+  pointer-events: none;
 }
 
 .log-head {

@@ -5,12 +5,12 @@
      returns just the admin_content block. Active state is synced client-side in
      app.js, since the sidebar isn't reloaded for the server to restamp it. #}
   <nav class="admin-sidebar-nav" hx-target="#admin-main">
-    <a href="/admin" class="{{ 'active' if active == 'dashboard' else '' }}">Dashboard</a>
-    <a href="/admin/runs" class="{{ 'active' if active == 'runs' else '' }}">Pipeline runs</a>
-    <a href="/admin/jobs" class="{{ 'active' if active == 'jobs' else '' }}">Job queue</a>
-    <a href="/admin/sources" class="{{ 'active' if active == 'sources' else '' }}">Sources</a>
-    <a href="/admin/voices" class="{{ 'active' if active == 'voices' else '' }}">Voices</a>
-    <a href="/admin/topics" class="{{ 'active' if active == 'topics' else '' }}">Topics</a>
-    <a href="/admin/benchmarks" class="{{ 'active' if active == 'benchmarks' else '' }}">Benchmarks</a>
+    <a href="/admin" class="{{ 'active' if active == 'dashboard' else '' }}">{{ ico.icon("nav-dashboard") }} Dashboard</a>
+    <a href="/admin/runs" class="{{ 'active' if active == 'runs' else '' }}">{{ ico.icon("nav-runs") }} Pipeline runs</a>
+    <a href="/admin/jobs" class="{{ 'active' if active == 'jobs' else '' }}">{{ ico.icon("nav-jobs") }} Job queue</a>
+    <a href="/admin/sources" class="{{ 'active' if active == 'sources' else '' }}">{{ ico.icon("nav-sources") }} Sources</a>
+    <a href="/admin/voices" class="{{ 'active' if active == 'voices' else '' }}">{{ ico.icon("nav-voices") }} Voices</a>
+    <a href="/admin/topics" class="{{ 'active' if active == 'topics' else '' }}">{{ ico.icon("nav-topics") }} Topics</a>
+    <a href="/admin/benchmarks" class="{{ 'active' if active == 'benchmarks' else '' }}">{{ ico.icon("nav-benchmarks") }} Benchmarks</a>
   </nav>
 </aside>

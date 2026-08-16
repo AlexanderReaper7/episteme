@@ -232,6 +232,30 @@ def _llm_call_dict(call: LlmCall, full: bool = False) -> dict:
 # --- Status -----------------------------------------------------------------------
 
 
+async def llm_endpoint_view() -> dict:
+    """Health, inventory and the role table for every distinct endpoint.
+
+    One probe per endpoint answers health AND inventory, so the model list is
+    whatever every configured server reports — not just the default URL's, which
+    is only one of them once a role is moved elsewhere.
+
+    Its own function because two surfaces need exactly this and nothing else
+    around it: `/api/status`, and the admin dashboard's endpoint card, which is
+    re-rendered on the backend panel's poll (`admin.backend_context`). Copying
+    the four lines into the second caller is how the two views start disagreeing
+    about what an endpoint is."""
+    endpoints = await gateway.endpoint_status()
+    return {
+        "endpoints": endpoints,
+        "models": [
+            dict(model, endpoint=endpoint["url"])
+            for endpoint in endpoints
+            for model in endpoint["models"]
+        ],
+        "roles": gateway.role_config(),
+    }
+
+
 @router.get("/status")
 async def api_status():
     from ..worker.control import pause_state
@@ -258,21 +282,13 @@ async def api_status():
             await session.execute(select(PipelineRun).order_by(PipelineRun.id.desc()).limit(1))
         ).scalar_one_or_none()
 
-    # One probe per distinct endpoint answers health AND inventory, so the model
-    # list is whatever every configured server reports — not just the default
-    # URL's, which is only one of them once a role is moved elsewhere.
-    endpoints = await gateway.endpoint_status()
-    llm_models = [
-        dict(model, endpoint=endpoint["url"]) for endpoint in endpoints for model in endpoint["models"]
-    ]
+    llm = await llm_endpoint_view()
 
     return {
         "llm": {
             "base_url": settings.llm_base_url,
-            "available": all(e["available"] for e in endpoints),
-            "endpoints": endpoints,
-            "models": llm_models,
-            "roles": gateway.role_config(),
+            "available": all(e["available"] for e in llm["endpoints"]),
+            **llm,
             # Lifecycle/process facts, not inference facts — and cheap: the agent
             # skips its subprocess entirely when nothing is listening. `/resources`
             # is deliberately NOT here; it costs ~3.5s and has its own route.

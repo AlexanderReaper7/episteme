@@ -12,7 +12,8 @@ here rather than resolved to "latest".
 A template rather than a static asset because it is inlined, not linked: an
 external `<use href="/static/icons.svg#id">` is unsupported in Blink, so a served
 sprite would be empty boxes in Chrome while looking fine in Firefox. Costs
-~3.8 KB gzipped, and only on full-document loads — the sprite sits above the
+7.4 KB gzipped at 66 symbols (measured 2026-08-16; the ~3.8 KB this claimed
+before was never re-measured as the inventory grew), and only on full-document loads — the sprite sits above the
 `#main-content` swap boundary, so boosted navigations never re-send it.
 
 The set was chosen by eye against five alternatives on the real theme at real
@@ -113,6 +114,21 @@ ICONS = {
     # replaces, so it scales with `--icon-scale` like every other glyph instead of
     # sitting at whatever size the surrounding text happens to be.
     "produces": "arrow--right",
+    # --- admin sidebar, one per destination. Same rule as the stage glyphs: they
+    # are read as a column, so they are picked against each other AND against what
+    # is already in this file. Five of the obvious choices were already taken by an
+    # action elsewhere in the admin surface and would have collided on the very
+    # pages they point at, so each is the nearest unclaimed neighbour:
+    # microphone->narrate, meter->score, rss->ingest-one, tag--group->apply,
+    # flow->provenance, circle-dash->running (which ruled out `queued`, a dashed
+    # circle a hair from the spinner on /admin/jobs).
+    "nav-dashboard": "dashboard",
+    "nav-runs": "pipelines",
+    "nav-jobs": "list--checked",
+    "nav-sources": "wikis",
+    "nav-voices": "voice-mode",
+    "nav-topics": "category",
+    "nav-benchmarks": "analytics",
     # --- admin status
     "ok": "checkmark--filled",
     "warn": "warning",

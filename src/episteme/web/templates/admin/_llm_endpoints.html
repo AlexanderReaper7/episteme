@@ -1,0 +1,59 @@
+{# Endpoint health, loaded models, and the role table.
+
+   Has no clock of its own. It rides back on the backend panel's 5s poll as an
+   out-of-band swap (`oob_llm`, set only by admin.backend_partial), because this
+   card and the process card below it describe the SAME llama-server: on separate
+   timers they would disagree for seconds at a stretch, showing "router:5001
+   listening" beside "endpoint down", which is the exact confusion a live panel
+   exists to remove. One probe, one digest, one answer.
+
+   htmx applies an out-of-band swap by id from anywhere in the response, so this
+   only has to be a TOP-LEVEL element of the fragment it rides in - which is why
+   it is included at the end of _backend_state.html and not inside it. On a full
+   page render `oob_llm` is absent and this is a plain section.
+
+   KNOWN LIMIT: the poll it rides on belongs to the backend panel, which
+   admin.html renders only when a host agent is configured. With
+   LLM_HOST_AGENT_URL empty this card is a page-load snapshot again - no worse
+   than it was, but not live either. Giving it a clock of its own is the fix, and
+   costs the guarantee above: two probes that can disagree. #}
+<section id="llm-endpoints" class="admin-card"
+         {% if oob_llm %}hx-swap-oob="true"{% endif %}>
+  <h2>LLM endpoint</h2>
+  <ul class="endpoint-list">
+    {% for ep in llm.endpoints %}
+    <li class="endpoint-row">
+      <span class="status-dot {{ 'up' if ep.available else 'down' }}"
+            title="{{ 'up' if ep.available else 'down' }}"></span>
+      <code>{{ ep.url }}</code>
+      <span class="endpoint-roles">{{ ep.roles | join(', ') }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+  {# Endpoint is per role, so it belongs next to the model it serves - with
+     everything on one server the column simply repeats the same URL. #}
+  <table class="admin-table">
+    <tr><th>role</th><th>model</th><th>endpoint</th></tr>
+    {% for role, cfg in llm.roles.items() %}
+    <tr>
+      <td>{{ role }}</td>
+      <td class="mono">{{ cfg.model }}</td>
+      <td class="mono">{{ cfg.url }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% if llm.models %}
+  <table class="admin-table">
+    <tr>
+      <th>loaded model</th><th>state</th>
+      {% if llm.endpoints | length > 1 %}<th>endpoint</th>{% endif %}
+    </tr>
+    {% for m in llm.models %}
+    <tr>
+      <td class="mono">{{ m.id }}</td><td>{{ m.status }}</td>
+      {% if llm.endpoints | length > 1 %}<td class="mono">{{ m.endpoint }}</td>{% endif %}
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+</section>

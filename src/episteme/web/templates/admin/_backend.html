@@ -2,74 +2,20 @@
    start/stop/restart handlers (hx-target="#backend"), so an action swaps just
    this block rather than reloading the dashboard.
 
+   Two layers, and the seam is what each one is ABOUT. #backend-state is the
+   backend as it is right now, so it polls (_backend_state.html). The message
+   below it is the result of the last button press, so it does not: it is
+   written by an action and stays until the next one, because a sentence that
+   erased itself four seconds after appearing is a sentence nobody read.
+
    Only the process view lives here. GPU measurements and the log are separate
    fragments on their own clocks: /resources costs ~3.5s on the host (per-process
    GPU counters have an irreducible sampling floor) and must never sit on the
    critical path of anything a click waits for, while the log renders once and is
    then streamed into (_backend_log.html). #}
 <div id="backend">
-  {# The agent is optional infrastructure: it being down must degrade this panel,
-     not the dashboard. Inference is unaffected either way - llama.cpp does not
-     need the agent to serve requests, only to be started and watched. #}
-  {% if not backend.status %}
-  <p class="muted">Control agent unreachable at <code class="mono">{{ backend.url }}</code>.
-     Inference is unaffected; lifecycle and logs are unavailable until it is running:
-     <code class="mono">uv run hostagent/llama_agent.py</code></p>
-  {% else %}
-  <ul class="endpoint-list">
-    {% for name, srv in backend.status.servers.items() %}
-    <li class="endpoint-row">
-      <span class="status-dot {{ 'up' if srv.listening else 'down' }}"
-            title="{{ 'listening' if srv.listening else 'down' }}"></span>
-      <code>{{ name }}:{{ srv.port }}</code>
-      {% if srv.listening %}
-      <span class="endpoint-roles">pid {{ srv.pid or '?' }}{% if srv.started_at %} · up since {{ srv.started_at | dt }}{% endif %}</span>
-      {% else %}
-      <span class="endpoint-roles bad">not running</span>
-      {% endif %}
-    </li>
-    {% endfor %}
-  </ul>
-
+  {% include "admin/_backend_state.html" with context %}
   {% if message %}
-  <p class="{{ 'bad' if failed else 'muted' }}" style="font-size: 0.82rem;">{{ message }}</p>
-  {% endif %}
-
-  {# The stop button pauses the pipeline as a side effect, and the pause controls
-     live on /admin/jobs - a different page. Without this line the operator gets
-     no indication whatsoever, on the page they are standing on, that the
-     pipeline is now held. Rendered from the same flag /admin/jobs reads, so the
-     two cannot disagree. #}
-  {% if pipeline and pipeline.paused %}
-  <p class="muted" style="font-size: 0.82rem;">
-    <span class="bad">pipeline paused</span>
-    {%- if pipeline.reason == 'resource' %} - GPU busy (resource governor)
-    {%- else %} - manual{% endif %}
-    {%- if pipeline.since %} · since {{ pipeline.since | dt }}{% endif %}
-    · resume it on <a href="/admin/jobs">jobs</a>
-  </p>
-  {% endif %}
-
-  <p class="backend-controls">
-    {% if backend.status.servers.values() | selectattr('listening') | list | length < 2 %}
-    <button class="primary" hx-post="/admin/backend/start" hx-target="#backend" hx-swap="outerHTML"
-            hx-disabled-elt="this">{{ ico.icon("power") }} start</button>
-    {% endif %}
-    <button hx-post="/admin/backend/restart" hx-target="#backend" hx-swap="outerHTML"
-            hx-disabled-elt="this"
-            hx-confirm="Restart llama.cpp? Any generation in flight is lost.">{{ ico.icon("restart") }} restart</button>
-    {# Graceful: pauses the pipeline and waits for the current story to finish
-       before killing anything. It can come back saying it waited and gave up -
-       that is a success of the design, not a failure, and the force button only
-       appears once you have seen that answer. #}
-    <button class="danger" hx-post="/admin/backend/stop" hx-target="#backend" hx-swap="outerHTML"
-            hx-disabled-elt="this"
-            hx-confirm="Pause the pipeline, wait for the current work unit to finish, then stop llama.cpp?">{{ ico.icon("stop") }} stop</button>
-    {% if offer_force %}
-    <button class="danger" hx-post="/admin/backend/stop?force=true" hx-target="#backend" hx-swap="outerHTML"
-            hx-disabled-elt="this"
-            hx-confirm="Kill llama.cpp NOW, discarding the generation in flight?">{{ ico.icon("power") }} force stop</button>
-    {% endif %}
-  </p>
+  <p class="{{ 'bad' if failed else 'muted' }}" style="font-size: 0.82rem;" aria-live="polite">{{ message }}</p>
   {% endif %}
 </div>

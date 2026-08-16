@@ -57,15 +57,23 @@ router = APIRouter(prefix="/admin")
 
 @router.get("", response_class=HTMLResponse)
 async def admin_home(request: Request):
+    status = await api_status()
     return render(
         request,
         "admin/admin.html",
         {
             "active": "dashboard",
-            "status": await api_status(),
+            "status": status,
             "runs_summary": await api_runs_summary(),
             "jobs_summary": await api_jobs_summary(),
             "sources_stats": await api_sources_stats(),
+            # Both llama.cpp cards' context, built from what /api/status already
+            # fetched rather than probing the host agent and every endpoint a
+            # second time. It carries the digest the poll URL needs, so the pair
+            # is self-timing from the first paint.
+            **await backend_context(
+                status["llm"]["host_agent"], status["pipeline"], status["llm"]
+            ),
         },
     )
 
@@ -693,12 +701,88 @@ async def queue_partial(
 # --- llama.cpp backend panel ------------------------------------------------------
 #
 # Three fragments on three different clocks, because they cost three very
-# different amounts: process status is ~1ms and rides the page load, the GPU
-# probe is ~3.5s and polls every 30s, and the log is not on a clock here at all —
-# it renders once and is then pushed to over SSE (api.api_llm_logs_stream), which
-# is the only one of the three where re-fetching the whole answer would destroy
+# different amounts: process status is ~1ms and polls every 5s, the GPU probe is
+# ~3.5s and polls every 30s, and the log is not on a clock here at all — it
+# renders once and is then pushed to over SSE (api.api_llm_logs_stream), which is
+# the only one of the three where re-fetching the whole answer would destroy
 # something the reader was doing. Splitting them keeps a slow sensor off the
 # critical path.
+
+
+async def backend_context(
+    backend: dict | None = None,
+    pipeline: dict | None = None,
+    llm: dict | None = None,
+    *,
+    offer_force: bool = False,
+    message: str | None = None,
+    failed: bool = False,
+    oob_llm: bool = False,
+) -> dict:
+    """Everything the two llama.cpp cards render, from all three of their entry
+    points: the dashboard render, an action's response, and the status poll.
+
+    The endpoint card is in here rather than on a timer of its own because it and
+    the process card are two views of one llama-server: probed separately they
+    would disagree with each other for seconds at a time, which is the confusion a
+    live panel exists to remove.
+
+    All three reads are accepted pre-fetched, because the dashboard has already
+    paid for every one of them inside `/api/status` and asking the host agent and
+    every endpoint twice for one page load is round trips spent on nothing."""
+    from ..worker.control import pause_state
+    from .api import api_llm_backend, llm_endpoint_view
+
+    if backend is None:
+        backend = await api_llm_backend()
+    if pipeline is None:
+        async with SessionLocal() as session:
+            pipeline = await pause_state(session)
+    if llm is None:
+        llm = await llm_endpoint_view()
+    return {
+        "backend": backend,
+        "pipeline": pipeline,
+        "llm": llm,
+        "offer_force": offer_force,
+        "message": message,
+        "failed": failed,
+        "oob_llm": oob_llm,
+        # Over exactly what the two cards render, per state_hash's rule — NOT over
+        # `pipeline` whole, whose `contended_at` the governor rewrites on its own
+        # schedule and which nothing here displays. `endpoints` carries each
+        # server's health and its loaded models, so a router swapping main for
+        # fast moves the digest and the card follows it.
+        "backend_hash": state_hash(
+            backend.get("status"),
+            [pipeline.get("paused"), pipeline.get("reason"), pipeline.get("since")],
+            llm.get("endpoints"),
+            llm.get("roles"),
+            offer_force,
+        ),
+    }
+
+
+@router.get("/partials/backend", response_class=HTMLResponse)
+async def backend_partial(
+    request: Request, v: str | None = None, offer_force: bool = False
+):
+    """The status poll, for both llama.cpp cards: the process block replaces
+    itself and the endpoint card rides back beside it as an out-of-band swap.
+
+    Answers 204 while nothing has moved (0033), so the pair sits still for hours
+    and then updates within 5s of llama-server going up or down — including when
+    it went down without anyone here asking it to.
+
+    `offer_force` is carried by the fragment rather than re-derived: it means "a
+    graceful stop has already been tried and timed out", which is a fact about
+    the last action, not about the processes."""
+    context = await backend_context(offer_force=offer_force, oob_llm=True)
+    if unchanged(context["backend_hash"], v):
+        return Response(status_code=204, headers=POLL_HEADERS)
+    return templates.TemplateResponse(
+        request, "admin/_backend_state.html", context, headers=POLL_HEADERS
+    )
 
 
 @router.get("/partials/backend-resources", response_class=HTMLResponse)
@@ -749,9 +833,7 @@ async def admin_backend_action(request: Request, action: str, force: bool = Fals
 
     The pause state is re-read afterwards and rendered into the panel: a stop
     pauses the pipeline, and the pause controls are on a different page."""
-    from ..worker.control import pause_state
     from .api import (
-        api_llm_backend,
         api_llm_backend_restart,
         api_llm_backend_start,
         api_llm_backend_stop,
@@ -776,19 +858,10 @@ async def admin_backend_action(request: Request, action: str, force: bool = Fals
             raise
         message, failed = str(exc.detail), True
 
-    async with SessionLocal() as session:
-        pipeline = await pause_state(session)
-
     return templates.TemplateResponse(
         request,
         "admin/_backend.html",
-        {
-            "backend": await api_llm_backend(),
-            "pipeline": pipeline,
-            "message": message,
-            "failed": failed,
-            "offer_force": offer_force,
-        },
+        await backend_context(offer_force=offer_force, message=message, failed=failed),
         headers={"HX-Trigger": "refreshQueue"},
     )
 
