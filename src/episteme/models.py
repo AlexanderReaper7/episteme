@@ -550,3 +550,139 @@ class AppState(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+# --- Benchmarking (docs/benchmarks/plan.md, 0039) ---------------------------------
+#
+# Deliberately NOT pruned by prune_job_history. These rows are small and their
+# entire value is in being old: a number from March is what a number from
+# September disagrees with.
+
+
+class BenchmarkFixture(Base):
+    """A frozen prompt, replayed to measure throughput on the work Episteme really
+    does (a synthetic 4k prompt overstates prefill by 3-4x).
+
+    **Snapshotted, not referenced.** `llm_calls` is pruned on a tiered retention
+    (0032), so a fixture pointing at a `chain_id` would rot the moment its source
+    aged out, taking every comparison against it along. The source ids are kept
+    for provenance only and are allowed to dangle."""
+
+    __tablename__ = "benchmark_fixture"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(80), unique=True)
+    kind: Mapped[str] = mapped_column(String(16))  # replay | synthetic
+    stage: Mapped[str | None] = mapped_column(String(20))  # captured from write|qa|triage
+    source_chain_id: Mapped[str | None] = mapped_column(String(36))
+    source_story_id: Mapped[int | None] = mapped_column()
+    # Flattened, tool-free, ending on a user turn. Full research text, not a token
+    # count: a later quality run has to be able to replay this verbatim.
+    messages: Mapped[list[Any]] = mapped_column(JSONB, default=list)
+    # ADVISORY. Counted with one model's tokenizer, and models disagree - so this
+    # is never the x-axis of a chart. Per-sample `prompt_n` is.
+    prompt_tokens: Mapped[int | None] = mapped_column()
+    captured_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    notes: Mapped[str | None] = mapped_column(Text)
+
+
+class BenchmarkRun(Base):
+    """One execution of one scenario over one or more models.
+
+    No `ctx_size` column, on purpose: context size is per model, not per run, and
+    it is recoverable exactly from the argv stored on each sample."""
+
+    __tablename__ = "benchmark_run"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(20), default="running")  # running|succeeded|failed|cancelled
+    executor: Mapped[str] = mapped_column(String(10), default="worker")  # worker | host
+    scenario: Mapped[str] = mapped_column(String(20))  # quick|longctx|ladder|sweep
+    fixture_id: Mapped[int | None] = mapped_column(
+        ForeignKey("benchmark_fixture.id", ondelete="SET NULL")
+    )
+    models: Mapped[list[Any]] = mapped_column(JSONB, default=list)
+    # Everything the launch form chose: reps, predict, ladder rungs, sweep
+    # variants. The run row IS the parameter record, which is what lets the job
+    # take a single int and stay inside procrastinate's argument conventions.
+    params: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    llama_build: Mapped[str | None] = mapped_column(Text)
+    env: Mapped[dict[str, Any] | None] = mapped_column(JSONB)  # /resources at start
+    env_end: Mapped[dict[str, Any] | None] = mapped_column(JSONB)  # ... and at finish
+    # Started clean, ended dirty: the 2026-08-15 Warframe case. Stays visible in
+    # history with a label rather than being hidden, and is never a baseline.
+    contaminated: Mapped[bool] = mapped_column(default=False)
+    # Live state, overwritten as the run goes, read by the SSE progress endpoint.
+    # Not a result: nothing reads it once the run has finished.
+    progress: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    # The page sets it; the runner reads it between chunks and drops the HTTP
+    # connection, which is the only abort llama-server offers.
+    cancel_requested: Mapped[bool] = mapped_column(default=False)
+    error: Mapped[str | None] = mapped_column(Text)
+
+    samples: Mapped[list[BenchmarkSample]] = relationship(
+        back_populates="run", cascade="all, delete-orphan", order_by="BenchmarkSample.id"
+    )
+    fixture: Mapped[BenchmarkFixture | None] = relationship()
+
+
+class BenchmarkSample(Base):
+    """One model, one variant, one repetition.
+
+    `args` is the highest-value column here. Throughput says THAT something
+    regressed; only the effective argv says what changed - and the regression this
+    whole feature exists for (an `ngl` override silently defeating `fit = on` for
+    months) is invisible in every other column."""
+
+    __tablename__ = "benchmark_sample"
+    # The slot a measurement occupies. `rung` is part of it because the ladder
+    # takes one sample per rung and they are all rep 0 - without it, a five-rung
+    # ladder violates this constraint on its second point. NULLS NOT DISTINCT
+    # (PG15+) is what keeps the guard real for every other scenario, where `rung`
+    # is NULL and Postgres would otherwise treat every row as unique.
+    __table_args__ = (
+        UniqueConstraint(
+            "run_id",
+            "model",
+            "variant",
+            "rep",
+            "rung",
+            name="uq_benchmark_sample_slot",
+            postgresql_nulls_not_distinct=True,
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("benchmark_run.id", ondelete="CASCADE"))
+    model: Mapped[str] = mapped_column(Text)
+    variant: Mapped[str] = mapped_column(String(40), default="")  # sweep label, else ""
+    rep: Mapped[int] = mapped_column(default=0)  # 0 is the warmup, stored anyway
+    rung: Mapped[int | None] = mapped_column()  # ladder: the length ASKED for
+    prompt_n: Mapped[int] = mapped_column(default=0)  # ... the one MEASURED
+    # Prompt tokens served from cache. A cold-prefill measurement with cache_n > 0
+    # is void, and this column is what proves a ladder point was not.
+    cache_n: Mapped[int] = mapped_column(default=0)
+    prefill_ms: Mapped[int] = mapped_column(default=0)  # llama.cpp `timings`,
+    decode_ms: Mapped[int] = mapped_column(default=0)  # never derived from wall time
+    decode_tokens: Mapped[int] = mapped_column(default=0)
+    wall_ms: Mapped[int] = mapped_column(default=0)  # wall - prefill - decode = overhead
+    load_ms: Mapped[int | None] = mapped_column()  # model swap, first sample of a model
+    accept_pct: Mapped[float | None] = mapped_column()  # MTP draft acceptance
+    vram_free_mb: Mapped[int | None] = mapped_column()  # while THIS model is resident
+    args: Mapped[list[Any] | None] = mapped_column(JSONB)  # /v1/models[].status.args
+    # [[prompt_n, tok_s], ...] instantaneous, differenced from `prompt_progress`.
+    prefill_series: Mapped[list[Any]] = mapped_column(JSONB, default=list)
+    # [[token_index, elapsed_ms], ...] bucketed. Columns, not a fourth table: the
+    # only consumer reads the whole series at once, exactly like pipeline_runs.stages.
+    decode_series: Mapped[list[Any]] = mapped_column(JSONB, default=list)
+    # One model failing must not lose the other's numbers, so a failure is a value
+    # on the sample rather than an exception that ends the run.
+    error: Mapped[str | None] = mapped_column(Text)
+
+    run: Mapped[BenchmarkRun] = relationship(back_populates="samples")

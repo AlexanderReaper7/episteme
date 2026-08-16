@@ -7,8 +7,6 @@ serves the public /post/{id}/provenance page in web.app."""
 
 from __future__ import annotations
 
-import hashlib
-import json
 from collections import Counter
 from datetime import UTC, datetime
 
@@ -18,6 +16,7 @@ from fastapi.responses import HTMLResponse, Response
 from ..config import settings
 from ..db import SessionLocal
 from ..llm.host import host_agent
+from ..llm.observe import concat_transcript
 from ..models import FAILURE_STATUSES, AppState, Source
 from ..recommend import topics
 from ..tts import (
@@ -51,7 +50,7 @@ from .api import (
     api_topics_proposal_discard,
     job_presentation,
 )
-from .templating import render, templates
+from .templating import POLL_HEADERS, render, state_hash, templates, unchanged
 
 router = APIRouter(prefix="/admin")
 
@@ -536,21 +535,6 @@ async def admin_post_pin(request: Request, post_id: int, value: bool = True):
     )
 
 
-def state_hash(*parts: object) -> str:
-    """A short digest of the DATA a polled fragment renders.
-
-    It rides in the fragment's own poll URL, so the next poll tells the server
-    what the browser is currently showing and an unchanged fragment answers 204
-    (see queue_partial). Deliberately hashes the data and NOT the rendered HTML:
-    the rendered text contains relative times that drift every minute on their
-    own, which would flip the digest — and re-render the whole region — while
-    nothing about the queue had actually happened. Those timestamps go to the
-    browser as machine-readable attributes and are refreshed in place by app.js,
-    so display stays honest without a swap."""
-    payload = json.dumps(parts, default=str, sort_keys=True)
-    return hashlib.blake2s(payload.encode(), digest_size=8).hexdigest()
-
-
 def _job_identity(job: dict) -> tuple:
     """What makes a row look different. Excludes `duration_seconds` (derived from
     the two timestamps already here) and the rendered label/detail (derived from
@@ -689,31 +673,15 @@ async def queue_context(
     }
 
 
-# A polled fragment answers 204 when the browser already has the current state.
-# htmx does not swap a 204, so an unchanged queue costs one conditional request
-# and NO DOM replacement — which is what actually removes the flashing, since the
-# cheapest possible re-render is still a re-render. `no-store` because the same
-# URL legitimately answers 204 now and 200 once the state moves past the `v` it
-# carries; a cached copy of either would be wrong within seconds.
-_POLL_HEADERS = {"Cache-Control": "no-store"}
-
-
-def _unchanged(current: str, seen: str | None) -> bool:
-    """Only a non-empty match counts. A fragment rendered before this mechanism
-    existed (or a hand-written URL) carries no `v` and must get real content
-    rather than a 204 it cannot interpret."""
-    return bool(seen) and seen == current
-
-
 @router.get("/partials/queue", response_class=HTMLResponse)
 async def queue_partial(
     request: Request, view: str = DEFAULT_QUEUE_VIEW, v: str | None = None
 ):
     context = await queue_context(view, open_groups(request))
-    if _unchanged(context["queue_hash"], v):
-        return Response(status_code=204, headers=_POLL_HEADERS)
+    if unchanged(context["queue_hash"], v):
+        return Response(status_code=204, headers=POLL_HEADERS)
     return templates.TemplateResponse(
-        request, "admin/_admin_queue.html", context, headers=_POLL_HEADERS
+        request, "admin/_admin_queue.html", context, headers=POLL_HEADERS
     )
 
 
@@ -914,12 +882,7 @@ def _group_calls(calls: list[dict]) -> list[dict]:
         if chain_id:
             by_chain[chain_id] = group
     for group in groups:
-        transcript: list = []
-        for call in group["calls"]:
-            transcript.extend((call.get("request") or {}).get("messages") or [])
-            if call.get("response"):
-                transcript.append(call["response"])
-        group["transcript"] = transcript
+        group["transcript"] = transcript = concat_transcript(group["calls"])
         group["request_raw"] = None if transcript else group["calls"][-1].get("request")
         group["prompt_tokens"] = sum(c["prompt_tokens"] or 0 for c in group["calls"])
         group["completion_tokens"] = sum(c["completion_tokens"] or 0 for c in group["calls"])

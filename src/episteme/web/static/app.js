@@ -658,6 +658,78 @@
     stream.addEventListener("error", function () { say("reconnecting…"); });
   }
 
+  /* ================== benchmark progress + form (admin) ================= */
+
+  // Same element-tracking idempotence as the log pane above, and for the same
+  // reason: an htmx swap discards the node without telling us, and an orphaned
+  // EventSource would keep a worker-side query running for a pane nobody sees.
+  var benchStream = null;
+  var benchBox = null;
+
+  function benchText(box, sel, text) {
+    var node = box.querySelector(sel);
+    if (node) node.textContent = text;
+  }
+
+  function syncBenchProgress() {
+    var box = document.querySelector("[data-bench-progress]");
+    if (box === benchBox) return;
+    if (benchStream) { benchStream.close(); benchStream = null; }
+    benchBox = box;
+    if (!box) return;
+
+    var stream = new EventSource(box.dataset.benchProgress);
+    benchStream = stream;
+
+    stream.addEventListener("progress", function (e) {
+      if (stream !== benchStream) return;
+      var d = JSON.parse(e.data);
+      var item = (d.item || 0) + 1;
+      var label = d.model
+        ? item + "/" + d.items + "  " + d.model + (d.variant ? " · " + d.variant : "")
+        : d.status;
+      benchText(box, "[data-bench-label]", label + (d.cancel_requested ? "  (cancelling)" : ""));
+      // Two progress questions, and only one of them has a denominator: prefill
+      // knows its total, decode does not (max_tokens is a ceiling, not a plan).
+      // So the bar tracks the ITEMS, which always has one, and the phase line
+      // carries the within-item detail.
+      var pct = d.items ? Math.round((d.item || 0) / d.items * 100) : 0;
+      var bar = box.querySelector("[data-bench-bar]");
+      if (bar) bar.style.width = pct + "%";
+      var detail = d.phase === "prefill"
+        ? "prefill " + (d.processed || 0) + " / " + (d.total || "?") + " tokens"
+        : d.phase === "decode"
+          ? "generating, " + (d.processed || 0) + " tokens"
+          : (d.phase || "");
+      if (d.elapsed_ms) detail += "  (" + Math.round(d.elapsed_ms / 1000) + "s)";
+      benchText(box, "[data-bench-detail]", detail);
+    });
+
+    // The run is over: reload so the page renders its charts and its comparison
+    // table. A partial swap would have to know which sections exist, and they
+    // differ by scenario.
+    stream.addEventListener("done", function () {
+      if (stream !== benchStream) return;
+      stream.close();
+      benchStream = null;
+      window.location.reload();
+    });
+  }
+
+  // The scenario-specific fieldsets are all in the DOM and toggled here rather
+  // than fetched: the server has nothing new to say when the dropdown changes.
+  function initBenchForm(root) {
+    pickAll(root, "#bench-scenario").forEach(function (select) {
+      function apply() {
+        pickAll(document, "[data-bench-when]").forEach(function (box) {
+          box.hidden = box.dataset.benchWhen !== select.value;
+        });
+      }
+      select.addEventListener("change", apply);
+      apply();
+    });
+  }
+
   /* ===================== the assistant rail ============================= */
 
   /* Reads the turn stream with fetch() + ReadableStream rather than EventSource,
@@ -871,9 +943,11 @@
     retimeAgo(root);
     hydrateRich(root);
     initChat(root);
+    initBenchForm(root);
     // Queried from the document, not `root`: the pane may have been removed by a
     // swap somewhere else entirely, and that stream still needs closing.
     syncLogStream();
+    syncBenchProgress();
     if (document.querySelector(".admin-sidebar-nav")) syncNav();
   }
 

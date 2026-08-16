@@ -27,6 +27,7 @@ loading screens" the design exists to prevent. Both live here rather than in a
 worker process that any redeploy would forget.
 """
 
+import json
 import logging
 from datetime import UTC, datetime, timedelta
 
@@ -40,6 +41,12 @@ log = logging.getLogger("episteme.control")
 
 PAUSE_KEY = "pipeline_pause"
 LEASE_KEY = "interactive_lease"
+
+# Who may hold the interactive lease. Named constants rather than literals at the
+# call sites so a hold and its release cannot drift apart by a typo — which would
+# leak a holder until its TTL expired, with nothing to say why the GPU was busy.
+CHAT_HOLDER = "chat"
+BENCH_HOLDER = "benchmark"
 
 MANUAL = "manual"
 RESOURCE = "resource"
@@ -126,8 +133,10 @@ async def _write(session: AsyncSession, value: dict) -> None:
     await session.commit()
 
 
-async def hold_interactive(session: AsyncSession, seconds: float | None = None) -> None:
-    """Claim the models for a turn the reader is watching.
+async def hold_interactive(
+    session: AsyncSession, holder: str, seconds: float | None = None
+) -> None:
+    """Claim the models for work the reader is watching, under a named holder.
 
     A TTL, not a lock, and that asymmetry is the whole design. Chat runs in the
     **web** process, which `pipeline_job_running` cannot see: it counts
@@ -136,26 +145,47 @@ async def hold_interactive(session: AsyncSession, seconds: float | None = None) 
     GPU with nobody left to release it; an expiring lease heals itself in
     `chat_lease_seconds` no matter how the holder died. Refreshed every turn, so
     a long conversation stays covered without asking for a long lease.
+
+    **The lease is a set of holders, not a single expiry.** There is more than one
+    kind of deliberate GPU user now — a chat turn (minutes) and a benchmark run
+    (hours) — and they overlap freely. With one shared expiry, whichever of them
+    finished first handed the card back on the other's behalf: a chat turn ending
+    mid-benchmark released the lease, and the governor was then free to evict the
+    model in the middle of a measurement.
+
+    Written as one upsert rather than read-modify-write because the holders live
+    in different processes (`web` and `worker`), so a Python-side merge under READ
+    COMMITTED loses whichever update commits second — which is the same bug again,
+    just rarer.
     """
     until = datetime.now(UTC) + timedelta(
         seconds=settings.chat_lease_seconds if seconds is None else seconds
     )
-    state = await session.get(AppState, LEASE_KEY)
-    if state is None:
-        state = AppState(key=LEASE_KEY)
-        session.add(state)
-    state.value = {"until": until.isoformat()}
+    # The entry is built in Python and cast, rather than assembled from a
+    # `:holder`/`:until` pair in SQL, because `to_jsonb(:until::text)` does not
+    # mean what it reads as: `text()` scans for `:name` with a negative lookahead
+    # on `:`, so the postfix cast swallows the parameter and the statement binds
+    # `unti`. `cast(… as jsonb)` says the same thing with no `::` in it.
+    entry = json.dumps({holder: until.isoformat()})
+    await session.execute(
+        text(
+            "INSERT INTO app_state (key, value, updated_at) "
+            "VALUES (:key, jsonb_build_object('holders', cast(:entry as jsonb)), now()) "
+            "ON CONFLICT (key) DO UPDATE SET value = jsonb_build_object("
+            "  'holders', coalesce(app_state.value -> 'holders', '{}'::jsonb) "
+            "             || cast(:entry as jsonb)), "
+            "updated_at = now()"
+        ),
+        {"key": LEASE_KEY, "entry": entry},
+    )
     await session.commit()
 
 
-async def interactive_held(session: AsyncSession) -> bool:
-    """Is somebody waiting on a model right now? Expired leases read as False, so
-    nothing has to clean them up."""
-    value = (
-        await session.execute(select(AppState.value).where(AppState.key == LEASE_KEY))
-    ).scalar() or {}
-    until = value.get("until")
-    if not until:
+def _live(until: object) -> bool:
+    """One holder's expiry, read defensively. Anything unparseable is treated as
+    expired: a lease is a claim on 20GB of VRAM, and the safe reading of a value
+    nobody can interpret is that nobody is holding it."""
+    if not isinstance(until, str):
         return False
     try:
         expires = datetime.fromisoformat(until)
@@ -166,12 +196,33 @@ async def interactive_held(session: AsyncSession) -> bool:
     return expires > datetime.now(UTC)
 
 
-async def release_interactive(session: AsyncSession) -> None:
-    """Give the lease back early, when a turn ends before its TTL does."""
-    state = await session.get(AppState, LEASE_KEY)
-    if state is None:
-        return
-    state.value = {}
+async def interactive_held(session: AsyncSession) -> bool:
+    """Is anybody waiting on a model right now? Expired holders read as False, so
+    nothing has to clean them up.
+
+    A bare `until` is the pre-multi-holder shape and is still honoured, so an
+    upgrade landing between two turns of a live conversation does not evict it.
+    The next `hold_interactive` rewrites the value into the holders form."""
+    value = (
+        await session.execute(select(AppState.value).where(AppState.key == LEASE_KEY))
+    ).scalar() or {}
+    holders = value.get("holders") or {}
+    return _live(value.get("until")) or any(_live(until) for until in holders.values())
+
+
+async def release_interactive(session: AsyncSession, holder: str) -> None:
+    """Give one holder's lease back early, when its work ends before the TTL does.
+
+    Only that holder's. The other entries are somebody else's claim, and a
+    benchmark measuring for an hour must survive a chat turn ending under it."""
+    await session.execute(
+        text(
+            "UPDATE app_state SET value = jsonb_build_object("
+            "  'holders', coalesce(value -> 'holders', '{}'::jsonb) - :holder), "
+            "updated_at = now() WHERE key = :key"
+        ),
+        {"key": LEASE_KEY, "holder": holder},
+    )
     await session.commit()
 
 

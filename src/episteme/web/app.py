@@ -21,6 +21,7 @@ from .admin import _group_calls
 from .admin import router as admin_router
 from .api import api_post_llm_calls, api_story
 from .api import router as api_router
+from .bench import router as bench_router
 from .chat import router as chat_router
 from .feedback import feed_context as feedback_contexts
 from .feedback import post_context as feedback_context
@@ -66,6 +67,7 @@ app.mount("/static", RevalidateStaticFiles(directory=BASE_DIR / "static"), name=
 app.mount("/media", StaticFiles(directory=settings.audio_dir, check_dir=False), name="media")
 app.include_router(api_router)
 app.include_router(admin_router)
+app.include_router(bench_router)
 app.include_router(feedback_router)
 app.include_router(chat_router)
 

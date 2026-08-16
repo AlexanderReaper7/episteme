@@ -287,8 +287,6 @@ async def test_a_live_chat_turn_survives_the_governors_unload(monkeypatch):
     would pause (correctly) and then unload (destroying a stream the reader is
     watching), which is the exact failure the running-job guard above prevents
     for the worker."""
-    from datetime import UTC, datetime, timedelta
-
     from episteme.worker import governor as gov
 
     unloads = []
@@ -297,7 +295,7 @@ async def test_a_live_chat_turn_survives_the_governors_unload(monkeypatch):
         unloads.append("unloaded")
         return []
 
-    held = {"until": (datetime.now(UTC) + timedelta(seconds=60)).isoformat()}
+    held = _lease(chat=60)
     monkeypatch.setattr(settings, "resource_governor_enabled", True)
     monkeypatch.setattr(settings, "llm_host_agent_url", "http://agent.test")
     monkeypatch.setattr(gov, "SessionLocal", _FakeDB(_FakeSession(held)))
@@ -314,16 +312,105 @@ async def test_a_live_chat_turn_survives_the_governors_unload(monkeypatch):
     assert unloads == []
 
 
+def _lease(**holders) -> dict:
+    """The stored lease, from `{holder: seconds from now}`."""
+    return {
+        "holders": {
+            name: (datetime.now(UTC) + timedelta(seconds=offset)).isoformat()
+            for name, offset in holders.items()
+        }
+    }
+
+
 async def test_an_expired_lease_holds_nothing(monkeypatch):
     """A TTL rather than a lock, because the holder can die. A web process killed
     mid-turn must not strand 20GB of VRAM until someone notices."""
-    from datetime import UTC, datetime, timedelta
-
     from episteme.worker.control import interactive_held
 
+    assert await interactive_held(_FakeSession(_lease(chat=-1))) is False
+    assert await interactive_held(_FakeSession(_lease(chat=60))) is True
+    assert await interactive_held(_FakeSession({})) is False
+    assert await interactive_held(_FakeSession({"holders": {}})) is False
+    assert await interactive_held(_FakeSession({"holders": {"chat": "nope"}})) is False
+
+
+async def test_one_holder_leaving_does_not_hand_back_anothers_claim():
+    """The lease was a single shared expiry, so whichever deliberate GPU user
+    finished first released it for both. A chat turn ending mid-benchmark cleared
+    the benchmark's lease, and the governor was then free to evict the model in
+    the middle of a measurement - the refresher only re-arms every 100 s."""
+    from episteme.worker.control import BENCH_HOLDER, CHAT_HOLDER, interactive_held
+
+    both = _lease(**{CHAT_HOLDER: -1, BENCH_HOLDER: 3600})
+    assert await interactive_held(_FakeSession(both)) is True
+    # And the converse: an hour-old benchmark entry must not keep the card for a
+    # chat turn that is over.
+    stale = _lease(**{CHAT_HOLDER: -1, BENCH_HOLDER: -1})
+    assert await interactive_held(_FakeSession(stale)) is False
+
+
+class _Recorder:
+    """Captures the statement and its parameters without a database."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[object, dict]] = []
+
+    async def execute(self, statement, params=None):
+        self.calls.append((statement, dict(params or {})))
+
+    async def commit(self):
+        pass
+
+
+async def test_a_release_names_exactly_one_holder():
+    """The SQL is what actually scopes it (`- :holder` on the holders object), and
+    a fake session cannot execute jsonb. What is pinned here is the parameter that
+    reaches it: a release that bound no holder, or the wrong one, is the original
+    bug wearing new syntax. The statements themselves were run against the compose
+    database on 2026-08-16, both directions plus the legacy upgrade."""
+    from episteme.worker.control import CHAT_HOLDER, LEASE_KEY, release_interactive
+
+    session = _Recorder()
+    await release_interactive(session, CHAT_HOLDER)
+    assert [params for _, params in session.calls] == [
+        {"key": LEASE_KEY, "holder": CHAT_HOLDER}
+    ]
+
+
+async def test_the_lease_statements_bind_the_parameters_they_read_as():
+    """These two writes are raw SQL because they have to be atomic - the holders
+    live in different processes, so a Python-side merge under READ COMMITTED loses
+    whichever commits second. Raw SQL means the parameters are parsed out of a
+    string, and `text()` scans for `:name` with a negative lookahead on `:`: a
+    postfix cast swallows the parameter, so `to_jsonb(:until::text)` binds `unti`
+    and fails at execution rather than at import. Written, and caught by this.
+
+    Mechanical rather than a list of expected names: what has to hold is that
+    every parameter supplied is one the statement actually asks for, and vice
+    versa, whatever they end up being called."""
+    from episteme.worker.control import (
+        CHAT_HOLDER,
+        hold_interactive,
+        release_interactive,
+    )
+
+    session = _Recorder()
+    await hold_interactive(session, CHAT_HOLDER, seconds=60)
+    await release_interactive(session, CHAT_HOLDER)
+    assert len(session.calls) == 2
+    for statement, params in session.calls:
+        assert set(statement._bindparams) == set(params)
+
+
+async def test_a_legacy_single_expiry_lease_is_still_honoured():
+    """An upgrade landing between two turns of a live conversation must not evict
+    it. The next `hold_interactive` rewrites the value into the holders form."""
+    from episteme.worker.control import interactive_held
+
+    live = {"until": (datetime.now(UTC) + timedelta(seconds=60)).isoformat()}
+    assert await interactive_held(_FakeSession(live)) is True
     stale = {"until": (datetime.now(UTC) - timedelta(seconds=1)).isoformat()}
     assert await interactive_held(_FakeSession(stale)) is False
-    assert await interactive_held(_FakeSession({})) is False
     assert await interactive_held(_FakeSession({"until": "not a timestamp"})) is False
 
 

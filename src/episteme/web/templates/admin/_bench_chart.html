@@ -1,0 +1,38 @@
+{# One line chart. All geometry is computed in bench/chart.py: this template does
+   no arithmetic, so a scale that collapses on a flat line is a unit test rather
+   than a rendering bug nobody can reproduce. #}
+{% macro chart(c, caption='') -%}
+{%- if c.empty -%}
+<p class="muted">Nothing to plot.</p>
+{%- else -%}
+<figure class="bench-chart">
+  <svg viewBox="0 0 {{ c.width }} {{ c.height }}" width="100%" height="{{ c.height }}"
+       role="img" aria-label="{{ caption }}" preserveAspectRatio="xMidYMid meet">
+    {# Gridlines first so every line draws over them. #}
+    {% for y, label in c.y_ticks %}
+    <line class="bench-grid" x1="{{ c.plot[0] }}" y1="{{ y }}" x2="{{ c.plot[2] }}" y2="{{ y }}"/>
+    <text class="bench-tick" x="{{ c.plot[0] - 6 }}" y="{{ y + 4 }}" text-anchor="end">{{ label }}</text>
+    {% endfor %}
+    {% for x, label in c.x_ticks %}
+    <text class="bench-tick" x="{{ x }}" y="{{ c.height - 12 }}" text-anchor="middle">{{ label }}</text>
+    {% endfor %}
+    <line class="bench-axis" x1="{{ c.plot[0] }}" y1="{{ c.plot[1] }}" x2="{{ c.plot[0] }}" y2="{{ c.plot[3] }}"/>
+    <line class="bench-axis" x1="{{ c.plot[0] }}" y1="{{ c.plot[3] }}" x2="{{ c.plot[2] }}" y2="{{ c.plot[3] }}"/>
+    {% for line in c.lines %}
+    <polyline class="bench-line" points="{{ line.points }}" stroke="{{ line.color }}"/>
+    {% endfor %}
+    <text class="bench-axis-label" x="{{ c.plot[2] }}" y="{{ c.height - 1 }}" text-anchor="end">{{ c.x_label }}</text>
+    <text class="bench-axis-label" x="4" y="10">{{ c.y_label }}</text>
+  </svg>
+  <div class="bench-legend">
+    {% for line in c.lines %}
+    <span class="bench-legend-item">
+      <span class="bench-swatch" style="background:{{ line.color }}"></span>
+      <span class="mono">{{ line.label }}</span>
+    </span>
+    {% endfor %}
+  </div>
+  {% if caption %}<figcaption class="muted">{{ caption }}</figcaption>{% endif %}
+</figure>
+{%- endif -%}
+{%- endmacro %}

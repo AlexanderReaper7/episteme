@@ -1,0 +1,39 @@
+<div id="bench-fixtures">
+{% if fixtures %}
+<table class="admin-table">
+  <thead>
+    <tr>
+      <th>name</th><th>stage</th><th class="num">~tokens</th><th class="num">turns</th>
+      <th>captured</th><th>source</th><th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for fixture in fixtures %}
+    <tr>
+      <td class="mono">{{ fixture.name }}</td>
+      <td>{{ fixture.stage or '-' }}</td>
+      {# Advisory: counted with whichever model produced the traffic. Charts use
+         the per-sample prompt_n the server reported, never this. #}
+      <td class="num" title="Advisory - counted by the model that produced the traffic">
+        {{ fixture.prompt_tokens or '-' }}
+      </td>
+      <td class="num">{{ fixture.messages | length }}</td>
+      <td>{{ fixture.captured_at | ago_tag }}</td>
+      <td class="muted">
+        {%- if fixture.source_story_id %}story {{ fixture.source_story_id }}{% endif %}
+        {%- if fixture.notes %}<div>{{ fixture.notes }}</div>{% endif %}
+      </td>
+      <td class="row-actions">
+        <button hx-post="/admin/benchmarks/fixtures/{{ fixture.id }}/delete"
+                hx-target="#bench-fixtures" hx-swap="outerHTML"
+                hx-confirm="Delete fixture {{ fixture.name }}? Runs that used it keep their numbers."
+                title="Delete this fixture">{{ ico.icon("delete") }}</button>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted">No fixtures captured yet. Everything except <code>quick</code> needs one.</p>
+{% endif %}
+</div>

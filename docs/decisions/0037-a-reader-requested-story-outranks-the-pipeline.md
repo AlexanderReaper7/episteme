@@ -56,6 +56,20 @@ This overrides a **deliberate** pause too, not only the governor's. Asking for a
 
 The test is an **AST check** rather than a behavioural one: exercising `write_posts` needs a database and a model, and the failure mode is a third pause check added later without the guard. It reads `write_posts`'s source and asserts every `pause_requested` call sits in an `and` with `_pause_stops`. Verified to fail for that reason by removing one guard (`assert 1 == 2`). `tests/test_icons.py` reads source for the same reason.
 
+## The lease is a set of named holders (added 2026-08-16)
+
+The lease was one expiry under one key, which was right while chat was the only thing that could hold it. Benchmarks (0039) made it a second deliberate GPU user, on a wildly different clock: a chat turn is minutes and a `longctx` run is hours, and they overlap freely because the reader starts a benchmark and then asks the assistant about it.
+
+With one shared expiry, `release_interactive` at the end of a chat turn handed the card back **on the benchmark's behalf**. The runner refreshes every `bench_lease_seconds / 3` (100 s), so the window between the chat turn ending and the next refresh is up to a hundred seconds in which the governor may unload the model — in the middle of a measurement whose whole purpose is that nothing moved underneath it. Symmetric in the other direction: a benchmark finishing mid-conversation released the chat's lease.
+
+So the value is `{"holders": {name: expiry}}`, `interactive_held` is true if any holder is unexpired, and a release names exactly one. `CHAT_HOLDER` and `BENCH_HOLDER` are constants rather than literals, so a hold and its release cannot drift apart by a typo — which would leak a holder until its TTL, with nothing to say why the card was busy. Expired entries are left in place: the set of names is bounded and small, and `interactive_held` already ignores them, so a sweeper would be a second thing to keep correct.
+
+**Both writes are one SQL statement, not read-modify-write.** The holders live in different *processes* — chat in `web`, the benchmark in `worker` — so a Python-side merge under READ COMMITTED loses whichever transaction commits second. That is the same bug again, just rarer and harder to see. `INSERT … ON CONFLICT DO UPDATE` with a `jsonb` merge for the hold, `- :holder` for the release.
+
+Raw SQL has its own trap and it was walked into on the way: `text()` parses `:name` with a negative lookahead on `:`, so a postfix cast swallows the parameter. `to_jsonb(:until::text)` binds `unti`, and nothing says so until the statement executes. The entry is now built in Python and passed as one `cast(:entry as jsonb)` parameter, and `tests/test_governor.py` asserts mechanically that every statement's parsed bind names equal the parameters handed to it.
+
+Verified live against the compose database on 2026-08-16, with the real functions: both holders held, chat released leaving the benchmark held, benchmark released leaving nothing, an expired holder reading as not held, and a legacy `{"until": …}` row still honoured and then rewritten into the holders form by the next hold.
+
 ## On politeness (0005, 0006)
 
 The plan flagged this as a possible exception to "all source HTTP goes through `polite_get`", to be written down rather than absorbed silently. On implementation it turned out not to be one: `research.fetch_page` reaches the network through `_pinned_get` → `ingest.http.polite_get`, so a typed URL gets the same throttle and the same honest User-Agent as any source fetch, plus an SSRF guard the source path does not have.

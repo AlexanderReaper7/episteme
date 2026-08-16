@@ -194,3 +194,23 @@ async def record_llm_call(
             await session.commit()
     except Exception as exc:
         log.debug("llm call logging failed: %s", exc)
+
+
+def concat_transcript(calls: list[dict]) -> list[dict]:
+    """Rebuild one conversation from its stored delta rows.
+
+    The inverse of `_chain_info` above, and stated once here because two very
+    different callers need it: the admin provenance view renders it, and
+    `bench/fixtures.py` replays it as a benchmark prompt. When those had separate
+    implementations, the second would silently drift from the format the first
+    one writes.
+
+    Rows must arrive in seq order (id order is the same thing). A row without a
+    chain_id stored its full message list, so the formula degenerates correctly.
+    """
+    transcript: list[dict] = []
+    for call in calls:
+        transcript.extend((call.get("request") or {}).get("messages") or [])
+        if call.get("response"):
+            transcript.append(call["response"])
+    return transcript

@@ -272,19 +272,20 @@ def test_an_unchanged_fragment_is_recognised_only_on_a_real_match():
     """A fragment rendered before this mechanism existed, or a hand-typed URL,
     carries no `v` — it must get real content rather than a 204 it cannot
     interpret and would render as an empty panel."""
-    from episteme.web.admin import _unchanged
+    from episteme.web.templating import unchanged
 
-    assert _unchanged("abc", "abc")
-    assert not _unchanged("abc", "xyz")
-    assert not _unchanged("abc", None)
-    assert not _unchanged("abc", "")
+    assert unchanged("abc", "abc")
+    assert not unchanged("abc", "xyz")
+    assert not unchanged("abc", None)
+    assert not unchanged("abc", "")
 
 
 def test_the_digest_tracks_the_data_and_ignores_how_long_ago_it_was():
     """`_ago` output drifts on a timer with no job having changed. If the digest
     covered the rendered text, the whole region would re-render every minute
     forever — exactly the churn this is meant to end."""
-    from episteme.web.admin import _job_identity, state_hash
+    from episteme.web.admin import _job_identity
+    from episteme.web.templating import state_hash
 
     job = _job(id=1, status="succeeded")
     same_job_later = _job(id=1, status="succeeded")
@@ -304,7 +305,7 @@ def test_the_digest_tracks_the_data_and_ignores_how_long_ago_it_was():
 def test_the_digest_is_stable_across_calls_for_identical_data():
     """It is compared against a value a browser sent back, so a per-process salt
     or dict ordering would make every poll a miss and defeat the whole thing."""
-    from episteme.web.admin import state_hash
+    from episteme.web.templating import state_hash
 
     payload = ["activity", [(1, "succeeded", 1, NOW, NOW, None)]]
     assert state_hash(*payload) == state_hash(*payload)
@@ -314,9 +315,9 @@ def test_a_polled_fragment_is_never_cached():
     """The same URL legitimately answers 204 now and 200 once the state moves
     past the `v` it carries, so a stored copy of either is wrong within
     seconds."""
-    from episteme.web.admin import _POLL_HEADERS
+    from episteme.web.templating import POLL_HEADERS
 
-    assert _POLL_HEADERS["Cache-Control"] == "no-store"
+    assert POLL_HEADERS["Cache-Control"] == "no-store"
 
 
 def test_the_poll_url_carries_the_active_view():

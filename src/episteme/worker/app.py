@@ -12,5 +12,6 @@ app = procrastinate.App(
         "episteme.worker.job_history",
         "episteme.worker.governor",
         "episteme.worker.topics",
+        "episteme.worker.bench",
     ],
 )

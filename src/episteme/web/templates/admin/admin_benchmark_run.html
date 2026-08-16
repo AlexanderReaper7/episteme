@@ -1,0 +1,136 @@
+{% extends "admin/admin_base.html" %}
+
+{% block title %} • Benchmark {{ run.id }}{% endblock %}
+
+{% block admin_content %}
+<h1 class="admin-title">
+  <a href="/admin/benchmarks" class="muted">Benchmarks</a> / run {{ run.id }}
+  {{ ui.status_badge(run.status) }}
+  {% if run.contaminated %}
+  <span class="status-badge status-badge-bad"
+        title="Foreign GPU load appeared while this run was measuring.">
+    {{ ico.icon("warn") }}contended</span>
+  {% endif %}
+</h1>
+
+<section class="admin-card admin-card-wide">
+  <span class="kv-chips">
+    <span class="kv-chip"><span class="kv-chip-k">scenario</span><span class="kv-chip-v">{{ run.scenario }}</span></span>
+    <span class="kv-chip"><span class="kv-chip-k">executor</span><span class="kv-chip-v">{{ run.executor }}</span></span>
+    <span class="kv-chip"><span class="kv-chip-k">fixture</span><span class="kv-chip-v">{{ run.fixture.name if run.fixture else '-' }}</span></span>
+    <span class="kv-chip"><span class="kv-chip-k">started</span><span class="kv-chip-v">{{ run.started_at | dt }}</span></span>
+    <span class="kv-chip"><span class="kv-chip-k">finished</span><span class="kv-chip-v">{{ run.finished_at | dt or '-' }}</span></span>
+    {# The build string is the first thing to check when a number moves and
+       nothing in the configuration did. #}
+    <span class="kv-chip"><span class="kv-chip-k">llama.cpp</span><span class="kv-chip-v">{{ run.llama_build or 'unknown' }}</span></span>
+  </span>
+  {{ ui.kv_chips(run.params) }}
+  {% if run.error %}<p class="bench-error">{{ run.error }}</p>{% endif %}
+</section>
+
+{% if live %}
+<section class="admin-card admin-card-wide" id="bench-progress"
+         data-bench-progress="/admin/benchmarks/{{ run.id }}/progress">
+  <div class="admin-card-head">
+    <h2>In progress</h2>
+    <button hx-post="/admin/benchmarks/{{ run.id }}/cancel" hx-target="#bench-runs"
+            hx-swap="outerHTML">{{ ico.icon("stop") }} cancel</button>
+  </div>
+  {# Server-rendered placeholders so a JS-less reader still sees the run is live;
+     app.js fills them from the SSE stream and reloads the page when it ends. #}
+  <p class="bench-progress-line"><span data-bench-label>waiting for the first chunk…</span></p>
+  <div class="bench-bar"><div class="bench-bar-fill" data-bench-bar style="width:0%"></div></div>
+  <p class="muted"><span data-bench-detail></span></p>
+  <div id="bench-runs" hidden></div>
+</section>
+{% endif %}
+
+<section class="admin-card admin-card-wide">
+  <h2>Comparison</h2>
+  <p class="muted admin-form-hint">
+    Rates are totals over totals (<code>sum(tokens) / sum(ms)</code>), not means of
+    per-sample rates: averaging ratios weights a 2k repetition the same as a 19k
+    one and produces a headline no measurement supports. Warmup repetitions and
+    failures are excluded from the rates and counted beside them.
+  </p>
+  {% if rows %}
+  <table class="admin-table">
+    <thead>
+      <tr>
+        <th>model</th><th class="num">n</th><th class="num">prompt</th>
+        <th class="num">prefill tok/s</th><th class="num">decode tok/s</th>
+        <th class="num">accept</th><th class="num">load</th><th class="num">wall</th>
+        <th class="num">cached</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td class="mono">{{ row.label }}</td>
+        <td class="num">{{ row.n }}{% if row.errors %} <span class="bench-error">+{{ row.errors }} failed</span>{% endif %}</td>
+        <td class="num">{{ row.avg_prompt_n }}</td>
+        <td class="num">{{ row.prefill_tok_s or '-' }}</td>
+        <td class="num">{{ row.decode_tok_s or '-' }}</td>
+        <td class="num">{{ (row.accept_pct ~ '%') if row.accept_pct is not none else '-' }}</td>
+        <td class="num">{{ ((row.load_ms / 1000) | round(1) ~ 's') if row.load_ms else '-' }}</td>
+        <td class="num">{{ row.avg_wall_s }}s</td>
+        {# Non-zero here voids a cold-prefill claim, so it is a column rather than
+           a footnote. #}
+        <td class="num {{ 'bench-error' if row.cache_n }}">{{ row.cache_n }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No samples yet.</p>
+  {% endif %}
+</section>
+
+{% for slug, caption, c in charts %}
+<section class="admin-card admin-card-wide" id="bench-chart-{{ slug }}">
+  <h2>{{ slug }}</h2>
+  {{ svg.chart(c, caption) }}
+</section>
+{% endfor %}
+
+<section class="admin-card admin-card-wide">
+  <div class="admin-card-head">
+    <h2>Samples</h2>
+    <span class="muted admin-form-hint" style="margin:0">
+      <code>args</code> is the effective argv llama-server reported while this model
+      was resident. Throughput says that something regressed; only this says what
+      changed.
+    </span>
+  </div>
+  <table class="admin-table">
+    <thead>
+      <tr>
+        <th>model</th><th>variant</th><th class="num">rep</th><th class="num">rung</th>
+        <th class="num">prompt</th><th class="num">prefill</th><th class="num">gen</th>
+        <th class="num">decode</th><th class="num">wall</th><th class="num">free VRAM</th>
+        <th>args</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for s in samples %}
+      <tr class="{{ 'bench-warmup' if is_warmup(s) }}">
+        <td class="mono">{{ s.model }}</td>
+        <td>{{ s.variant or '-' }}{% if is_warmup(s) %} <span class="muted">warmup</span>{% endif %}</td>
+        <td class="num">{{ s.rep }}</td>
+        <td class="num">{{ s.rung or '-' }}</td>
+        <td class="num">{{ s.prompt_n }}{% if s.cache_n %} <span class="bench-error">({{ s.cache_n }} cached)</span>{% endif %}</td>
+        <td class="num">{{ (s.prefill_ms / 1000) | round(1) }}s</td>
+        <td class="num">{{ s.decode_tokens }}</td>
+        <td class="num">{{ (s.decode_ms / 1000) | round(1) }}s</td>
+        <td class="num">{{ (s.wall_ms / 1000) | round(1) }}s</td>
+        <td class="num">{{ s.vram_free_mb or '-' }}</td>
+        <td class="mono bench-args">{{ (s.args or []) | join(' ') }}</td>
+      </tr>
+      {% if s.error %}
+      <tr><td colspan="11" class="bench-error">{{ s.error }}</td></tr>
+      {% endif %}
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

@@ -21,6 +21,7 @@ Phases 1 to 4 are built and live. "Live" and "tested" are different claims:
 | recommendation, feed ranking (4) | live since 2026-07-30 |
 | host control agent, resource governor | live-verified 2026-08-01 |
 | assistant rail, reader-requested articles (5) | built 2026-08-11, NOT yet watched running |
+| benchmarks (`quick`) | live-verified 2026-08-15; `ladder`/`longctx`/`sweep` built, not watched |
 
 **Read [CLAUDE-TODO.md](CLAUDE-TODO.md) before claiming a path works.** It holds the paths that were rewritten but not yet observed running, and the open content-quality gaps.
 
@@ -131,6 +132,15 @@ GET    /api/llm/logs/stream?which=router  # what the pane uses (SSE; curl needs 
 GET    /api/llm/resources  # ~3.5s: per-process GPU, VRAM, games
 docker compose exec worker python -c "import asyncio; from episteme.worker.governor import govern_resources; print(asyncio.run(govern_resources())['reason'])"
 
+# Benchmarks (0039, 0040, 0041; docs/benchmarks/plan.md). HTML routes, no /api.
+# A fixture is a REAL conversation replayed from llm_calls: a synthetic 4k prompt
+# reports 3-4x the prefill a 19k writer call gets, so only `quick` may be synthetic.
+POST   /admin/benchmarks/fixtures/capture  # name, stage, percentile (1.0 = largest)
+POST   /admin/benchmarks/run  # scenario=quick|longctx|ladder|sweep, models, reps, predict
+POST   /admin/benchmarks/{id}/cancel  # a flag on the row, read between stream chunks
+GET    /admin/benchmarks/{id}/progress  # SSE; worker writes run.progress, web polls it
+# sweep restarts llama-server with different flags, so it 422s without the host agent.
+
 GET    /api/status  # /api/{status,sources,runs,jobs,stories,posts,llm-calls}
 GET    /api/llm-calls?story_id=284&full=true  # full prompts/responses
 # /post/{id}/provenance is every LLM call behind THIS post version. Retention pins
@@ -183,6 +193,7 @@ Names to navigate by. The reasoning is in the numbered decision.
 - **The assistant** (`llm/chat.py` + `llm/chat_tools.py`, `web/chat.py`, 0036). **A `writes=True` tool is NEVER executed from `dispatch`** — it raises `WriteProposed`, and `execute_approved` is the only other path to a handler. Do not add a "just this once" branch; the gate is structural because a per-handler check is a convention that fails silently. Tool table + `validate_registry` in `chat_tools.py`, `tests/test_chat_tools.py` parametrizes the property over the registry.
 - **One tool loop** (`agent.run_tool_loop`), shared by writer, QA and chat. Chat enters through the injected `turn` seam (0038); a second loop is the thing that is not wanted. Reader-requested stories: `Story.origin == "user"`, first in the queue, no `demote_story`, no thin-gate (0037). Interactive lease in `worker/control.py`: every AUTOMATIC unload goes through `unload_unless_interactive`.
 - **Narration** (`src/episteme/tts/`, 0035). `script.build_script` is the seam an LLM preprocessing pass replaces.
+- **Benchmarks** (`src/episteme/bench/`, 0039): a peer of `llm/`, never a caller. `BenchError` is its whole error contract and streaming is the only path, because prefill curves and cancellation both need the stream. **Never store or plot llama-server's aggregate rates** (0040): `prompt_progress` counters are CUMULATIVE, so `series.py` differences them, and `report.py` aggregates totals-over-totals, never means-of-ratios. `bench_run(run_id)` takes one int: the row is the parameter record. The host agent applies preset edits it is handed and chooses nothing (0041).
 - **Jobs**: procrastinate on Postgres, no broker. Worker and web are one image, two entrypoints; crons in settings. Stalls 0016, retention 0032.
 - **Schema is Alembic**, migrations inside the package so `COPY src ./src` ships them. **No `create_all` anywhere**, deliberately (0014). `bootstrap.py` adopts-or-upgrades, applies the procrastinate schema guarded (`schema --apply` is NOT idempotent), then seeds sources. Backup 0015.
 - **Politeness is a hard requirement** (spec §5, 0005, 0006). All source HTTP through `ingest/http.py:polite_get`, which new adapters MUST use. **Never `docker compose down -v` casually**: re-ingesting re-fetches every article from every source.

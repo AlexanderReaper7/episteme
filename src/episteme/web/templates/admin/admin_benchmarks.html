@@ -1,0 +1,154 @@
+{% extends "admin/admin_base.html" %}
+
+{% block title %} • Benchmarks{% endblock %}
+
+{% block admin_content %}
+<h1 class="admin-title">Benchmarks</h1>
+
+<section class="admin-card admin-card-wide">
+  <div class="admin-card-head">
+    <h2>New run</h2>
+    <span class="muted admin-form-hint" style="margin:0">
+      A benchmark holds the interactive lease for its whole length, so the governor
+      will not unload the model underneath it. It refuses to start on a contended
+      card, and labels itself if a game appears while it measures.
+    </span>
+  </div>
+
+  <form hx-post="/admin/benchmarks/run" hx-target="#bench-runs" hx-swap="outerHTML"
+        class="voice-form" id="bench-form">
+    <div class="voice-form-grid">
+      <label>scenario
+        <select name="scenario" id="bench-scenario">
+          {% for s in scenarios %}
+          <option value="{{ s }}"{% if s == 'sweep' and not agent_enabled %} disabled{% endif %}>{{ s }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>fixture
+        <select name="fixture_id" id="bench-fixture">
+          <option value="">- none (quick only) -</option>
+          {% for fixture in fixtures %}
+          <option value="{{ fixture.id }}">{{ fixture.name }} (~{{ fixture.prompt_tokens or '?' }} tok)</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>reps <input name="reps" type="number" min="1" max="20" value="3"></label>
+      <label>predict <input name="predict" type="number" min="1" value="{{ defaults.predict }}"></label>
+      <label class="voice-form-check"><input name="warmup" type="checkbox" checked> warmup rep</label>
+    </div>
+
+    <fieldset>
+      <legend>Models <span class="muted">(measured one at a time; --models-max 1 evicts on every swap)</span></legend>
+      {% if models %}
+      <div class="bench-model-list">
+        {% for model in models %}
+        <label class="voice-form-check">
+          <input name="models" type="checkbox" value="{{ model }}"> <span class="mono">{{ model }}</span>
+        </label>
+        {% endfor %}
+      </div>
+      {% else %}
+      <p class="muted admin-form-hint">
+        llama-server did not answer, so there is no list to pick from. Type model
+        ids by hand, comma separated - the run will fail loudly if one is wrong.
+      </p>
+      <input name="models_text" placeholder="Qwen3-35B-A3B.Q4_K_M, Qwen3-4B.Q8_0" style="width:100%">
+      {% endif %}
+    </fieldset>
+
+    {# The scenario-specific fields. All rendered, one shown: the alternative is a
+       fetch per scenario change to a server that has nothing new to say. app.js
+       toggles them off #bench-scenario. #}
+    <fieldset data-bench-when="quick">
+      <legend>quick</legend>
+      <p class="muted admin-form-hint">
+        A synthetic prompt, seconds not minutes. It overstates prefill by 3-4x
+        against real traffic, so it answers "is the server up and roughly as fast
+        as yesterday" and nothing else.
+      </p>
+      <label>synthetic tokens <input name="synthetic_tokens" type="number" min="128" value="4096"></label>
+    </fieldset>
+
+    <fieldset data-bench-when="ladder" hidden>
+      <legend>ladder</legend>
+      <p class="muted admin-form-hint">
+        One cold prefill per rung, the fixture truncated to each. Generates almost
+        nothing on purpose: this measures how prefill scales with prompt length,
+        and 256 tokens per rung would spend the GPU time on the other half.
+      </p>
+      <label>rungs <input name="rungs" value="{{ defaults.rungs }}" style="width:22rem"></label>
+      <label>predict per rung <input name="ladder_predict" type="number" min="1" value="8"></label>
+    </fieldset>
+
+    <fieldset data-bench-when="sweep" hidden>
+      <legend>sweep <span class="muted">(host executor)</span></legend>
+      <p class="muted admin-form-hint">
+        Each variant edits <code>models-preset.ini</code> on the host and restarts
+        llama-server. The original file is backed up before the first edit and
+        restored unconditionally at the end, including after a failure. A key set
+        to <code>null</code> is commented out rather than deleted.
+      </p>
+      <textarea name="variants" rows="8" spellcheck="false" class="mono" style="width:100%"
+                placeholder='[{"label": "fit-on", "sections": {"Qwen3-35B-A3B.Q4_K_M": {"ngl": null}}},
+ {"label": "ngl-999", "sections": {"Qwen3-35B-A3B.Q4_K_M": {"ngl": 999}}}]'></textarea>
+      {% if not agent_enabled %}
+      <p class="muted">The host agent is not configured (<code>LLM_HOST_AGENT_URL</code>), so a sweep cannot run.</p>
+      {% endif %}
+    </fieldset>
+
+    <div class="voice-form-actions">
+      <button type="submit" class="primary">{{ ico.icon("run") }} start run</button>
+    </div>
+  </form>
+</section>
+
+<section class="admin-card admin-card-wide">
+  <div class="admin-card-head">
+    <h2>Runs</h2>
+    <span class="muted admin-form-hint" style="margin:0">
+      Open one for its curves. A contended run stays in the list with a label
+      rather than being hidden, and is never a baseline.
+    </span>
+  </div>
+  {# No poll here: the fragment carries its own, so the URL it polls can name the
+     digest of what is on screen. See _bench_runs.html. #}
+  {% include "admin/_bench_runs.html" %}
+</section>
+
+<section class="admin-card admin-card-wide">
+  <div class="admin-card-head">
+    <h2>Fixtures</h2>
+    <span class="muted admin-form-hint" style="margin:0">
+      Frozen prompts from traffic Episteme really sent, flattened to a plain
+      conversation. Snapshotted, not referenced: <code>llm_calls</code> is pruned
+      on a retention schedule and a fixture must outlive its source.
+    </span>
+  </div>
+  {% include "admin/_bench_fixtures.html" %}
+
+  <form hx-post="/admin/benchmarks/fixtures/capture" hx-target="#bench-fixtures"
+        hx-swap="outerHTML" class="voice-form">
+    <div class="voice-form-grid">
+      <label>name <input name="name" required placeholder="write-max"></label>
+      <label>stage
+        <select name="stage">
+          {% for stage in ('write', 'qa', 'triage', 'chat') %}
+          <option value="{{ stage }}">{{ stage }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label title="1.0 is the largest conversation on record, which is what sets the nightly wall clock">
+        percentile <input name="percentile" value="1.0">
+      </label>
+      <label>chain id <span class="muted">(optional, overrides percentile)</span>
+        <input name="chain_id" class="mono" placeholder="auto">
+      </label>
+      <label>notes <input name="notes" placeholder="what this is for"></label>
+    </div>
+    <div class="voice-form-actions">
+      <button type="submit">{{ ico.icon("save") }} capture fixture</button>
+    </div>
+  </form>
+</section>
+{% endblock %}

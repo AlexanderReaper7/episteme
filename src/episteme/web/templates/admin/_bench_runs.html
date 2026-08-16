@@ -1,0 +1,62 @@
+{# Self-refreshing, like the job queue and for the same reason (0033): the root
+   element carries the poll, so the URL it polls names the state the browser is
+   currently showing and an unchanged list answers 204 - no payload, no swap. The
+   poll used to sit on the wrapper in the page with no `v`, which meant an idle
+   benchmarks page re-rendered and re-swapped this table every 10 s forever.
+
+   `hx-target="this"` with an outerHTML swap replaces this element with the next
+   version of itself, carrying the next `v`. The launch/cancel/delete buttons
+   target `#bench-runs` explicitly and get the same fragment back, so they re-arm
+   a correct poll too. Naming the target is not optional: .admin-main sets
+   hx-target="#admin-main" and htmx INHERITS it. #}
+<div id="bench-runs"
+     hx-get="/admin/benchmarks/partials/runs?v={{ runs_hash }}"
+     hx-trigger="every 10s" hx-target="this" hx-swap="outerHTML">
+{% if runs %}
+<table class="admin-table">
+  <thead>
+    <tr>
+      <th>#</th><th>started</th><th>scenario</th><th>models</th><th>fixture</th>
+      <th class="num">samples</th><th>status</th><th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for run in runs %}
+    <tr {% if run.status in ('queued', 'running') %}class="is-live"{% endif %}>
+      <td class="num"><a href="/admin/benchmarks/{{ run.id }}">{{ run.id }}</a></td>
+      <td>{{ run.started_at | ago_tag }}</td>
+      <td>
+        {{ run.scenario }}
+        {%- if run.executor == 'host' %} <span class="kv-chip"><span class="kv-chip-v">host</span></span>{% endif %}
+      </td>
+      <td class="mono bench-models">{{ run.models | join(', ') }}</td>
+      <td>{{ run.fixture or '-' }}</td>
+      <td class="num">{{ run.samples }}</td>
+      <td>
+        {{ ui.status_badge(run.status) }}
+        {%- if run.contaminated %}
+        <span class="status-badge status-badge-bad" title="Foreign GPU load appeared while this run was measuring. Not a baseline.">
+          {{ ico.icon("warn") }}contended</span>
+        {%- endif %}
+        {%- if run.error %}<div class="muted bench-error">{{ run.error }}</div>{% endif %}
+      </td>
+      <td class="row-actions">
+        {% if run.status in ('queued', 'running') %}
+        <button hx-post="/admin/benchmarks/{{ run.id }}/cancel" hx-target="#bench-runs"
+                hx-swap="outerHTML" title="Stop at the next stream chunk">
+          {{ ico.icon("stop") }} cancel
+        </button>
+        {% else %}
+        <button hx-post="/admin/benchmarks/{{ run.id }}/delete" hx-target="#bench-runs"
+                hx-swap="outerHTML" hx-confirm="Delete run {{ run.id }} and its samples?"
+                title="Delete this run">{{ ico.icon("delete") }}</button>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted">No benchmark runs yet.</p>
+{% endif %}
+</div>

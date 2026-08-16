@@ -1,6 +1,7 @@
 """Shared Jinja2 environment + filters for all HTML routes (feed and admin)."""
 
 import hashlib
+import json
 import re
 from datetime import UTC, datetime
 from pathlib import Path
@@ -32,6 +33,10 @@ templates = Jinja2Templates(directory=BASE_DIR / "templates")
 # `ui.status_badge` draws a glyph.
 templates.env.globals["ico"] = templates.env.get_template("_icons.html").module
 templates.env.globals["ui"] = templates.env.get_template("admin/_macros.html").module
+# Same reason again, and the reason it is a global rather than an `{% import %}`
+# at the top of the benchmark page: that page is reached by boosted navigation,
+# which renders one block through `render_block` and never runs the import.
+templates.env.globals["svg"] = templates.env.get_template("admin/_bench_chart.html").module
 
 # htmx's `HX-Target` (the swap target's element id) tells us which Jinja block the
 # boosted navigation wants, so we render only that block instead of the whole
@@ -89,6 +94,46 @@ def render(request: Request, template: str, context: dict, status_code: int = 20
     return templates.TemplateResponse(
         request, template, context, status_code=status_code
     )
+
+
+# --- the polling contract (0033) ---------------------------------------------------
+#
+# A polled fragment answers 204 when the browser already has the current state.
+# htmx does not swap a 204, so an unchanged fragment costs one conditional request
+# and NO DOM replacement — which is what actually removes the flashing, since the
+# cheapest possible re-render is still a re-render. `no-store` because the same URL
+# legitimately answers 204 now and 200 once the state moves past the `v` it
+# carries; a cached copy of either would be wrong within seconds.
+#
+# It lives beside `fragment_block` rather than in `web/admin.py` because it is the
+# same question that module answers — what a response *is* — asked of a polled
+# fragment instead of a boosted navigation. Two callers now (the job queue and the
+# benchmark run list), which is what moved it: a second module importing the
+# dashboard for a hash function is the shape that ends with three hash functions.
+
+POLL_HEADERS = {"Cache-Control": "no-store"}
+
+
+def state_hash(*parts: object) -> str:
+    """A short digest of the DATA a polled fragment renders.
+
+    It rides in the fragment's own poll URL, so the next poll tells the server
+    what the browser is currently showing and an unchanged fragment answers 204
+    (see `admin.queue_partial`). Deliberately hashes the data and NOT the rendered
+    HTML: the rendered text contains relative times that drift every minute on
+    their own, which would flip the digest — and re-render the whole region —
+    while nothing about the data had actually happened. Those timestamps go to the
+    browser as machine-readable attributes and are refreshed in place by app.js,
+    so display stays honest without a swap."""
+    payload = json.dumps(parts, default=str, sort_keys=True)
+    return hashlib.blake2s(payload.encode(), digest_size=8).hexdigest()
+
+
+def unchanged(current: str, seen: str | None) -> bool:
+    """Only a non-empty match counts. A fragment rendered before this mechanism
+    existed (or a hand-written URL) carries no `v` and must get real content
+    rather than a 204 it cannot interpret."""
+    return bool(seen) and seen == current
 
 
 def _display_tz() -> ZoneInfo | None:

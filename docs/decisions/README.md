@@ -22,6 +22,8 @@ Nothing here is edited to reflect later changes. A decision that was replaced ge
 | [0010](0010-transcripts-are-stored-as-deltas.md) | Tool-loop transcripts are stored as deltas | 2026-07-17 |
 | [0027](0027-every-llm-authored-field-is-grammar-constrained.md) | Every LLM-authored field is grammar-constrained, including the chart spec | 2026-08-02 |
 | [0041](0041-the-host-agent-applies-a-configuration-it-is-handed.md) | The host agent applies a configuration it is handed, and never decides one | 2026-08-15 |
+| [0040](0040-prefill-is-measured-from-the-stream.md) | Prefill is measured from the stream, by differencing, and stored as timestamps | 2026-08-15 |
+| [0039](0039-benchmarking-sits-outside-the-gateway.md) | Benchmarking sits outside the gateway, and the run row is the parameter record | 2026-08-15 |
 | [0038](0038-chat-streams-over-sse-on-a-fourth-role.md) | Chat streams over SSE, on a fourth role, through the writer's tool loop | 2026-08-11 |
 
 ## The pipeline
@@ -97,7 +99,7 @@ Longer measurement write-ups whose conclusions feed the decisions above:
 
 - [../llama-cpp-host-vs-docker.md](../llama-cpp-host-vs-docker.md), 2026-08-01: should inference move into Docker? Generation is ~13% slower under WSL2, a model-dir bind mount is disqualifying, `embed` is the one role worth moving. Decision still open.
 - [../icon-set-choice.md](../icon-set-choice.md): six icon sets measured on the real theme, licenses, and what Carbon costs. Feeds 0029.
-- [../benchmarks/](../benchmarks/)
+- [../benchmarks/plan.md](../benchmarks/plan.md), 2026-08-15: hand-run throughput measurement, what it showed (a hard `ngl` had defeated `fit = on` for months; a synthetic 4k prompt overstates prefill 3-4x; prefill falls 5x *within* one prompt), and the design that replaced it with `/admin/benchmarks`. Feeds 0039, 0040, 0041. The loose `.ps1` and `.jsonl` beside it are the superseded originals.
 
 ## Adding one
 

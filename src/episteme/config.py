@@ -137,6 +137,33 @@ class Settings(BaseSettings):
     # caller (admin panel) then offers an explicit force.
     llm_graceful_stop_seconds: float = 120.0
 
+    # --- Benchmarking (bench/, docs/benchmarks/plan.md) ---
+    # No client timeout could distinguish a hung server from a legitimately slow
+    # one: one longctx repetition measured 7.5 minutes on the 35B and ~24 on the
+    # dense 27B. So the ceiling is generous and CANCELLATION is the real control,
+    # which is why every benchmark request streams (dropping the connection is
+    # the only abort llama-server offers, and a non-streaming request has nothing
+    # to notice the drop on).
+    bench_request_timeout_seconds: float = 7200.0
+    # How often, mid-stream, we write live progress and re-read the cancel flag.
+    # Both cost a database round trip, so this is a time budget rather than a
+    # per-chunk check: at 40 tok/s that would be 40 queries a second to answer a
+    # question whose answer changes at human speed.
+    bench_poll_interval_seconds: float = 0.5
+    # Decode curve resolution. Per-token timings on a 16 tok/s model are mostly
+    # chunk-boundary jitter, and 2048 points describe nothing 64 do not.
+    bench_decode_bucket: int = 32
+    bench_predict_tokens: int = 256  # generated per timed sample
+    # Rungs of the prefill ladder. Nominal: the x-axis is the `prompt_n` the
+    # server measured, since truncation is character-proportional and every model
+    # tokenizes differently.
+    bench_ladder_rungs: list[int] = [2048, 4096, 8192, 16384, 32768]
+    # A benchmark holds the interactive lease so the governor cannot unload the
+    # model underneath it. Longer than a chat turn's (a run is minutes to hours)
+    # but still a TTL, refreshed by a background task: a worker that dies must
+    # not strand the GPU until someone notices.
+    bench_lease_seconds: float = 300.0
+
     # --- Resource governor (worker/governor.py; architecture §7 "Scheduling") ---
     # Yields the GPU to whatever else is using it. The rule the user set: other
     # work takes priority, but only where Episteme would *noticeably* degrade it —

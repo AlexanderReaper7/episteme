@@ -2561,3 +2561,68 @@ main {
    something is happening. */
 .chat-form.is-busy textarea,
 .chat-form.is-busy button { opacity: 0.5; pointer-events: none; }
+
+/* ======================= benchmarks (/admin/benchmarks) ==================== */
+
+/* The charts are inline SVG built server-side (bench/chart.py), so everything
+   here is presentation for geometry that already exists. `vector-effect` keeps
+   a 1.5px stroke at 1.5px however the viewBox scales - without it the lines
+   thicken on a 4K viewport where the SVG is drawn at ~2x. */
+.bench-chart { margin: 0.6rem 0 0; }
+.bench-chart svg { display: block; max-width: 100%; }
+.bench-line {
+  fill: none;
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+.bench-grid { stroke: var(--border); stroke-width: 1; }
+.bench-axis { stroke: var(--border-hover); stroke-width: 1; }
+.bench-tick, .bench-axis-label { fill: var(--muted); font-size: 11px; }
+.bench-axis-label { font-size: 10px; letter-spacing: 0.03em; }
+
+.bench-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  margin-top: 0.4rem;
+  font-size: 0.85rem;
+}
+.bench-legend-item { display: inline-flex; align-items: center; gap: 0.35rem; }
+.bench-swatch { width: 0.9rem; height: 0.2rem; border-radius: 1px; }
+
+.bench-error { color: var(--bad-fg); }
+/* A warmup repetition is stored and shown - "the first one is 30 % slow" is a
+   fact worth seeing - but it is excluded from every rate, so it must not read
+   like the others. */
+.bench-warmup { opacity: 0.55; }
+.bench-args, .bench-models {
+  font-size: 0.8rem;
+  color: var(--muted);
+  max-width: 34rem;
+  overflow-wrap: anywhere;
+}
+
+.bench-model-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr));
+  gap: 0.2rem 1rem;
+}
+
+.bench-progress-line { margin: 0.2rem 0; }
+.bench-bar {
+  height: 0.4rem;
+  border-radius: 3px;
+  background: var(--card-hover);
+  overflow: hidden;
+}
+.bench-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.4s linear;
+}
+
+/* Live rows get the accent rail rather than a spinner per cell: the table is
+   polled every 10s and an animation per row would be the only moving thing on
+   an operator page whose job is to be read. */
+.admin-table tr.is-live > td:first-child { box-shadow: inset 2px 0 0 var(--accent); }
