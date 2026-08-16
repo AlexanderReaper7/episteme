@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{# The error page (web/errors.py, 0043). It extends base.html on purpose: a
+   failure is still a page, and the header and the chat rail are the way back out
+   of one. If base.html is what broke, errors.py never gets here - it falls back
+   to a self-contained document with no template and no CSS. #}
+{% block title %} • {{ status }} {{ reason }}{% endblock %}
+{% block content %}
+<article class="error-page">
+  <header class="error-head">
+    <p class="error-status">{{ status }}</p>
+    <h2 class="error-reason">{{ reason }}</h2>
+    {% if summary %}<p class="error-summary">{{ summary }}</p>{% endif %}
+    {% if exc_type %}<p class="error-exc mono">{{ exc_type }}</p>{% endif %}
+  </header>
+
+  {% if origin %}
+  {# The innermost frame that is ours. For a template error this is the template
+     line, which is the one place worth looking first. #}
+  <p class="error-origin">
+    {{ ico.icon("bad") }}
+    <span class="mono">{{ origin.file }}:{{ origin.line }}</span>
+    <span class="muted">in {{ origin.name }}</span>
+  </p>
+  {% if origin.source %}<pre class="error-origin-source mono">{{ origin.source }}</pre>{% endif %}
+  {% endif %}
+
+  <section class="error-block">
+    <h3>Request</h3>
+    <dl class="error-facts">
+      {% for label, value in facts %}
+      <dt>{{ label }}</dt>
+      <dd class="mono">{{ value }}</dd>
+      {% endfor %}
+    </dl>
+  </section>
+
+  {% if frames %}
+  <section class="error-block">
+    <h3>Traceback <span class="muted">({{ frames | length }} frames, innermost last)</span></h3>
+    <ol class="error-frames">
+      {% for frame in frames %}
+      <li class="error-frame{% if frame.app %} error-frame-app{% endif %}">
+        <p class="error-frame-where">
+          <span class="mono">{{ frame.file }}:{{ frame.line }}</span>
+          <span class="muted">in {{ frame.name }}</span>
+        </p>
+        {% if frame.source %}<pre class="mono">{{ frame.source }}</pre>{% endif %}
+      </li>
+      {% endfor %}
+    </ol>
+  </section>
+  {% endif %}
+
+  {% if raw %}
+  {# Collapsed, and the only place the chained cause appears in full: the frame
+     list above is this exception's own stack, so a `raise ... from` is visible
+     here and nowhere else. Also the copy-paste form. #}
+  <details class="error-block error-raw">
+    <summary>Raw traceback</summary>
+    <pre class="mono">{{ raw }}</pre>
+  </details>
+  {% endif %}
+
+  <p class="error-actions">
+    <a href="/">Feed</a>
+    <a href="/admin" hx-boost="false">Admin</a>
+    <a href="/admin/jobs" hx-boost="false">Job queue</a>
+  </p>
+</article>
+{% endblock %}

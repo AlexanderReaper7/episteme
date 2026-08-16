@@ -2166,28 +2166,99 @@ main {
 
 .admin-table form { margin: 0; }
 
-/* Topic vocabulary: the two edit forms sit side by side in one cell, each a
-   narrow input + button pair, so the table stays scannable. */
 .admin-table td.num, .admin-table th.num { text-align: right; }
 
-.topic-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-}
+/* Topic vocabulary. 829 rows read as a lookup table, so the row is one line
+   tall and the columns get declared shares: auto layout spent 390px on a short
+   mono label and left the alias chips wrapping in what was left. */
+.topic-table { table-layout: fixed; }
+.topic-table .col-topic { width: 20%; }
+.topic-table .col-uses { width: 6%; }
+.topic-table .col-actions { width: 34%; }
 
+/* The fold draws a border where the card drew nothing, so the first column was
+   sitting on it. Padded per cell, not on the box, so the hover band still spans
+   the full row. */
+.topic-table th, .topic-table td { padding: 0.3rem 0.6rem; }
+.topic-table th:first-child, .topic-table td:first-child { padding-left: 0.9rem; }
+.topic-table th:last-child, .topic-table td:last-child { padding-right: 0.9rem; }
+/* Not `--card-hover`: that is already the fold's own background, so the row
+   would highlight to exactly what it sits on. */
+.topic-table tbody tr:hover { background: var(--border); }
+
+.topic-label .status-badge { margin-left: 0.4rem; }
+
+/* One field, two buttons, on one line: the input takes whatever the two
+   nowrap buttons leave. */
 .topic-actions form {
   display: flex;
-  gap: 0.25rem;
+  align-items: center;
+  gap: 0.3rem;
 }
 
 .topic-actions input {
-  width: 11ch;
+  flex: 1 1 6ch;
+  min-width: 0;
   font-size: 0.78rem;
-  padding: 0.2rem 0.4rem;
+  padding: 0.2rem 0.45rem;
 }
 
-.topic-actions button { font-size: 0.78rem; }
+.topic-actions button { font-size: 0.78rem; white-space: nowrap; }
+
+/* Same breakpoint the admin shell collapses at. 34% of a narrow viewport leaves
+   the two nowrap buttons ~50px for the box, so the box takes its own line and
+   the row gets taller instead of unusable. */
+@media (max-width: 62rem) {
+  .topic-actions form { flex-wrap: wrap; }
+  .topic-actions input { flex-basis: 100%; }
+}
+
+/* The vocabulary folds (app.js `applyTopicFilter`). Search sits OUTSIDE the
+   fold, always visible: it is the way into a shut list, so putting it inside
+   would need the list open to reach the control that opens it. */
+.topic-search { margin: 0.4rem 0 0.8rem; }
+
+.topic-search input {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.95rem;
+  width: 22rem;
+  max-width: 100%;
+}
+
+.topic-search input:hover { border-color: var(--border-hover); }
+.topic-search input:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  outline-offset: 1px;
+  border-color: var(--border-hover);
+}
+
+.topic-fold {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card-hover);
+}
+.topic-fold[open] { border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); }
+.topic-fold[open] .topic-fold-head { border-bottom: 1px solid var(--border); }
+
+.topic-fold-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.6rem 0.9rem;
+  cursor: pointer;
+  color: var(--muted);
+}
+.topic-fold-head:hover { color: var(--accent); }
+
+.topic-empty { padding: 0.9rem; margin: 0; }
+
+/* A filtered-out row. `[hidden]` alone loses to the UA's `display: table-row`,
+   which is a specificity fight the attribute cannot win on its own. */
+.admin-table tr[hidden] { display: none; }
 
 /* --- Animated disclosure (<details>) ----------------------------------------
 
@@ -2628,3 +2699,120 @@ main {
    polled every 10s and an animation per row would be the only moving thing on
    an operator page whose job is to be read. */
 .admin-table tr.is-live > td:first-child { box-shadow: inset 2px 0 0 var(--accent); }
+
+/* ===================== error page (0043) ==============================
+   Deliberately unstyled-looking below the header: this is an operator surface,
+   the content is a traceback, and monospace text laid out in reading order is
+   what a traceback wants. The only real design decision here is the app-frame
+   rail - it is what makes "where is MY code in this" a glance instead of a
+   scan. */
+.error-page {
+  max-width: var(--feed-width);
+  margin: 2rem auto;
+  padding: 0 1rem;
+}
+
+.error-head { margin-bottom: 1.5rem; }
+.error-status {
+  font-size: 3rem;
+  line-height: 1;
+  margin: 0;
+  color: var(--bad-fg);
+  font-variant-numeric: tabular-nums;
+}
+.error-reason {
+  margin: 0.2rem 0 0;
+  font-size: 1.4rem;
+}
+.error-summary {
+  margin: 0.6rem 0 0;
+  color: var(--bad-muted);
+  overflow-wrap: anywhere;
+}
+.error-exc {
+  margin: 0.2rem 0 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.error-origin {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.error-origin .icon { color: var(--bad-fg); }
+.error-origin-source {
+  margin: 0.3rem 0 0 2rem;
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.error-block {
+  margin-top: 1.8rem;
+  border-top: 1px solid var(--border);
+  padding-top: 1rem;
+}
+.error-block > h3 {
+  margin: 0 0 0.7rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.error-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 0.25rem 1rem;
+  margin: 0;
+  font-size: 0.85rem;
+}
+.error-facts dt { color: var(--muted); }
+.error-facts dd { margin: 0; overflow-wrap: anywhere; }
+
+.error-frames {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 0.85rem;
+}
+.error-frame {
+  padding: 0.4rem 0 0.4rem 0.8rem;
+  /* Dependency frames are context, not evidence: dimmed and rail-less so the
+     app frames read as a list of their own down the left edge. */
+  border-left: 2px solid transparent;
+  opacity: 0.55;
+}
+.error-frame-app {
+  border-left-color: var(--accent);
+  opacity: 1;
+}
+.error-frame-where { margin: 0; overflow-wrap: anywhere; }
+.error-frame pre {
+  margin: 0.2rem 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text);
+}
+
+.error-raw > summary {
+  cursor: pointer;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+.error-raw pre {
+  margin: 0.8rem 0 0;
+  padding: 0.8rem;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.78rem;
+  overflow-x: auto;
+}
+
+.error-actions {
+  margin-top: 2rem;
+  display: flex;
+  gap: 1.2rem;
+}

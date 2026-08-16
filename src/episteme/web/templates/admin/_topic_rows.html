@@ -1,10 +1,19 @@
 {# The vocabulary table body. Swapped whole on any edit: rename and merge both
    rewrite referencing rows, so every entry's use count can move, not just the
-   edited one. #}
+   edited one.
+
+   `data-search` is what app.js filters on - built here, from the fields, rather
+   than read back out of the rendered cells. The alternative matches on whatever
+   the row happens to display, which silently includes the "no embedding" badge
+   and the placeholder text of the rename box. #}
 <tbody id="topic-rows">
   {% for topic in vocabulary.topics %}
-  <tr>
-    <td class="mono">{{ topic.label }}</td>
+  <tr data-search="{{ (topic.label ~ ' ' ~ topic.slug ~ ' ' ~ (topic.aliases | join(' '))) | lower }}">
+    {# The "no embedding" flag rides in the label cell rather than owning a
+       column: it is set on a handful of rows, and an almost-always-empty column
+       costs every row its width. #}
+    <td class="mono topic-label">{{ topic.label }}{% if not topic.embedded %}
+      <span class="status-badge status-badge-bad">no embedding</span>{% endif %}</td>
     <td class="num">{{ topic.uses }}</td>
     <td>
       {% if topic.aliases %}
@@ -13,23 +22,32 @@
       </span>
       {% else %}<span class="muted">-</span>{% endif %}
     </td>
-    <td>{% if not topic.embedded %}<span class="status-badge status-badge-bad">no embedding</span>{% endif %}</td>
+    {# One field, two verbs. Both endpoints already take the same `value`, and
+       two boxes per row doubled the row height for a control used once in a
+       while. The form's own hx-post is rename, so Enter is the reversible one;
+       merge is a type="button" so the browser does not also submit the form. #}
     <td class="topic-actions">
       <form hx-post="/admin/topics/{{ topic.slug }}/rename" hx-target="#topic-rows"
             hx-swap="outerHTML">
-        <input name="value" placeholder="rename to…" aria-label="new label for {{ topic.label }}">
-        <button type="submit">{{ ico.icon("edit") }} rename</button>
-      </form>
-      <form hx-post="/admin/topics/{{ topic.slug }}/merge" hx-target="#topic-rows"
-            hx-swap="outerHTML"
-            hx-confirm="Merge “{{ topic.label }}” into another topic? This deletes it and rewrites every story and post that used it.">
-        <input name="value" placeholder="merge into slug…" aria-label="merge {{ topic.label }} into">
-        <button type="submit">{{ ico.icon("merge") }} merge</button>
+        {# Short placeholder, long aria-label: the box is ~24 characters wide, so
+           anything longer is read as an ellipsis by everyone and in full by
+           nobody. The card head carries the sentence. #}
+        <input name="value" placeholder="new label, or slug"
+               aria-label="new label for {{ topic.label }}, or the slug to merge it into">
+        <button type="submit" title="Rename “{{ topic.label }}” to what is in the box">
+          {{ ico.icon("edit") }} rename
+        </button>
+        <button type="button" hx-post="/admin/topics/{{ topic.slug }}/merge"
+                hx-target="#topic-rows" hx-swap="outerHTML" hx-include="closest form"
+                title="Merge “{{ topic.label }}” into the slug in the box"
+                hx-confirm="Merge “{{ topic.label }}” into the topic in the box? This deletes it and rewrites every story and post that used it.">
+          {{ ico.icon("merge") }} merge
+        </button>
       </form>
     </td>
   </tr>
   {% else %}
-  <tr><td colspan="5" class="muted">
+  <tr><td colspan="4" class="muted">
     No vocabulary yet - run the bootstrap above, or let triage build one story by story.
   </td></tr>
   {% endfor %}

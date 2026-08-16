@@ -202,6 +202,7 @@ Names to navigate by. The reasoning is in the numbered decision.
 - **Politeness is a hard requirement** (spec §5, 0005, 0006). All source HTTP through `ingest/http.py:polite_get`, which new adapters MUST use. **Never `docker compose down -v` casually**: re-ingesting re-fetches every article from every source.
 - **Feed**: one ranked stream, `web/app.py:_rank_expr`, features and aggregate cards interleaved as equal units. The spec's divider and diversity quotas are deferred, so don't hunt for them. Infinite scroll is htmx `revealed` sentinels into `/partials/*`. **All feed content is a post** (0011).
 - **Rendering and caching**: `templating.fragment_block(request, template)` decides what a response is, and every ETag derives from it (0031). Polling fragments 204 on an unchanged digest (0033). Icons only through `ico.icon` / `ico.toggle` (0029).
+- **Failures render `web/errors.py` + `error.html`** (0043): HTML gets the full traceback, `/api` keeps FastAPI's JSON body untouched. **No debug/production toggle**, deliberately — single-user, no auth, tailnet only. A boosted navigation gets it as a fragment marked `HX-Error-Page`, which `app.js` swaps; nothing else is marked, so a failing 10s poll still leaves the page alone.
 
 ## Migrations: the review rule (user feedback, hard)
 

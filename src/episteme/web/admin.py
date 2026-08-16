@@ -489,13 +489,14 @@ async def _topics_ctx() -> dict:
     return {
         "vocabulary": await api_topics(),
         "proposal": proposal,
-        "jobs": await api_jobs(limit=20),
     }
 
 
 @router.get("/topics", response_class=HTMLResponse)
 async def admin_topics(request: Request):
-    return render(request, "admin/admin_topics.html", {"active": "topics", **await _topics_ctx()})
+    return render(
+        request, "admin/admin_topics.html", {"active": "topics", **await _topics_ctx()}
+    )
 
 
 # Declared before the /{slug}/{action} route below, which would otherwise match
@@ -504,7 +505,11 @@ async def admin_topics(request: Request):
 @router.post("/topics/proposal/discard", response_class=HTMLResponse)
 async def admin_topics_discard(request: Request):
     await api_topics_proposal_discard()
-    return render(request, "admin/admin_topics.html", {"active": "topics", **await _topics_ctx()})
+    # Through `admin_topics`, not a second render of the same template: the page
+    # has two context builders behind it now, and a caller that assembles them
+    # itself is exactly how this route came to render a template it no longer
+    # had the context for.
+    return await admin_topics(request)
 
 
 @router.post("/topics/{slug}/{action}", response_class=HTMLResponse)

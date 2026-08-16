@@ -92,6 +92,8 @@ Nothing here is edited to reflect later changes. A decision that was replaced ge
 | [0029](0029-icons-are-a-generated-carbon-sprite.md) | Icons are one generated Carbon sprite | 2026-08-03 |
 | [0031](0031-one-predicate-decides-the-body-and-its-validator.md) | One predicate decides both the response body and its cache validator | 2026-08-03 |
 | [0033](0033-polling-fragments-answer-204-when-nothing-changed.md) | A polling fragment answers 204 when nothing changed | 2026-08-03 |
+| [0043](0043-a-failure-is-a-page-and-it-says-what-broke.md) | A failure is a page, and it says what broke | 2026-08-16 |
+| [0044](0044-a-page-shows-its-own-subject.md) | A page shows its own subject, and a long closed set folds | 2026-08-16 |
 
 ## Investigations
 

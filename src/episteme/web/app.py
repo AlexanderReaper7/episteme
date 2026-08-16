@@ -23,6 +23,7 @@ from .api import api_post_llm_calls, api_story
 from .api import router as api_router
 from .bench import router as bench_router
 from .chat import router as chat_router
+from .errors import install_error_handlers
 from .feedback import feed_context as feedback_contexts
 from .feedback import post_context as feedback_context
 from .feedback import router as feedback_router
@@ -70,6 +71,9 @@ app.include_router(admin_router)
 app.include_router(bench_router)
 app.include_router(feedback_router)
 app.include_router(chat_router)
+# After the routers, so a failure anywhere in them renders the error page rather
+# than a bare `Internal Server Error` (0043). `/api` keeps its JSON bodies.
+install_error_handlers(app)
 
 
 def _feed_sort_at(post: Post) -> datetime:

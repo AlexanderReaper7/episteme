@@ -36,6 +36,23 @@
     window.scrollTo(0, 0);
   });
 
+  /* ===================== error responses =============================== */
+
+  // htmx does not swap a 4xx/5xx body, so a boosted navigation to a failing page
+  // is a click that visibly does nothing at all - the error page would exist and
+  // never be seen. The server marks the responses that ARE a rendered error page
+  // with `HX-Error-Page` (web/errors.py), and only for a request that targeted a
+  // navigation outlet; a failing background poll carries no such header and keeps
+  // htmx's default of leaving the document alone. Opting in per response rather
+  // than through a global `htmx.config.responseHandling` rule is what keeps those
+  // two apart. `isError` stays true so the console still records the failure.
+  document.body.addEventListener("htmx:beforeSwap", function (e) {
+    var xhr = e.detail.xhr;
+    if (xhr && xhr.status >= 400 && xhr.getResponseHeader("HX-Error-Page")) {
+      e.detail.shouldSwap = true;
+    }
+  });
+
   // Search `root` INCLUDING itself - htmx:load hands us the swapped element, which
   // may be the match or an ancestor of it.
   function pick(root, sel) {
@@ -515,6 +532,54 @@
     });
   }
 
+  /* ===================== vocabulary search =============================== */
+
+  // /admin/topics folds its table shut and filters it here rather than on the
+  // server. The vocabulary is a closed set already rendered in full, so a round
+  // trip per keystroke would buy nothing; and rename and merge swap `#topic-rows`
+  // wholesale, which a server-side query would have to be threaded back through
+  // on every edit.
+  //
+  // The count is owned here for the same reason: a merge deletes a row from that
+  // tbody without re-rendering the summary sitting above it, so a server-rendered
+  // number goes stale on the first edit. The server still stamps the initial one,
+  // which is what a reader without JS sees.
+  function applyTopicFilter() {
+    var input = document.getElementById("topic-filter");
+    var fold = document.getElementById("topic-fold");
+    if (!input || !fold) return;
+    var query = input.value.trim().toLowerCase();
+    var rows = fold.querySelectorAll("tr[data-search]");
+    var shown = 0;
+    rows.forEach(function (row) {
+      var hit = !query || row.dataset.search.indexOf(query) !== -1;
+      row.hidden = !hit;
+      if (hit) shown++;
+    });
+    var count = document.getElementById("topic-count");
+    if (count) {
+      count.textContent = query
+        ? shown + " of " + rows.length + " topics"
+        : rows.length + " topics";
+    }
+    var empty = document.getElementById("topic-no-match");
+    if (empty) empty.hidden = !(query && shown === 0);
+    // Typing opens the fold, since matches inside a shut one are invisible.
+    // Clearing the box deliberately does NOT close it again: the reader may have
+    // opened it by hand, and a fold that shuts itself under the cursor is worse
+    // than one left open.
+    if (query) fold.open = true;
+  }
+
+  function initTopicSearch(root) {
+    var input = pick(root || document, "#topic-filter");
+    if (input && fresh(input)) input.addEventListener("input", applyTopicFilter);
+    // Unconditionally on every load, not just a fresh input: this also runs after
+    // an htmx swap of `#topic-rows`, where the rows are new and the filter that
+    // was applied to their predecessors is not.
+    applyTopicFilter();
+  }
+
   // A <button> inside a <summary> still runs the summary's activation behaviour,
   // so pressing "run" on a collapsed stage would also expand it - the block would
   // open and close under the cursor on every click. preventDefault on the bubbled
@@ -940,6 +1005,7 @@
     pickAll(root, ".post-audio[data-post-id]").forEach(initNarration);
     pickAll(root, "form[data-weight-form]").forEach(initWeights);
     initQueueGroups(root);
+    initTopicSearch(root);
     retimeAgo(root);
     hydrateRich(root);
     initChat(root);

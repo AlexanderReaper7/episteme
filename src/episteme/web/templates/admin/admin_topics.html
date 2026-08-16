@@ -11,15 +11,46 @@
     <span class="muted admin-form-hint" style="margin:0">
       The closed set the interest profile learns weights over. Triage is shown this
       list and picks from it; anything it invents is folded in by similarity, or
-      added as a new entry.
+      added as a new entry. One box per row feeds both buttons: a new display
+      label for <strong>rename</strong>, an existing slug for <strong>merge</strong>.
     </span>
   </div>
-  <table class="admin-table">
-    <thead>
-      <tr><th>topic</th><th class="num">uses</th><th>aliases</th><th></th><th></th></tr>
-    </thead>
-    {% include "admin/_topic_rows.html" %}
-  </table>
+  {# The vocabulary is a lookup surface, not something read top to bottom: it is
+     the longest thing on the page by an order of magnitude, and everything below
+     it - unclaimed labels, the bootstrap, the proposal - was a long scroll away.
+     So the table folds, shut on arrival, and search is the way in. Filtering is
+     client-side (app.js `topicSearch`): the whole closed set is already in the
+     DOM, so a round trip per keystroke would buy nothing, and a server-side
+     filter would have to be threaded back through every rename and merge, which
+     swap this tbody wholesale. #}
+  <div class="topic-search">
+    <input type="search" id="topic-filter" placeholder="search topics and aliases…"
+           aria-label="filter the vocabulary" aria-controls="topic-fold"
+           autocomplete="off" spellcheck="false">
+  </div>
+  <details class="disclosure topic-fold" id="topic-fold">
+    <summary class="topic-fold-head">
+      {{ ico.icon("disclosure", "disclosure-caret") }}
+      {# Seeded by the server so a reader without JS gets a true count; app.js
+         owns it from then on, because a merge removes a row from this tbody
+         without re-rendering the summary above it. #}
+      <span id="topic-count">{{ vocabulary.topics | length }} topics</span>
+    </summary>
+    {# Fixed layout with declared shares: auto layout gave a 10-character mono
+       label 390px while the alias chips wrapped to three lines beside it. The
+       widths are percentages, not rem, so the narrow breakpoint shrinks the
+       columns instead of overflowing the card. #}
+    <table class="admin-table topic-table">
+      <colgroup>
+        <col class="col-topic"><col class="col-uses"><col><col class="col-actions">
+      </colgroup>
+      <thead>
+        <tr><th>topic</th><th class="num">uses</th><th>aliases</th><th>rename or merge</th></tr>
+      </thead>
+      {% include "admin/_topic_rows.html" %}
+    </table>
+    <p class="muted topic-empty" id="topic-no-match" hidden>No topic matches that.</p>
+  </details>
 </section>
 
 {% if vocabulary.unresolved %}
@@ -47,12 +78,19 @@
     on every story and post through it. Read the proposal before applying: a bad
     clustering pass is far easier to reject here than to unpick afterwards.
   </p>
+  {# Each defer reports into its own slot beside the button, the way every other
+     control in /admin does (see admin_defer's docstring). These two used to
+     target `#queue` with innerHTML, which replaced the entire queue table with a
+     one-line confirmation; the queue is gone from this page now, and the slot is
+     where the answer belongs anyway - next to what was clicked. #}
   <p class="stage-controls">
-    <button hx-post="/admin/defer/propose_topics" hx-target="#queue" hx-swap="innerHTML">
+    <button hx-post="/admin/defer/propose_topics"
+            hx-target="#defer-propose_topics" hx-swap="innerHTML">
       {{ ico.icon("run") }} propose vocabulary
     </button>
     {% if proposal and proposal["clusters"] %}
-    <button hx-post="/admin/defer/apply_topics" hx-target="#queue" hx-swap="innerHTML"
+    <button hx-post="/admin/defer/apply_topics"
+            hx-target="#defer-apply_topics" hx-swap="innerHTML"
             hx-confirm="Apply this proposal? It creates the vocabulary and rewrites the topics of every story and post.">
       {{ ico.icon("run") }} apply proposal
     </button>
@@ -60,6 +98,10 @@
             hx-confirm="Discard the proposal?">{{ ico.icon("delete") }} discard</button>
     {% endif %}
   </p>
+  <div class="defer-result" id="defer-propose_topics" aria-live="polite"></div>
+  {% if proposal and proposal["clusters"] %}
+  <div class="defer-result" id="defer-apply_topics" aria-live="polite"></div>
+  {% endif %}
 
   {% if proposal and proposal["clusters"] %}
   <p class="muted admin-form-hint">
@@ -94,12 +136,7 @@
   {% endif %}
 </section>
 
-<section class="admin-card admin-card-wide">
-  <h2>Queue</h2>
-  <div id="queue" hx-get="/admin/partials/queue"
-       hx-trigger="every 10s, refreshQueue from:body"
-       hx-target="this">
-    {% include "admin/_admin_queue.html" %}
-  </div>
-</section>
+{# No queue section. It belongs to /admin/jobs, which is one click away in the
+   sidebar; a second copy here polled every 10s for a page whose subject is the
+   vocabulary, and pushed the parts of that subject below the fold. #}
 {% endblock %}
