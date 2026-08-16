@@ -154,7 +154,9 @@ body {
   letter-spacing: 0.02em;
 }
 
-/* Neutral wordmark placeholder until the real logo/visual language lands. */
+/* Neutral wordmark placeholder until the real logo/visual language lands. The
+   mark exists and is served (it is the tab icon), but it is deliberately NOT in
+   the lockup while it is WIP. */
 .site-header h1 a {
   color: var(--text);
   text-decoration: none;

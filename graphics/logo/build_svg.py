@@ -657,6 +657,13 @@ def render(k: Config, w: float, h: float, title: str, desc: str) -> str:
 # --- the marks ------------------------------------------------------------------------
 
 HERE = Path(__file__).resolve().parent
+ROOT = HERE.parents[1]
+# The Episteme mark is SHIPPED, so it lives where the app can serve it and nowhere
+# else. `graphics/` is not in the image (the Dockerfile copies `src` only), and a
+# second copy here that the generator also wrote would be a file that can only ever
+# be stale. The host agent's mark is the opposite case: it never reaches the web,
+# so it stays beside its prototypes.
+WEB_STATIC = ROOT / "src" / "episteme" / "web" / "static" / "logo"
 
 # One camera, written once, because the two marks are siblings: the same solid in
 # the same place, and only the field it stands in says which program you are
@@ -693,7 +700,7 @@ def episteme_icon() -> tuple[Path, str]:
         wave_pull=0.55,
         wave_width=5.0,
     )
-    return HERE / "episteme-icon.svg", render(
+    return WEB_STATIC / "episteme.svg", render(
         k,
         256,
         256,
@@ -737,6 +744,7 @@ def main() -> None:
         if args.list:
             print(f"{name}: {path} ({len(content)} bytes)")
             continue
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
         print(f"wrote {path} ({len(content)} bytes)")
 

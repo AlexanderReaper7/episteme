@@ -174,6 +174,9 @@ uv run tools/build_icon_sprite.py
 
 # So are both logo SVGs: a port of the canvas prototype, which stays the authority
 # on the geometry. graphics/logo/README.md is the spec for what the marks MEAN.
+# The Episteme mark is generated into web/static/logo/, NOT into graphics/ - the
+# image copies src only. It is the tab icon (base.html) and nothing else: still
+# WIP, so the header is the wordmark alone.
 uv run graphics/logo/build_svg.py
 # The .ico is NOT converted from the SVG - it re-renders console.py's icon_image,
 # so the tray, the taskbar and the shortcut are one picture by construction.
