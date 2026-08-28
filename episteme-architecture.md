@@ -17,17 +17,10 @@ and destructive mechanics (rage-bait, engagement traps, doomscroll filler) that 
 ordinary feeds. "A good Reddit" is a rough approximation — varied, browsable, alive —
 but curated for your curiosity and growth rather than your compulsion.
 
-### Nomenclature (used consistently across code, schema, and docs):
+### Nomenclature
 
-- **Post** — any single item in the feed, of whatever kind.
-- **Feature** — the long-form written kind of post (what Phase 2 generates today).
-  Future post kinds: micro-posts ("word of the day"), minigames (e.g. a
-  Connections-style word association game), aggregation cluster cards, ...
-- **Model roles:** `main` — the large, most capable model; researches, writes,
-  reviews, and holds final editorial authority. `fast` — a small model for cheap
-  first-pass work (triage, condensation). `embed` — the embedding model, resident
-  in system RAM. (Code currently says `writer` for `main`; the rename lands with
-  the agentic-writer refactor.)
+Every term this document uses in a load-bearing way is defined in [GLOSSARY.md](GLOSSARY.md).
+Extracted from this section on 2026-08-28; a name changing there must also change here in the same commit.
 
 ### Design principles
 
@@ -44,6 +37,12 @@ but curated for your curiosity and growth rather than your compulsion.
    simple data, never markup.
 4. **Everything is a plugin** — sources, pipeline stages, article section types, and
    recommendation signals are all registered extensions behind small interfaces.
+   *(Aspiration, not a description of the code, as of 2026-08-28. Two registries
+   exist: `ingest/registry.py` for sources and `recommend/scorers.py` for
+   signals. Pipeline stages are an ordered hardcoded sequence and section types
+   are a closed union in `llm/schemas.py`; neither is registered, and stages are
+   ordered rather than pluggable, so registering them would be ceremony.
+   Correspondents (0046) add a third registry when they are built.)*
 5. **Resumable and interruptible** — processing runs overnight/when idle and must
    survive being paused, killed, or resumed at any point.
 
@@ -138,7 +137,7 @@ PaperRef        — traced primary source: doi/arxiv_id, title, authors, journal
 Story           — id, cluster of related SourceItems (same underlying event/paper),
                   topic tags, embedding centroid,
                   status (new|written|aggregated|skipped)
-Post            — id, story_id?, kind (feature|aggregate|micro|game|...), title?, slug, summary?,
+Post            — id, story_id?, kind (article|aggregate|micro|game|...), title?, slug, summary?,
                   sections JSON (see §6), topics[], reading_time, difficulty,
                   generated_at, archived_at?, model_used, quality_score,
                   status (draft|published|archived)
@@ -277,7 +276,7 @@ Rules:
   invalid sections are retried or dropped — malformed data can never reach the
   renderer.
 - `sources` is **mandatory** — every article links what it was written from.
-- `quiz` is **mandatory too** (user decision 2026-08-02): every feature ends with a
+- `quiz` is **mandatory too** (user decision 2026-08-02): every article ends with a
   comprehension check of one or a few questions, so reading is always followed by a
   chance to find out whether it landed. Enforced in code rather than by prompt
   guidance — the JSON-Schema grammar can constrain a section's shape but not demand
@@ -346,7 +345,7 @@ A chain of composable stages; each stage is a Procrastinate job, checkpointed in
                 its `write` calls during the write stage (demote → aggregate).
 3. write      — **the `main` model, agentic and authoritative.** One bounded tool
                 loop per story: web_search / fetch_page (more tools over time) to
-                research as it sees fit, judge whether the story merits a feature
+                research as it sees fit, judge whether the story merits an article
                 at all, then produce the post's section data (structured output,
                 schema-validated), synthesizing across sources and noting
                 disagreement and uncertainty explicitly. Prompts give editorial
@@ -470,7 +469,7 @@ source/paper authority (OpenAlex-informed) + freshness (half-life ~36 h)`.
 ### Healthy feed composition — ranking alone is not the feed. The feed has two tiers:
 
 > **As built (2026-07-30):** this subsection is the target design, not the current
-> code. Phase 4 shipped a single ranked stream — features and aggregate cards
+> code. Phase 4 shipped a single ranked stream — articles and aggregate cards
 > interleaved as equal units, ordered by `web/app.py:_rank_expr` — and deferred the
 > divider, the diversity/serendipity quotas and the "why am I seeing this" chip
 > (see the Phase 4 note in §12). Hard blocks and the `Scorer` registry below ARE built.
@@ -491,7 +490,7 @@ source/paper authority (OpenAlex-informed) + freshness (half-life ~36 h)`.
 - **All feed content is a post (decided 2026-07-18):** each card is an
   identity-only `Post` row (`kind="aggregate"`, no stored content — the card
   renders from the story's items at read time, canonical minimum). The triage
-  verdict mints it; a written feature supersedes it (at most one published post
+  verdict mints it; a written article supersedes it (at most one published post
   per story); demotes re-mint it. Uniform identity means uniform provenance
   pages and, later, uniform feedback capture.
 - Ranked by the same scorer + freshness; clearly styled as a distinct, lighter tier.
@@ -598,21 +597,22 @@ Move research + editorial authority onto the `main` model (one agentic tool loop
 per story, §7); `qa` stage with rendered-screenshot review and bounded revise
 rounds (vision via the Qwen3.6 mmproj); generalize prompts from quotas to
 guidance; rename roles (`writer`→`main`) and content entities (`articles`→`posts`
-with `kind`, long-form = `feature`); provenance view renders tool loops as one
+with `kind`, long-form = `feature`, itself renamed `article` on 2026-08-28, 0045);
+provenance view renders tool loops as one
 conversation.
 
 **Phase 3 — Rich content & provenance** *(first push built 2026-07-19; live
 verification pending)*
-Built: images + video embeds inside features (closed-set reuse of ingested source
+Built: images + video embeds inside articles (closed-set reuse of ingested source
 media with DB-stamped attribution; YouTube/Vimeo embeds captured at ingestion),
 quiz/chart/diagram/timeline/glossary sections (writer-emitted — the enrich stage
 was folded into the agentic write, §7), vendored Vega-Lite + Mermaid renderers.
 Remaining pushes: new post kinds — **micro-post** = small regularly occurring
 standalone content (e.g. "word of the day"); **minigame** = an interactive that
 makes you think and ideally teaches (canonical example: NYT Connections; distinct
-from `quiz`, which is the mandatory comprehension check inside every feature) — plus
+from `quiz`, which is the mandatory comprehension check inside every article) — plus
 quality gate + draft review UI, and OpenAlex source tracing
-(primary-vs-secondary source distinction in features).
+(primary-vs-secondary source distinction in articles).
 
 **Phase 4 — Personalization & health**
 Feedback capture, interest profile, scoring, healthy feed composition, "why am I
@@ -728,7 +728,7 @@ LLM (instead of multiple choice).
   with "at most one published post per story" and belongs with the planned
   quality-gate/draft-review push (a draft status solves both).
 - Whether `qa`-on-everything (rendered-screenshot review + revise rounds) fits in
-  the nightly window at target feed size (10–15 features); if nights run long,
+  the nightly window at target feed size (10–15 articles); if nights run long,
   shrink the daily selection rather than skipping QA.
 - Aggregation-stream page size and retention (how far back the infinite scroll
   reaches before items expire).

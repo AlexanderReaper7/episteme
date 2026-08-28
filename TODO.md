@@ -22,3 +22,4 @@ This is a list of things to maybe do, in no particular order. And serves as a pl
 - prefix caching for system prompts?
 - make sure icons are vendored.
 - admin topics nav is broken
+- time sensitive posts: todays lunch menu expires when it is no longer available, typically 1400. at that point said post becomes purly historical and has reduced value to the reader.

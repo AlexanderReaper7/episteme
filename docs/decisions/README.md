@@ -57,6 +57,12 @@ Nothing here is edited to reflect later changes. A decision that was replaced ge
 | [0022](0022-rescore-passes-are-coalesced-by-a-database-lock.md) | Rescore passes are coalesced by a database lock | 2026-07-30 |
 | [0030](0030-topic-feedback-direction-is-inherited.md) | Topic chips inherit the rating's direction; save is only a bookmark | 2026-08-03 |
 
+## Correspondents
+
+| # | decision | date |
+|---|---|---|
+| [0046](0046-a-correspondent-files-finished-content.md) | A correspondent files finished content and owns a page for what stays true | 2026-08-28 |
+
 ## Data and jobs
 
 | # | decision | date |
@@ -67,6 +73,8 @@ Nothing here is edited to reflect later changes. A decision that was replaced ge
 | [0015](0015-pre-migration-backup-lives-in-env-py.md) | The pre-migration backup lives in `env.py` | 2026-08-02 |
 | [0016](0016-stalled-jobs-are-recovered-by-heartbeat.md) | Stalled jobs are swept by heartbeat | 2026-07-21 |
 | [0032](0032-job-history-retention-is-tiered-by-class.md) | Job history is pruned by class; repeated jobs fold in the table | 2026-08-03 |
+| [0045](0045-the-long-form-kind-is-called-article.md) | The long-form post kind is called `article`, stored value included | 2026-08-28 |
+| [0047](0047-a-post-stores-its-destination.md) | A post stores its destination; a body means it renders itself | 2026-08-28 |
 
 ## Host, GPU, resources
 

@@ -2,9 +2,10 @@
 
 Episteme: a self-hosted, single-user, LLM-powered personalized newsfeed. Sources are ingested continuously; a local LLM (llama-server on the host, port 5001) processes them overnight into generated articles plus a Google-News-style aggregation stream.
 
-This file is rules and navigation only. The other three:
+This file is rules and navigation only. The other four:
 
 - [episteme-architecture.md](episteme-architecture.md) is the spec: data model, pipeline stages, feed-composition rules, roadmap.
+- [GLOSSARY.md](GLOSSARY.md) is what every load-bearing word means. Renaming a concept means editing it in the same commit.
 - [docs/decisions/](docs/decisions/README.md) is why anything is the way it is, and what it was measured against. **`(0017)` below means `docs/decisions/0017-*.md`.** Grep it before changing something that looks arbitrary; add to it when we decide something new.
 - [CLAUDE-TODO.md](CLAUDE-TODO.md) is what is built but not yet watched running. Mine to maintain. `TODO.md` is the user's, do not write to it.
 
@@ -196,11 +197,12 @@ Names to navigate by. The reasoning is in the numbered decision.
 - **The assistant** (`llm/chat.py` + `llm/chat_tools.py`, `web/chat.py`, 0036). **A `writes=True` tool is NEVER executed from `dispatch`** — it raises `WriteProposed`, and `execute_approved` is the only other path to a handler. Do not add a "just this once" branch; the gate is structural because a per-handler check is a convention that fails silently. Tool table + `validate_registry` in `chat_tools.py`, `tests/test_chat_tools.py` parametrizes the property over the registry.
 - **One tool loop** (`agent.run_tool_loop`), shared by writer, QA and chat. Chat enters through the injected `turn` seam (0038); a second loop is the thing that is not wanted. Reader-requested stories: `Story.origin == "user"`, first in the queue, no `demote_story`, no thin-gate (0037). Interactive lease in `worker/control.py`: every AUTOMATIC unload goes through `unload_unless_interactive`.
 - **Narration** (`src/episteme/tts/`, 0035). `script.build_script` is the seam an LLM preprocessing pass replaces.
+- **Correspondents** (0046, 0047, GLOSSARY.md), designed 2026-08-28, **not yet built**. A correspondent files finished posts, skipping triage and the writer, and owns a page under `/c/<slug>/` for standing content that never enters the feed. Plugins ship in-tree and run in-process, because only in-process code can be held to `polite_get`; external services keep their own database and are never copied into ours. `posts.href` is where a card and the canonical URL both go, and a CHECK ties a body to rendering yourself. Implementation order is in CLAUDE-TODO.md.
 - **Benchmarks** (`src/episteme/bench/`, 0039): a peer of `llm/`, never a caller. `BenchError` is its whole error contract and streaming is the only path, because prefill curves and cancellation both need the stream. **Never store or plot llama-server's aggregate rates** (0040): `prompt_progress` counters are CUMULATIVE, so `series.py` differences them, and `report.py` aggregates totals-over-totals, never means-of-ratios. `bench_run(run_id)` takes one int: the row is the parameter record. The host agent applies preset edits it is handed and chooses nothing (0041).
 - **Jobs**: procrastinate on Postgres, no broker. Worker and web are one image, two entrypoints; crons in settings. Stalls 0016, retention 0032.
 - **Schema is Alembic**, migrations inside the package so `COPY src ./src` ships them. **No `create_all` anywhere**, deliberately (0014). `bootstrap.py` adopts-or-upgrades, applies the procrastinate schema guarded (`schema --apply` is NOT idempotent), then seeds sources. Backup 0015.
 - **Politeness is a hard requirement** (spec §5, 0005, 0006). All source HTTP through `ingest/http.py:polite_get`, which new adapters MUST use. **Never `docker compose down -v` casually**: re-ingesting re-fetches every article from every source.
-- **Feed**: one ranked stream, `web/app.py:_rank_expr`, features and aggregate cards interleaved as equal units. The spec's divider and diversity quotas are deferred, so don't hunt for them. Infinite scroll is htmx `revealed` sentinels into `/partials/*`. **All feed content is a post** (0011).
+- **Feed**: one ranked stream, `web/app.py:_rank_expr`, articles and aggregate cards interleaved as equal units. The spec's divider and diversity quotas are deferred, so don't hunt for them. Infinite scroll is htmx `revealed` sentinels into `/partials/*`. **All feed content is a post** (0011).
 - **Rendering and caching**: `templating.fragment_block(request, template)` decides what a response is, and every ETag derives from it (0031). Polling fragments 204 on an unchanged digest (0033). Icons only through `ico.icon` / `ico.toggle` (0029).
 - **Failures render `web/errors.py` + `error.html`** (0043): HTML gets the full traceback, `/api` keeps FastAPI's JSON body untouched. **No debug/production toggle**, deliberately — single-user, no auth, tailnet only. A boosted navigation gets it as a fragment marked `HX-Error-Page`, which `app.js` swaps; nothing else is marked, so a failing 10s poll still leaves the page alone.
 
@@ -237,7 +239,7 @@ Running `upgrade` from the host stops with that container command rather than mi
 
 ## Constraints decided with the user (do not silently revisit)
 
-- Single-user forever: no auth, no user/profile columns. The approval card is therefore the ONLY thing between a model and an effect (0036); nothing else is checking.
+- Single-user forever: no READER auth, no user/profile columns, no `created_by`. The approval card is therefore the ONLY thing between a model and an effect (0036); nothing else is checking. **Amended 2026-08-28 (0046)**: an external correspondent authenticates with a per-service token. A service token is not a user and never becomes a column on a post.
 - A chat tool that reads settings exposes a **curated allowlist**, never `settings.model_dump()`. `.env` holds `FISH_API_KEY` and the database password.
 - Always dark mode: true-black OLED theme, full-width grid (4K screen). No light theme.
 - Media is hotlinked, never cached locally; `image` rendering must degrade via `onerror` (remove banner), since link rot is accepted.

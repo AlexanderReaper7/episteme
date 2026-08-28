@@ -1,0 +1,165 @@
+# Glossary
+
+When a name or meaning changes, this file must also change in the same commit.
+
+## Feed
+
+### Post
+
+Any single item in the feed, of whatever kind. All feed content is a post (0011), so every visible unit has one id from triage verdict to archival.
+
+### Kind
+
+A post's skeleton: `article` or `aggregate` today. The spec reserves `micro` and `game` (§12).
+
+### Article
+
+The long-form written kind, what the writer produces. Title, summary and typed sections are filled. Previously called `feature` until 2026-08-28 (0045).
+
+### Aggregate
+
+An identity-only row for a cluster card. It stores no content; the card renders from its story's items at read time.
+
+### Section
+
+One typed member of the nine-member union in `llm/schemas.py`, the unit an article's body is built from (0013). Media is a closed set drawn from ingested items, never a URL the model invented.
+
+### Story
+
+A cluster of source items about the same underlying event or paper. Every post hangs off one; `Post.story_id` is NOT NULL.
+
+### Origin
+
+Who asked for a story: `ingest` is the pipeline's own clustering, `user` is a request through the assistant, which outranks the pipeline (0037).
+
+### Archived
+
+A post that left `published`, superseded by a rewrite or demoted by QA. At most one published post per story at any time.
+
+## Ingestion
+
+### Source
+
+One row naming an adapter plus its config. It carries a credibility rating, HTTP cache validators and a cooldown.
+
+### Adapter
+
+The per-source-type implementation of `fetch` and `extract`, registered by `type_name` (0002).
+
+### SourceItem
+
+One fetched thing, normalized and deduped by `sha256` of its canonical URL.
+
+### Polite and impersonate
+
+The two HTTP transport modes (0006). Both obey the same throttle; only the fingerprint differs, and neither may reach a path robots.txt disallows.
+
+## Pipeline
+
+### Stage
+
+One named step: `embed`, `cluster`, `triage`, `write`, `qa`, `score`, `narrate`. Each picks up whatever rows are unprocessed, so stages run independently.
+
+### Triage
+
+The `fast` model's verdict on a cluster: `write`, `aggregate` or `skip`.
+
+### Attempt
+
+One run of the writer over one story, identified by `attempt_id` on its LLM calls, so a failed attempt keeps its own provenance (0012).
+
+### Provenance
+
+History of how the post was made. Every LLM call behind one post version, rendered as the conversation it was.
+
+## Models
+
+### Role
+
+What callers ask for, never a model name or a URL (0003): `main` is the large model that researches, writes and reviews; `fast` is the cheap first pass; `embed` is the embedding model; `chat` is the assistant's (0038).
+
+### LLM Gateway
+
+`llm/gateway.py`, the single choke point every call passes through. `LLMError` is its whole error contract.
+
+### Router
+
+The llama-server on port 5001, holding at most one decode model.
+
+### Embed server
+
+The llama-server on port 5002, a separate process from the router and always resident.
+
+### Host agent
+
+The process on the host that starts, stops and senses llama-server. It is a sensor and an actuator, never a decision maker (0023).
+
+## Recommendation
+
+### Feedback
+
+One recorded event. The feedback log is canonical and everything else is derived from it by replay (0017).
+
+### Profile
+
+The derived state: topic weights, liked and disliked centroids, source weights, hard blocks.
+
+### Topic
+
+A row in the canonical vocabulary, carrying a display label that may be renamed at will.
+
+### Slug
+
+A topic's permanent identity, and what weights are keyed by. `slugify(label)` stops finding a topic the moment someone renames it (0019).
+
+### Affinity
+
+A post's stored match against the profile, deliberately without the freshness term, which the feed query applies instead (0020).
+
+### Block
+
+A hard exclusion, defined once in `recommend/blocks.py`. A reader-requested story is exempt.
+
+## Proposed, TBD, WIP
+
+Anything that is Work-In-Progress, proposals, etc, goes here.
+
+### Episodic content
+
+Content that is read once and then done with. The feed is entirely episodic: a post is news for a day, and the promise that a reader can be caught up depends on there being a finite amount of it.
+
+### Standing content
+
+Content that stays true until it changes, looked up rather than caught up on. This week's lunch menu is standing; today's menu is episodic. Standing content has its own page and never enters the feed.
+
+### Correspondent
+
+Something that produces finished content on its own schedule and files it, skipping triage and the writer (0046). It files episodic posts into the feed and owns a page under `/c/<slug>/` for its standing content. Episteme gives it identity, storage and its place in the app; how it gets its content is entirely its own business. A **plugin** correspondent ships inside this repository and runs in-process; an **external** one is a separate application that keeps its own database, pushes posts over an authenticated endpoint, and serves its standing content on request.
+
+### Matsedel
+
+The first correspondent: the weekly lunch menus of four restaurants, read from their own sites. A plugin rather than an external service, because it fetches from someone else's site and only in-process code can be held to `polite_get`.
+
+### Filing
+
+Both the act and the entry point: a correspondent files a finished post, instead of handing the pipeline raw material to generate one from.
+
+### Period key
+
+The identity a correspondent gives one period of its content. Opaque to core, chosen by the correspondent, and unique within it: Matsedel's is `Matsedel/koppargrillen/2026w35`, whose `sha256` becomes the `SourceItem.hash`. Re-filing a period upserts, so a menu corrected on Tuesday morning does not become two Tuesdays.
+
+### Publish at
+
+When a post becomes visible (0046). NULL means immediately. It lets a correspondent create a whole week of posts from one read and have each appear on its own day, without depending on a nightly job to mint it. The feed filters on it and sorts by it.
+
+### Glance
+
+The page for standing content, and the navbar's fourth entry (0046). A dashboard of one summary block per correspondent, each block linking through to that correspondent's own page. The feed never carries standing content.
+
+### Href
+
+Where a post's card and its canonical URL both go (0047). NULL means the post renders itself at `/post/{id}`; an aggregate's is its primary item's URL, a filed post's is its correspondent's page. A post carries a body exactly when its href is NULL, and the database enforces it.
+
+### Primary item
+
+The item that stands for a story: earliest `published_at`, then lowest `id` (0047). It supplies an aggregate card's title, source name, snippet and destination, which is why it is one definition rather than four call sites.
