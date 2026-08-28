@@ -4,7 +4,7 @@ The etags are pure functions of what the template renders, so they're exercised
 here with lightweight stand-in objects — no DB. The invariants that matter:
 a validator must change whenever the rendered output would (never a stale 304),
 and must NOT change for a mutation the page doesn't show (so the 304 keeps paying
-off). The sharpest case is a QA revision: it rewrites a feature's body sections,
+off). The sharpest case is a QA revision: it rewrites an article's body sections,
 which the POST page shows (etag must move) but the FEED card does not (etag must
 hold)."""
 
@@ -70,15 +70,15 @@ def _item(**kw):
     return SimpleNamespace(**base)
 
 
-def _feature(**kw):
+def _article(**kw):
     base = dict(
-        kind="feature",
+        kind="article",
         id=100,
         story=None,
         status="published",
         generated_at=datetime(2026, 7, 21, 9, 0),
         quality_score=0.8,
-        title="A feature",
+        title="An article",
         summary="A summary.",
         difficulty="intro",
         reading_time_minutes=4,
@@ -138,26 +138,26 @@ def _items_page(items, has_more=False, next_cursor=None):
 
 
 def test_feed_etag_is_weak_and_stable():
-    page = _page([_feature(), _aggregate()])
+    page = _page([_article(), _aggregate()])
     etag = _feed_etag(page)
     assert etag.startswith('W/"')
     # Rebuilt from equivalent objects → identical (data, not identity, drives it).
-    assert etag == _feed_etag(_page([_feature(), _aggregate()]))
+    assert etag == _feed_etag(_page([_article(), _aggregate()]))
 
 
-def test_feed_etag_changes_when_a_feature_card_field_changes():
-    base = _feed_etag(_page([_feature()]))
-    assert _feed_etag(_page([_feature(title="Different")])) != base
-    assert _feed_etag(_page([_feature(summary="Other")])) != base
-    assert _feed_etag(_page([_feature(banner_url=None)])) != base
+def test_feed_etag_changes_when_a_article_card_field_changes():
+    base = _feed_etag(_page([_article()]))
+    assert _feed_etag(_page([_article(title="Different")])) != base
+    assert _feed_etag(_page([_article(summary="Other")])) != base
+    assert _feed_etag(_page([_article(banner_url=None)])) != base
 
 
-def test_feed_etag_ignores_qa_only_changes_a_feature_card_never_shows():
+def test_feed_etag_ignores_qa_only_changes_a_article_card_never_shows():
     # A QA revision rewrites body sections + quality_score. The feed card renders
     # neither, so the feed validator must NOT move (the 304 keeps working) even
     # though the post-page validator does (asserted below).
-    base = _feed_etag(_page([_feature()]))
-    revised = _feature(sections=[{"type": "prose", "text": "rewritten"}], quality_score=0.3)
+    base = _feed_etag(_page([_article()]))
+    revised = _article(sections=[{"type": "prose", "text": "rewritten"}], quality_score=0.3)
     assert _feed_etag(_page([revised])) == base
 
 
@@ -186,7 +186,7 @@ def test_feed_etag_changes_when_an_items_media_changes_the_banner():
 
 
 def test_feed_etag_tracks_pagination_state():
-    posts = [_feature()]
+    posts = [_article()]
     a = _feed_etag(_page(posts, has_more=False, next_cursor=None))
     b = _feed_etag(_page(posts, has_more=True, next_cursor={"id": 5}))
     assert a != b
@@ -195,21 +195,21 @@ def test_feed_etag_tracks_pagination_state():
 # --- post-page validator --------------------------------------------------
 
 
-def test_post_etag_moves_on_qa_revision_of_a_feature():
-    base = _post_page_etag(_feature(), _VOICES, "v1", True)
+def test_post_etag_moves_on_qa_revision_of_a_article():
+    base = _post_page_etag(_article(), _VOICES, "v1", True)
     revised = _post_page_etag(
-        _feature(sections=[{"type": "prose", "text": "rewritten"}], quality_score=0.3),
+        _article(sections=[{"type": "prose", "text": "rewritten"}], quality_score=0.3),
         _VOICES, "v1", True,
     )
     assert revised != base
 
 
 def test_post_etag_tracks_narration_controls():
-    base = _post_page_etag(_feature(), _VOICES, "v1", True)
-    assert _post_page_etag(_feature(), _VOICES, "v1", False) != base            # tts off
-    assert _post_page_etag(_feature(), _VOICES, "v2", True) != base             # default voice
+    base = _post_page_etag(_article(), _VOICES, "v1", True)
+    assert _post_page_etag(_article(), _VOICES, "v1", False) != base            # tts off
+    assert _post_page_etag(_article(), _VOICES, "v2", True) != base             # default voice
     more_voices = _VOICES + [SimpleNamespace(id="v2", label="Two", enabled=True)]
-    assert _post_page_etag(_feature(), more_voices, "v1", True) != base         # catalog
+    assert _post_page_etag(_article(), more_voices, "v1", True) != base         # catalog
 
 
 def test_aggregate_post_etag_folds_in_story_items():
@@ -234,12 +234,12 @@ def test_aggregate_post_etag_folds_in_story_items():
 
 
 def test_feed_fragment_and_full_document_etags_differ():
-    page = _page([_feature(), _aggregate()])
+    page = _page([_article(), _aggregate()])
     assert _feed_etag(page, block="content") != _feed_etag(page, block=None)
 
 
 def test_post_fragment_and_full_document_etags_differ():
-    post = _feature()
+    post = _article()
     full = _post_page_etag(post, block=None)
     frag = _post_page_etag(post, block="content")
     assert full != frag
@@ -253,7 +253,7 @@ def test_history_restore_and_boosted_click_never_share_a_feed_validator():
     bodies got ONE etag under ONE `Vary: HX-Request` entry: after a Back, clicking
     the Episteme logo revalidated into a 304 and htmx swapped an entire document —
     sprite, header and all — into `#main-content`, nesting the page inside itself."""
-    page = _page([_feature(), _aggregate()])
+    page = _page([_article(), _aggregate()])
     plain = _feed_etag(page, fragment_block(_request({}), "feed.html"))
     restore = _feed_etag(
         page,
@@ -288,25 +288,25 @@ def test_vary_covers_every_header_the_body_depends_on():
 
 
 def test_feed_partial_etag_is_weak_stable_and_representation_agnostic():
-    page = _page([_feature(), _aggregate()])
+    page = _page([_article(), _aggregate()])
     etag = _feed_partial_etag(page)
     assert etag.startswith('W/"')
-    assert etag == _feed_partial_etag(_page([_feature(), _aggregate()]))
+    assert etag == _feed_partial_etag(_page([_article(), _aggregate()]))
     # Single representation: unlike _feed_etag it takes no `fragment` argument, so
     # there is nothing to make two entries collide under one cursor URL.
 
 
 def test_feed_partial_etag_changes_when_a_card_changes():
-    base = _feed_partial_etag(_page([_feature()]))
-    assert _feed_partial_etag(_page([_feature(title="Different")])) != base
-    assert _feed_partial_etag(_page([_feature(banner_url=None)])) != base
+    base = _feed_partial_etag(_page([_article()]))
+    assert _feed_partial_etag(_page([_article(title="Different")])) != base
+    assert _feed_partial_etag(_page([_article(banner_url=None)])) != base
 
 
 def test_feed_partial_etag_ignores_qa_only_changes():
     # Same as the feed card: a QA revision rewrites body sections the card never
     # shows, so a deep page's 304 must keep holding.
-    base = _feed_partial_etag(_page([_feature()]))
-    revised = _feature(sections=[{"type": "prose", "text": "rewritten"}], quality_score=0.3)
+    base = _feed_partial_etag(_page([_article()]))
+    revised = _article(sections=[{"type": "prose", "text": "rewritten"}], quality_score=0.3)
     assert _feed_partial_etag(_page([revised])) == base
 
 
@@ -317,7 +317,7 @@ def test_feed_partial_etag_changes_when_an_aggregate_gains_an_item():
 
 
 def test_feed_partial_etag_tracks_pagination_state():
-    posts = [_feature()]
+    posts = [_article()]
     a = _feed_partial_etag(_page(posts, has_more=False, next_cursor=None))
     b = _feed_partial_etag(_page(posts, has_more=True, next_cursor={"id": 5}))
     assert a != b
@@ -388,7 +388,7 @@ def test_provenance_fragment_and_full_document_etags_differ():
 
 
 def test_feed_etag_moves_when_a_card_gains_feedback():
-    posts = [_feature()]
+    posts = [_article()]
     base = _feed_etag(_page(posts))
     liked = _feed_etag(_page(posts, feedback={1: {"signals": {"like": 9}}}))
     assert liked != base
@@ -397,7 +397,7 @@ def test_feed_etag_moves_when_a_card_gains_feedback():
 
 
 def test_feed_partial_etag_moves_when_a_card_gains_feedback():
-    posts = [_feature()]
+    posts = [_article()]
     base = _feed_partial_etag(_page(posts))
     liked = _feed_partial_etag(_page(posts, feedback={1: {"signals": {"save": 3}}}))
     assert liked != base
@@ -407,7 +407,7 @@ def test_feed_etag_moves_when_a_card_gains_topic_steering():
     """Cards carry topic chips, so the topic bucket is part of what they render —
     and a rating decides whether the chips appear at all. A validator that only
     watched the like/dislike/save bucket would serve a stale card."""
-    posts = [_feature()]
+    posts = [_article()]
     base = _feed_etag(_page(posts))
     steered = _feed_etag(
         _page(posts, feedback={1: {"topic_signals": {("astronomy", "less_topic"): 4}}})
@@ -416,7 +416,7 @@ def test_feed_etag_moves_when_a_card_gains_topic_steering():
 
 
 def test_post_etag_moves_when_the_post_gains_feedback():
-    post = _feature()
+    post = _article()
     base = _post_page_etag(post)
     assert _post_page_etag(post, feedback_ctx={**_NO_FEEDBACK, "signals": {"like": 4}}) != base
     # Topic and source steering render on the article page too, so they count.

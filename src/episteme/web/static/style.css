@@ -28,7 +28,7 @@
   --neutral-chip-fg: color-mix(in srgb, var(--muted) 45%, var(--text));
   /* Structural one-offs. */
   --banner-bg: #0a0a0d;                /* image placeholder behind card banners */
-  --card-feature-border: #2b3a5e;      /* generated-article card accent border */
+  --card-article-border: #2b3a5e;      /* generated-article card accent border */
   --role-system: #565f89;              /* provenance system-message rail */
   /* Feed column width. The feed cards are short (title + snippet + image), so
      they can run wider than the long-form article body (`.article`, ~46rem)
@@ -230,7 +230,7 @@ main {
 }
 
 /* Generated articles read as the "hero" tier even inside the unified stream. */
-.card--feature {
+.card--article {
   border-color: color-mix(in srgb, var(--accent) 22%, var(--border));
 }
 
@@ -288,7 +288,7 @@ main {
   border: 1px solid var(--border);
 }
 
-.card-kind--feature {
+.card-kind--article {
   color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 45%, transparent);
 }
@@ -768,7 +768,7 @@ main {
   transition: color 0.15s ease;
 }
 
-.card--feature .card-title {
+.card--article .card-title {
   font-size: 1.45rem;
   font-weight: 700;
 }
@@ -791,7 +791,7 @@ main {
 
 /* Generated-article cards: visually distinct from the raw stream. */
 .article-card {
-  border-color: var(--card-feature-border);
+  border-color: var(--card-article-border);
 }
 
 .byline {

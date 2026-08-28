@@ -33,7 +33,7 @@ class Candidate:
     by the score stage so no scorer touches the database."""
 
     post_id: int
-    kind: str = "feature"
+    kind: str = "article"
     # The story centroid — posts have no embedding of their own, and the centroid
     # is what the profile's liked/disliked centroids were themselves built from.
     embedding: list[float] | None = None

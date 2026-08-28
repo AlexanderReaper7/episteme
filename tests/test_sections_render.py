@@ -34,7 +34,7 @@ ALL_SECTIONS = [
 
 def _render(sections):
     post = Post(
-        id=1, kind="feature", title="T", summary="S", difficulty="intermediate",
+        id=1, kind="article", title="T", summary="S", difficulty="intermediate",
         topics=["astronomy"], sections=sections, reading_time_minutes=3,
         generated_at=datetime(2026, 7, 19, tzinfo=UTC), model_used="test-model",
     )

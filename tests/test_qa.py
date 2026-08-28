@@ -44,7 +44,7 @@ class FakeSession:
 
 def _editor(candidates=None, sections=None):
     post = Post(
-        id=1, kind="feature", title="T", summary="S", difficulty="intermediate",
+        id=1, kind="article", title="T", summary="S", difficulty="intermediate",
         topics=["astronomy"], sections=sections or [dict(s) for s in _SECTIONS],
     )
     return _Editor.of(post, candidates or {})

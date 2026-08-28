@@ -104,7 +104,7 @@ async def test_demote_story_skips_drafting(monkeypatch):
 
 async def test_finish_research_ends_loop_and_carries_note(monkeypatch):
     """The story-291 failure inverted: the model signals 'done researching' with an
-    explicit tool call (it used to reach for demote_story, killing the feature).
+    explicit tool call (it used to reach for demote_story, killing the article).
     finish_research must end the loop, keep the note, and go to the draft."""
     gw = ScriptedGateway([
         _assistant_toolcall("fetch_page", '{"url": "https://a.org"}', "c1"),

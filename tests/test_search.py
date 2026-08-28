@@ -7,7 +7,7 @@ database, no fixtures, and a failure names the rule rather than a query plan.
 
 The two SQL properties tested here are the ones with no visible failure mode. An
 unescaped `%` in a search box returns the whole archive and looks like a broad
-match; a missing `kind == "feature"` filter returns aggregate cards that render
+match; a missing `kind == "article"` filter returns aggregate cards that render
 as blank rows. Both look like results.
 """
 
@@ -58,11 +58,11 @@ def test_like_wildcards_typed_into_the_search_box_are_matched_literally(query):
     assert query not in compiled  # the raw form never reaches the pattern
 
 
-def test_both_legs_search_published_features_only():
+def test_both_legs_search_published_articles_only():
     """An aggregate card has no title, summary or body of its own (0011) — it
     renders from its story's items at read time. Including one would return a row
     with nothing in it, in both legs."""
     for statement in (literal_query("voyager", 10), semantic_query([0.0] * 1024, 10)):
         rendered = str(statement.compile(compile_kwargs={"literal_binds": True}))
         assert "'published'" in rendered
-        assert "'feature'" in rendered
+        assert "'article'" in rendered

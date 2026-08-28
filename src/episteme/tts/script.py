@@ -75,7 +75,7 @@ def _section_speech(section: dict[str, Any]) -> str:
 
 
 def build_script(post: Any) -> str:
-    """Assemble the full narration script for a feature post: title, summary, then
+    """Assemble the full narration script for an article post: title, summary, then
     each section's spoken text in order. `post` may be a Post ORM row or any object
     exposing `title`, `summary`, and `sections` (a list of section dicts)."""
     parts: list[str] = []

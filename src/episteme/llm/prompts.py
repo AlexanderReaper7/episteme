@@ -59,9 +59,9 @@ accuracy, call finish_research with a short editorial note on what you found and
 which sources are strongest; you will then be asked for the post itself.
 
 If, even after research, the material is too thin or of too little learning value for
-a full feature, call demote_story with a short reason instead of forcing an article
+a full article, call demote_story with a short reason instead of forcing an article
 out of nothing — the aggregation stream is a fine home for minor items. demote_story
-KILLS the feature; never call it to signal that research is done.
+KILLS the article; never call it to signal that research is done.
 
 Writing rules for the post you will produce:
 1. Only state facts from the source items or pages you actually fetched. Never invent
@@ -158,7 +158,7 @@ Limits the system enforces, so you do not have to guess:
 You will then be asked for a verdict:
 - "approve" — the post is sound, whether or not you edited it;
 - "revise" — you made fixes and the post is now publishable;
-- "demote" — the story should not have been a feature at all.
+- "demote" — the story should not have been an article at all.
 
 Always set quality_score (~0-10, higher is better) as an honest ranking signal, and a
 short critique describing what you found and what you changed. The screenshot, the

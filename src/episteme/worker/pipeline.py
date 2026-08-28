@@ -205,7 +205,7 @@ async def triage_stories(
         }[result.decision]
         # The verdict decides whether feed content exists: an aggregate verdict
         # mints the story's card post; a (re-triage) skip retires it. A write
-        # verdict leaves any existing card up until the feature supersedes it.
+        # verdict leaves any existing card up until the article supersedes it.
         if result.decision == "aggregate":
             await ensure_aggregate_post(session, story)
         elif result.decision == "skip":
@@ -272,7 +272,7 @@ def media_candidates(items: list[SourceItem]) -> dict[str, dict]:
 def story_banner_url(items: list[SourceItem]) -> str | None:
     """The feed card's banner: the first image among the story's items' media_refs.
     Denormalized onto `Post.banner_url` at write time so the feed never loads a
-    feature's items just to derive this (mirrors the template's `_story_banner`)."""
+    article's items just to derive this (mirrors the template's `_story_banner`)."""
     for item in items:
         for ref in item.media_refs or []:
             if ref.get("kind") == "image" and ref.get("url"):
@@ -429,7 +429,7 @@ async def ensure_aggregate_post(session: AsyncSession, story: Story) -> None:
     """All feed content is a post: an aggregated story is represented by an
     identity-only row (kind="aggregate" — no stored content, the card renders
     from the story's items at read time). Created only when the story has no
-    published post, so a card never coexists with a live feature (at most one
+    published post, so a card never coexists with a live article (at most one
     published post per story)."""
     published = (
         await session.execute(
@@ -764,8 +764,8 @@ async def write_posts(
         )
         if further:
             sections.append(further)
-        # The new feature supersedes whatever the story published before — an
-        # older feature (rewrite) or its aggregate card. One published post per story.
+        # The new article supersedes whatever the story published before — an
+        # older article (rewrite) or its aggregate card. One published post per story.
         await session.execute(
             update(Post)
             .where(Post.story_id == story.id, Post.status == "published")
@@ -773,7 +773,7 @@ async def write_posts(
         )
         post = Post(
             story_id=story.id,
-            kind="feature",
+            kind="article",
             title=outcome.draft.title,
             summary=outcome.draft.summary,
             difficulty=outcome.draft.difficulty,
@@ -795,7 +795,7 @@ async def write_posts(
         await _stamp_post_calls(session, attempt, new_post_id)
         deferred_topics.append((new_post_id, outcome.draft.topics, known_topics))
         written += 1
-        log.info("Wrote feature for story %d: %s", story.id, outcome.draft.title)
+        log.info("Wrote article for story %d: %s", story.id, outcome.draft.title)
 
     # Pass 3 (fast): the one place in this stage that may swap the model.
     await _resolve_deferred_topics(session, deferred_topics)
@@ -880,7 +880,7 @@ async def narrate_posts(
     post_id: int | None = None,
     voice: str | None = None,
 ) -> int:
-    """Synthesize TTS narration for published feature posts in one voice and store
+    """Synthesize TTS narration for published article posts in one voice and store
     the MP3 under settings.audio_dir. Data-driven like the other stages: a
     (post, voice) is (re)narrated when it has no `ready` audio or when its script
     hash has drifted (e.g. a QA revision changed the sections). Returns the number
@@ -910,7 +910,7 @@ async def narrate_posts(
             (
                 await session.execute(
                     select(Post.id)
-                    .where(Post.kind == "feature", Post.status == "published")
+                    .where(Post.kind == "article", Post.status == "published")
                     .order_by(Post.id.desc())
                 )
             ).scalars()
@@ -929,7 +929,7 @@ async def narrate_posts(
             log.info("narrate stage pausing after %d posts", narrated)
             break
         post = await session.get(Post, pid)
-        if post is None or post.kind != "feature":
+        if post is None or post.kind != "article":
             continue
         script = build_script(post)
         if not script.strip():

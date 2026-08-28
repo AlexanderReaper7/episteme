@@ -1,6 +1,6 @@
 {# Unified feed cards. Every unit is a Post; the WHOLE card is one link
    (`.card-link` stretched over it) - never image and title as separate anchors.
-   Secondary links (provenance) sit above the stretch via z-index. Feature posts
+   Secondary links (provenance) sit above the stretch via z-index. Article posts
    open their generated read at /post/{id}; aggregate cluster cards open the
    cluster detail at the same route (which lists the external sources). #}
 {% for post in posts %}
@@ -43,9 +43,9 @@
   {% endif %}
 {% else %}
   {# Denormalized at write time (pipeline.write_posts) so the feed never loads a
-     feature's story items just to find its banner - see web.app._feed_page. #}
+     article's story items just to find its banner - see web.app._feed_page. #}
   {% set banner = post.banner_url %}
-  <article class="card card--feature">
+  <article class="card card--article">
     <a class="card-link" href="/post/{{ post.id }}" aria-label="{{ post.title }}"></a>
     {% if banner %}
     <div class="card-banner">
@@ -55,7 +55,7 @@
     {% endif %}
     <div class="card-body">
       <div class="card-meta">
-        <span class="card-kind card-kind--feature">{{ ico.icon("article") }} Article</span>
+        <span class="card-kind card-kind--article">{{ ico.icon("article") }} Article</span>
         <span class="byline">Episteme</span>
         <span class="muted">{{ ico.icon("clock") }} {{ post.reading_time_minutes }} min · {{ post.difficulty }}</span>
         <time>{{ post.generated_at | dt }}</time>

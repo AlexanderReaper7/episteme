@@ -13,7 +13,7 @@ source items. Trigger a run with:
   {% endwith %}
 </section>
 {% else %}
-{# One unified vertical stream: features and aggregate cluster cards interleaved. #}
+{# One unified vertical stream: articles and aggregate cluster cards interleaved. #}
 <section id="feed" class="feed">
   {% with posts = feed.posts, has_more = feed.has_more, next_cursor = feed.next_cursor, first_page = feed.first_page, feedback_contexts = feed.feedback_contexts %}
   {% include "_feed.html" %}

@@ -344,7 +344,7 @@ class Settings(BaseSettings):
     web_internal_url: str = "http://web:8200"
 
     # --- TTS narration (Fish Audio; the `narrate` pipeline stage) ---
-    # Reads a published feature post, renders its spoken script (deterministic for
+    # Reads a published article post, renders its spoken script (deterministic for
     # now — a future LLM "preprocessing" pass will emit an emotion/pronunciation-
     # marked script instead), synthesizes it via Fish Audio, and stores the MP3
     # under audio_dir (bind-mounted to the host in compose). Manual-only until

@@ -168,7 +168,7 @@ def _agg_banner(items) -> str | None:
 async def _load_aggregate_items(session, posts: list[Post]) -> None:
     """Eager-load items (+ their sources) for the AGGREGATE posts only, in one
     batched query keyed by story. Aggregate cards render from their story's items;
-    feature cards read the denormalized `Post.banner_url` and never touch items, so
+    article cards read the denormalized `Post.banner_url` and never touch items, so
     they're skipped. The `Story` rows were already loaded by the caller's
     `selectinload(Post.story)`, so this populates `.items` on those same
     identity-mapped instances (the query result itself is unused)."""
@@ -184,9 +184,9 @@ async def _load_aggregate_items(session, posts: list[Post]) -> None:
 
 async def _feed_page(session, cursor: tuple[float, int] | None = None) -> dict:
     """Unified vertical stream (spec §8): one column of every published post —
-    generated `feature` articles and identity-only `aggregate` cluster cards
+    generated `article` posts and identity-only `aggregate` cluster cards
     interleaved as equal units, ranked by interest affinity decayed by age
-    (`_rank_expr`). Features age from when they were written; aggregates from
+    (`_rank_expr`). Articles age from when they were written; aggregates from
     their story's latest item, so a cluster keeps surfacing as new sources join it.
 
     Hard blocks are applied as filters BEFORE ranking (`_block_filters`): a
@@ -208,10 +208,10 @@ async def _feed_page(session, cursor: tuple[float, int] | None = None) -> dict:
     rank = _rank_expr(feed_at)
     profile_state = await profile.load(session)
     # Load the Story (needed for both kinds: aggregate cards render from it, and the
-    # feed_at sort touches it) but NOT its items — a feature card reads its banner
+    # feed_at sort touches it) but NOT its items — an article card reads its banner
     # from the denormalized `Post.banner_url`, so it never needs the story's items.
     # Only aggregate cards render from items; those are batch-loaded below, keyed by
-    # story, so a feature-heavy page stops dragging in every cluster's items+sources.
+    # story, so an article-heavy page stops dragging in every cluster's items+sources.
     # `rank` is selected alongside the row, not recomputed in Python afterwards:
     # the cursor is compared against this same expression on the next request, and
     # `tanh` is libm — the web container's and Postgres's need not agree in the
@@ -305,7 +305,7 @@ def _feed_cards_sig(posts) -> list:
     """The per-card render signature for `_feed.html` — every field the cards read,
     in order — shared by the full-feed validator (`_feed_etag`) and the
     infinite-scroll partial validator (`_feed_partial_etag`) so both mirror the
-    template identically and neither can drift into a stale 304. A feature card reads
+    template identically and neither can drift into a stale 304. An article card reads
     only row columns (title / summary / banner / meta), so a QA revision that rewrites
     only body sections legitimately leaves it unchanged (the post PAGE etag still
     moves). An aggregate card renders from `story.items | first` + the item count +
@@ -412,7 +412,7 @@ def _feed_partial_etag(page: dict) -> str:
     itself this endpoint has a single representation — it's only ever the `_feed.html`
     fragment, keyed by the cursor already in the URL — so there is no `fragment` /
     `Vary: HX-Request` split. It mirrors the same card fields as the feed, so a
-    changed page (an aggregate gains an item, a rewritten feature drops out) never
+    changed page (an aggregate gains an item, a rewritten article drops out) never
     answers a stale 304, while an unchanged deep page revalidates as a cheap bodyless
     304 and re-scrolls within the freshness window are pure cache hits."""
     return _weak_etag(
@@ -533,12 +533,12 @@ def _post_page_etag(
 ) -> str:
     """A weak validator for a post's page, covering everything the render reads.
 
-    A FEATURE reads its own columns: a QA revision mutates `sections`/`quality_score`
+    AN ARTICLE reads its own columns: a QA revision mutates `sections`/`quality_score`
     in place (hashed here, so it re-validates), while a rewrite mints a new post
     id / URL. An AGGREGATE has NULL content columns and renders entirely from its
     story's items (which keep growing as ingestion feeds the cluster), so those are
     folded in instead — a row hash alone would be stale the moment a new item lands.
-    Narration controls (voice catalog + default + tts-configured) drive the feature
+    Narration controls (voice catalog + default + tts-configured) drive the article
     player and are included for both kinds (harmless over-invalidation on an
     aggregate, which has no player).
 
@@ -623,7 +623,7 @@ async def post_view(request: Request, post_id: int):
     tts_configured = bool(settings.fish_api_key)
 
     # Conditional GET for both post kinds AND both representations (full document +
-    # boosted-htmx fragment): the etag folds in everything the render reads (feature
+    # boosted-htmx fragment): the etag folds in everything the render reads (article
     # columns / aggregate story items + narration controls) plus the block being
     # emitted, so it changes exactly when the page would and no entry can satisfy a
     # request for a different representation. This is what makes in-app article

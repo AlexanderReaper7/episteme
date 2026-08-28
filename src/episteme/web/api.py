@@ -1023,7 +1023,7 @@ async def api_posts_search(
     q: str = Query(..., min_length=1),
     limit: int = Query(10, ge=1, le=50),
 ):
-    """Find published feature posts: literal title/summary match merged above
+    """Find published article posts: literal title/summary match merged above
     semantic neighbours (recommend.search). Exposed as its own endpoint so the
     ranking is scriptable and checkable without going through the assistant."""
     async with SessionLocal() as session:
@@ -1094,7 +1094,7 @@ async def api_post_audio_stream(post_id: int, request: Request, voice: str | Non
     fmt = settings.tts_audio_format
     async with SessionLocal() as session:
         post = await session.get(Post, post_id)
-        if post is None or post.kind != "feature":
+        if post is None or post.kind != "article":
             raise HTTPException(404)
         voice_id = voice or await default_voice_id(session, settings.tts_default_voice)
         voice_obj = await get_voice(session, voice_id)
@@ -1178,7 +1178,7 @@ async def api_post_audio_stream(post_id: int, request: Request, voice: str | Non
 
 @router.get("/posts/{post_id}/next")
 async def api_post_next(post_id: int):
-    """The next published FEATURE post after this one in feed order (features sort
+    """The next published ARTICLE post after this one in feed order (articles sort
     by generated_at DESC; see web.app._feed_page) — drives continuous ("podcast")
     playback. Returns {next_id, url} or nulls at the end of the feed."""
     async with SessionLocal() as session:
@@ -1189,7 +1189,7 @@ async def api_post_next(post_id: int):
             await session.execute(
                 select(Post.id)
                 .where(
-                    Post.kind == "feature",
+                    Post.kind == "article",
                     Post.status == "published",
                     or_(
                         Post.generated_at < current.generated_at,
@@ -1211,7 +1211,7 @@ async def api_post_next(post_id: int):
 
 @router.post("/posts/{post_id}/narrate")
 async def api_post_narrate(post_id: int, voice: str | None = None):
-    """Explicitly (pre-)generate narration for a feature post via the worker
+    """Explicitly (pre-)generate narration for an article post via the worker
     stage — the batch path (the post page streams on demand instead). Defers a
     narrate job; the caller polls GET /api/posts/{id}/audio until `ready`.
     Idempotent: the stage skips a voice already synthesized from the current
@@ -1220,8 +1220,8 @@ async def api_post_narrate(post_id: int, voice: str | None = None):
         post = await session.get(Post, post_id)
         if post is None:
             raise HTTPException(404)
-        if post.kind != "feature":
-            raise HTTPException(400, "only feature posts can be narrated")
+        if post.kind != "article":
+            raise HTTPException(400, "only article posts can be narrated")
         voice = voice or await default_voice_id(session, settings.tts_default_voice)
         if await get_voice(session, voice) is None:
             raise HTTPException(400, f"Unknown voice {voice!r}")

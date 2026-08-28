@@ -61,7 +61,7 @@ class FeedbackError(ValueError):
 
 
 async def _snapshot(session: AsyncSession, post_id: int) -> dict:
-    """Freeze what the reader is reacting to. A feature post carries its own
+    """Freeze what the reader is reacting to. An article post carries its own
     topics and difficulty; an aggregate card has neither — it renders from its
     story — so the story supplies them. The embedding is the story centroid,
     which is what the scorer compares candidates against.

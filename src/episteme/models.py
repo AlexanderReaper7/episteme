@@ -107,7 +107,7 @@ class Story(Base):
 class Post(Base):
     """A feed content unit — ALL feed content is a post (decided 2026-07-18), so
     every visible unit has one id from triage verdict to publication/archival.
-    `kind`: `feature` = long-form article (title/summary/sections filled);
+    `kind`: `article` = the long-form written post (title/summary/sections filled);
     `aggregate` = identity-only row for a cluster card — no stored content, the
     card renders from the story's items at read time (canonical minimum).
     Micro-posts and minigames are later Phase 3 work (definitions in spec §12).
@@ -118,7 +118,7 @@ class Post(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     story_id: Mapped[int] = mapped_column(ForeignKey("stories.id"))
-    kind: Mapped[str] = mapped_column(String(20), default="feature")
+    kind: Mapped[str] = mapped_column(String(20), default="article")
     title: Mapped[str | None] = mapped_column(Text)
     summary: Mapped[str | None] = mapped_column(Text)
     difficulty: Mapped[str | None] = mapped_column(String(20))
@@ -126,7 +126,7 @@ class Post(Base):
     sections: Mapped[list[Any]] = mapped_column(JSONB, default=list)
     reading_time_minutes: Mapped[int] = mapped_column(default=1)
     # Denormalized feed-card banner (first image among the story's items), stamped at
-    # write time so the feed renders a feature card without loading its story's items
+    # write time so the feed renders an article card without loading its story's items
     # — the "derivation isn't cheap, so store the minimum" call (see web.app._feed_page).
     banner_url: Mapped[str | None] = mapped_column(Text)
     model_used: Mapped[str | None] = mapped_column(Text)
@@ -161,7 +161,7 @@ class PostAudio(Base):
     """One TTS narration of a post version, in one voice. A post can have several
     (one per catalog voice the reader has generated), so the row is keyed by
     (post_id, voice) — the reader picks a voice on the page and each is synthesized
-    and cached independently. Feature posts only — aggregate cards render from
+    and cached independently. Article posts only — aggregate cards render from
     their items and aren't narrated.
 
     The MP3 lives on disk under settings.audio_dir (bind-mounted to the host); this

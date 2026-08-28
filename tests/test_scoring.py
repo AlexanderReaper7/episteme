@@ -126,7 +126,7 @@ def test_components_explain_the_total():
 # --- Feed ordering ----------------------------------------------------------------
 
 
-def _post(affinity=None, hours_old=0.0, kind="feature", post_id=1, now=None):
+def _post(affinity=None, hours_old=0.0, kind="article", post_id=1, now=None):
     """`now` is overridable so two posts can be built at the SAME instant: the
     freshness term is a continuous function of `generated_at`, so two calls a few
     microseconds apart differ in the 12th digit and an exact-equality assertion
@@ -220,7 +220,7 @@ def test_freshness_constant_is_tunable(monkeypatch):
 
 def test_aggregate_cards_rank_by_their_story_recency():
     """A cluster keeps surfacing as new sources join it, which is the only reason
-    aggregates use a different timestamp than features."""
+    aggregates use a different timestamp than articles."""
     story = SimpleNamespace(last_item_at=datetime.now(UTC), items=[])
     stale_story = SimpleNamespace(
         last_item_at=datetime.now(UTC) - timedelta(hours=48), items=[]

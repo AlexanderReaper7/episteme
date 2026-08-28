@@ -167,9 +167,9 @@ STAGES: tuple[dict, ...] = (
               "however many outlets covered it."),
     _job("triage", "triage", takes="new stories", makes="write / aggregate / skip",
          note="The fast model reads a digest of each new story and decides its fate: "
-              "a written feature, an aggregation card, or nothing. Cheap, and it is "
+              "a written article, an aggregation card, or nothing. Cheap, and it is "
               "what keeps the expensive stage off everything that does not deserve it."),
-    _job("write", "write", takes="stories marked write", makes="feature posts",
+    _job("write", "write", takes="stories marked write", makes="article posts",
          note="The main model researches and writes the article in one agentic "
               "conversation, choosing its own rich sections. Nearly all the GPU time "
               "on this page is here: budget minutes per story, not seconds."),

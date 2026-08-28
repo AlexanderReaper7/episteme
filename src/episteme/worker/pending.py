@@ -10,7 +10,7 @@ stage's own query would agree with it until the first time someone edited one of
 them, and a number that is wrong in a way nothing can detect is worse than no
 number: it is the same button press, taken on a false premise.
 
-`narrate` is deliberately absent. Its pending set is every published feature post
+`narrate` is deliberately absent. Its pending set is every published article post
 whose rendered script hash differs from the audio already stored for the chosen
 voice, which means building the script for every post - not a count, a pass. It
 is the one stage whose "due" is not a predicate over indexed columns.

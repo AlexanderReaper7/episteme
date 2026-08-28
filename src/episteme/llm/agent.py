@@ -10,12 +10,12 @@ as one flowing exchange.
 
 The writer's loop (spec §7): the main model may `web_search` and `fetch_page` to
 research as it sees fit, may `demote_story` when the material doesn't merit a
-feature, and finally produces the post draft. Everything retrieved from the web is
+article, and finally produces the post draft. Everything retrieved from the web is
 framed as UNTRUSTED DATA.
 
 The blast radius of a prompt injection in fetched content stays small: the only
 consequential tool is `demote_story`, which at worst sends one story to the
-aggregation stream instead of the feature feed.
+aggregation stream instead of the article feed.
 """
 
 from __future__ import annotations
@@ -93,10 +93,10 @@ _DEMOTE_STORY = {
     "type": "function",
     "function": {
         "name": "demote_story",
-        "description": "DECLINE to write a feature for this story because even after "
+        "description": "DECLINE to write an article for this story because even after "
         "research the material is too thin or of too little learning value. The story "
         "falls back to the aggregation stream — a fine outcome for minor items. Do NOT "
-        "call this when the material IS worth a feature — to proceed to writing, call "
+        "call this when the material IS worth an article — to proceed to writing, call "
         "finish_research instead.",
         "parameters": {
             "type": "object",
@@ -144,11 +144,11 @@ _DRAFT_REQUEST = (
 # Budget-refusal tool replies (matched exactly by the stuck-loop breaker below).
 _SEARCH_EXHAUSTED = (
     "Search budget exhausted; stop searching. Write from what you have, or call "
-    "demote_story if it isn't enough for a feature."
+    "demote_story if it isn't enough for an article."
 )
 _FETCH_EXHAUSTED = (
     "Fetch budget exhausted; stop fetching. Write from what you have, or call "
-    "demote_story if it isn't enough for a feature."
+    "demote_story if it isn't enough for an article."
 )
 # A model that keeps re-issuing tool calls after its budgets ran dry (story 371
 # repeated the same two searches for six turns) gets this many all-refused turns

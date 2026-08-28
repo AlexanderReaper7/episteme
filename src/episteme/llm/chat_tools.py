@@ -177,7 +177,7 @@ async def _list_recent_posts(ctx: ChatContext, args: dict) -> str:
     rows = (
         await ctx.session.execute(
             select(Post)
-            .where(Post.status == "published", Post.kind == "feature")
+            .where(Post.status == "published", Post.kind == "article")
             .order_by(Post.generated_at.desc())
             .limit(limit)
         )

@@ -322,7 +322,7 @@ NO_QUIZ_MESSAGE = (
 
 
 def _require_quiz(sections: list) -> None:
-    """Every feature carries a comprehension check (user decision 2026-08-02).
+    """Every article carries a comprehension check (user decision 2026-08-02).
 
     The JSON-schema grammar constrains each section's *shape* but cannot demand the
     presence of a member in a list, so this is where "all posts have a quiz" is

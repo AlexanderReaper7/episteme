@@ -17,7 +17,7 @@ The semantic leg rides `Story.centroid`. That vector already means "what this
 post is about" and is one join away, so this needs no `Post.embedding` column
 and no backfill — the canonical minimum, derived rather than copied.
 
-Scope is published FEATURE posts. An aggregate card has no title, summary or
+Scope is published ARTICLE posts. An aggregate card has no title, summary or
 body of its own (0011: it renders from its story's items at read time), so it
 has nothing to match literally and nothing to show in a result row.
 """
@@ -68,7 +68,7 @@ def literal_query(query: str, limit: int):
         select(Post.id)
         .where(
             Post.status == "published",
-            Post.kind == "feature",
+            Post.kind == "article",
             or_(
                 Post.title.ilike(pattern, escape="\\"),
                 Post.summary.ilike(pattern, escape="\\"),
@@ -80,7 +80,7 @@ def literal_query(query: str, limit: int):
 
 
 def semantic_query(vector: Sequence[float], limit: int):
-    """Published features nearest `vector`, by cosine distance over the centroid
+    """Published articles nearest `vector`, by cosine distance over the centroid
     of the story each post was written from."""
     distance = Story.centroid.cosine_distance(vector)
     return (
@@ -88,7 +88,7 @@ def semantic_query(vector: Sequence[float], limit: int):
         .join(Story, Post.story_id == Story.id)
         .where(
             Post.status == "published",
-            Post.kind == "feature",
+            Post.kind == "article",
             Story.centroid.is_not(None),
         )
         .order_by(distance)
@@ -97,7 +97,7 @@ def semantic_query(vector: Sequence[float], limit: int):
 
 
 async def search_posts(session: AsyncSession, query: str, *, limit: int = 10) -> list[Post]:
-    """Search published feature posts, best match first.
+    """Search published article posts, best match first.
 
     Degrades to literal-only when the embed endpoint is down, rather than
     failing: half a search is useful and an error is not, and `LLMError` is the
