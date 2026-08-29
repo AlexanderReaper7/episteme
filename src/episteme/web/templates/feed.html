@@ -15,9 +15,11 @@ source items. Trigger a run with:
 {% else %}
 {# One unified vertical stream: articles and aggregate cluster cards interleaved. #}
 <section id="feed" class="feed">
-  {% with posts = feed.posts, has_more = feed.has_more, next_cursor = feed.next_cursor, first_page = feed.first_page, feedback_contexts = feed.feedback_contexts %}
+  {# No `with` re-listing the page's keys: `/` spreads the same dict `/partials/feed`
+     passes as its whole context, so both routes hand `_feed.html` one contract.
+     The list that used to be here was a second place to remember, and it was
+     forgotten - a filed card asked for `correspondent_labels` and got a 500. #}
   {% include "_feed.html" %}
-  {% endwith %}
 </section>
 {% endif %}
 {% endblock %}

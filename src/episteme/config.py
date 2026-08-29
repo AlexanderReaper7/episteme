@@ -188,6 +188,14 @@ class Settings(BaseSettings):
 
     # --- Pipeline ---
     pipeline_cron: str = "0 3 * * *"  # nightly; idle-aware gating comes in Phase 5
+    # Matsedel reads each kitchen once a week (0046). Monday, because that is when
+    # the new week is up. Crons are evaluated in the WORKER's zone, which is UTC,
+    # so 02:00 here is 04:00 in Vanersborg - comfortably before the 06:00 local
+    # hour Monday's own post publishes at. A plugin's schedule is in core's
+    # settings because procrastinate needs it at import time and a `correspondents`
+    # row is read at run time; the hours a post publishes and expires at, which
+    # nothing needs early, are on the row.
+    matsedel_cron: str = "0 2 * * 1"
     embed_batch_size: int = 16
     cluster_similarity_threshold: float = 0.82  # cosine similarity to join a story
     cluster_window_days: int = 5

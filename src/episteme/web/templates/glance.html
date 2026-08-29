@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+
+{# Glance (0046). Core owns the layout; each block's contents come from the
+   correspondent's own `/c/<slug>/glance` route, fetched separately so a slow one
+   delays only itself.
+
+   Every block is pre-rendered with its title and its failure line already in the
+   document. htmx does not swap a 4xx/5xx body, so a block that never answers
+   would otherwise sit on "loading" forever with nothing to say; app.js flips the
+   two on `htmx:responseError`, `htmx:sendError` and `htmx:timeout`. The retry
+   link re-fires the same fragment through the `retry` trigger rather than
+   reloading the page, so the blocks that DID load are left alone. #}
+
+{% block title %} • Glance{% endblock %}
+
+{% block content %}
+<div class="glance">
+  <h2 class="glance-title">Glance</h2>
+  <p class="glance-intro muted">What each correspondent has standing right now.</p>
+
+  {# Additive per-correspondent CSS, in the body for the same reason as on a
+     correspondent's own page: a boosted navigation never re-renders <head>, so a
+     link there would arrive on a hard refresh and on nothing else. #}
+  {% for block in blocks if block.stylesheet %}
+  <link rel="stylesheet" href="/c/{{ block.slug }}/style.css">
+  {% endfor %}
+
+  <div class="glance-blocks">
+    {% for block in blocks %}
+    <section class="glance-block correspondent--{{ block.slug }}" data-glance-slug="{{ block.slug }}">
+      <h3 class="glance-block-title">
+        {# No trailing slash: a plugin's index route is `""`, so `/c/<slug>/`
+           answers 307 and costs a round trip on every click. #}
+        <a href="/c/{{ block.slug }}">{{ block.label }}</a>
+      </h3>
+      {# `preload="false"` opts out of the extension base.html turns on for the
+         whole document: it preloads anything carrying `hx-get` on mouseover, and
+         this element already fetches itself on `load`. Watched costing a second
+         404 exactly 100 ms after every retry (the extension's own hover delay),
+         because unhiding the body under the cursor fires `mouseover` on it. #}
+      {# `hx-disinherit="*"` is load-bearing, and it is the reason this block can
+         hold HTML core did not write. htmx inherits hx-target from the nearest
+         ancestor that declares one, so without this every boosted <a> a
+         correspondent puts in its block inherits `hx-target="this"` and swaps
+         its own page - header, sprite, chat rail - into the block instead of
+         into #main-content. Watched happening on 2026-08-28 the first time a
+         block carried a link. Disinheritance applies to descendants only, so
+         this element's own fetch below is unaffected. #}
+      <div class="glance-block-body"
+           hx-get="/c/{{ block.slug }}/glance"
+           hx-trigger="load, retry"
+           hx-target="this"
+           hx-swap="innerHTML"
+           hx-request='{"timeout": 8000}'
+           hx-disinherit="*"
+           preload="false">
+        <span class="loading">loading…</span>
+      </div>
+      <p class="glance-block-failed" hidden>
+        {{ ico.icon("bad") }} {{ block.label }} is not responding.
+        {# A button, not an anchor: every <a> on this page is boosted, and
+           `preventDefault` on the bubbled click does not stop htmx, which has
+           already taken the event. A boosted `href="#"` fired a second request
+           and swapped #main-content, wiping the blocks that HAD loaded. Watched
+           in the browser on 2026-08-28, not reasoned about. #}
+        <button type="button" class="glance-retry" data-glance-retry>try again</button>
+      </p>
+    </section>
+    {% else %}
+    <p class="empty-state">No correspondents are enabled. Glance fills itself from whatever is.</p>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

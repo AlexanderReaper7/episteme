@@ -1,0 +1,46 @@
+{# What Matsedel has collected. A menu's history is standing content by the time
+   the week is over, and this is the page that keeps it (0046). #}
+<div class="matsedel">
+  <div class="matsedel-nav">
+    <a href="/c/matsedel">{{ ico.icon("previous") }} the week</a>
+  </div>
+
+  <h3>Kitchens</h3>
+  {% if kitchens %}
+  <table class="matsedel-table">
+    <thead>
+      <tr><th>Kitchen</th><th class="num">Weeks</th><th class="num">Lines</th><th>First</th><th>Latest</th></tr>
+    </thead>
+    <tbody>
+      {% for kitchen in kitchens %}
+      <tr>
+        <td>{{ kitchen.name }}</td>
+        <td class="num">{{ kitchen.weeks }}</td>
+        <td class="num">{{ kitchen.lines }}</td>
+        <td>{{ kitchen.first }}</td>
+        <td>{{ kitchen.last }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty-state">Nothing read yet.</p>
+  {% endif %}
+
+  <h3>Served more than once</h3>
+  {# Lines of a single word are left out: `BUFFE` heads a list rather than naming
+     a dish, and a table of four labels says nothing. The same rule a post's
+     summary uses, and the full lines are on the week's page either way. #}
+  {% if repeats %}
+  <table class="matsedel-table">
+    <thead><tr><th>Kitchen</th><th>Line</th><th class="num">Times</th></tr></thead>
+    <tbody>
+      {% for row in repeats %}
+      <tr><td>{{ row.name }}</td><td>{{ row.text }}</td><td class="num">{{ row.times }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">Nothing has come round twice yet. One week is not a pattern.</p>
+  {% endif %}
+</div>

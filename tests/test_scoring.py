@@ -126,14 +126,16 @@ def test_components_explain_the_total():
 # --- Feed ordering ----------------------------------------------------------------
 
 
-def _post(affinity=None, hours_old=0.0, kind="article", post_id=1, now=None):
+def _post(affinity=None, hours_old=0.0, kind="article", post_id=1, now=None,
+          publish_at=None):
     """`now` is overridable so two posts can be built at the SAME instant: the
     freshness term is a continuous function of `generated_at`, so two calls a few
     microseconds apart differ in the 12th digit and an exact-equality assertion
     between them fails at random."""
     at = (now or datetime.now(UTC)) - timedelta(hours=hours_old)
     return SimpleNamespace(
-        id=post_id, kind=kind, affinity_score=affinity, generated_at=at, story=None
+        id=post_id, kind=kind, affinity_score=affinity, generated_at=at, story=None,
+        publish_at=publish_at,
     )
 
 
@@ -227,12 +229,28 @@ def test_aggregate_cards_rank_by_their_story_recency():
     )
     minted = datetime.now(UTC) - timedelta(days=10)
     fresh = SimpleNamespace(
-        id=1, kind="aggregate", affinity_score=0.0, generated_at=minted, story=story
+        id=1, kind="aggregate", affinity_score=0.0, generated_at=minted, story=story,
+        publish_at=None,
     )
     stale = SimpleNamespace(
-        id=2, kind="aggregate", affinity_score=0.0, generated_at=minted, story=stale_story
+        id=2, kind="aggregate", affinity_score=0.0, generated_at=minted, story=stale_story,
+        publish_at=None,
     )
     assert _rank_value(fresh) > _rank_value(stale)
+
+
+def test_publish_at_wins_over_every_other_timestamp():
+    """A correspondent creates a whole week of posts from one read (0046), so five
+    of them share a `generated_at` of the day they were made. Sorting on that puts
+    Friday's card in the feed already five days stale."""
+    made = datetime.now(UTC) - timedelta(days=5)
+    due_now = _post(affinity=0.0, post_id=1, now=made, publish_at=datetime.now(UTC))
+    made_now = _post(affinity=0.0, post_id=2)
+    assert _rank_value(due_now) == pytest.approx(_rank_value(made_now), abs=1e-6)
+    # And a scheduled post that is already due outranks one scheduled earlier.
+    earlier = _post(affinity=0.0, post_id=3, now=made,
+                    publish_at=datetime.now(UTC) - timedelta(hours=48))
+    assert _rank_value(due_now) > _rank_value(earlier)
 
 
 def test_rank_matches_the_documented_formula():
@@ -367,3 +385,21 @@ async def test_an_unreachable_queue_never_fails_the_click(monkeypatch):
     broken.app = _Broken()
     monkeypatch.setitem(sys.modules, "episteme.worker.app", broken)
     await scoring.defer_rescore()  # must not raise
+
+
+def test_the_feed_visibility_window_is_one_policy_with_two_bounds():
+    """`publish_at` and `expires_at` are the same mechanism from both ends, and
+    the boundary conditions are not symmetric: a post due exactly now IS in the
+    feed (<=), one expiring exactly now is NOT (>). NULL means no bound."""
+    from sqlalchemy.dialects import postgresql
+
+    from episteme.web.app import _visible_now
+
+    sql = [
+        str(c.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
+        for c in _visible_now()
+    ]
+    assert sql == [
+        "posts.publish_at IS NULL OR posts.publish_at <= now()",
+        "posts.expires_at IS NULL OR posts.expires_at > now()",
+    ]

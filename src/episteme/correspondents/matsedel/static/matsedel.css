@@ -1,0 +1,274 @@
+/* Matsedel's additive stylesheet (0046). Loaded on `/c/matsedel*` and on Glance,
+   never on the feed, where several correspondents appear side by side and
+   per-correspondent styling would read as several applications sharing a page.
+
+   Every rule is scoped under `.correspondent--matsedel`, which core emits on the
+   page wrapper and on the Glance block. Colors come from the tokens in
+   `style.css`, so this follows the theme rather than declaring one. */
+
+/* Each restaurant's own typeface, taken from its own site: Koppargrillen sets
+   Manrope, Restaurang Italia Spectral, Vänerparken Cardo and Kalasboden Open
+   Sans. All four are Google families, so they are named rather than copied.
+
+   `@import` rather than a <link> because core injects the <link> to THIS file
+   and a plugin owns no <head>; it costs a second round trip, which `display=swap`
+   makes invisible - the name is readable in the fallback face immediately. Every
+   stack below names a real fallback, so the page is still deliberate offline. */
+@import url("https://fonts.googleapis.com/css2?family=Cardo:wght@700&family=Manrope:wght@700&family=Open+Sans:wght@700&family=Spectral:wght@700&display=swap");
+
+/* Core gives a correspondent page the feed's measure, which is right for prose
+   and wrong for four kitchens side by side: at 58rem the fourth column wraps onto
+   a row of its own. Both classes are on the same element, so two of them beat
+   core's one, and this applies to the PAGE only - the Glance block carries
+   `correspondent--matsedel` without `correspondent-page`. */
+.correspondent-page.correspondent--matsedel { max-width: 96rem; }
+
+.correspondent--matsedel {
+  /* The kitchen bar parks directly under the site header, so it reads core's
+     `--header-height` rather than measuring the header itself. The literal that
+     was here (4.1rem) was half a pixel short of the real 65.11px, and the page
+     scrolled through the sliver. A day anchored from a feed card has to clear
+     both bars, hence the bar's own height as a second token. */
+  --matsedel-head-height: 2.5rem;
+}
+
+.correspondent--matsedel .matsedel-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  font-size: 0.9rem;
+}
+
+.correspondent--matsedel .matsedel-week {
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* Icon-only, so it needs a hit target of its own: the glyph is 1.35rem here and
+   a bare <a> around it is exactly that tall and no wider. The colour is the
+   file-wide link default, and the hover with it. */
+.correspondent--matsedel .matsedel-step {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.35rem;
+  border-radius: 0.35rem;
+  text-decoration: none;
+}
+
+.correspondent--matsedel .matsedel-step:hover { background: var(--card-bg); }
+
+.correspondent--matsedel .matsedel-stats-link { margin-left: auto; }
+
+/* --- the roster, named once ---------------------------------------------- */
+
+/* The header and every day's row are the same grid, which is the whole reason a
+   day keeps a cell for a kitchen that published nothing. */
+.correspondent--matsedel .matsedel-kitchens-head,
+.correspondent--matsedel .matsedel-cells {
+  display: grid;
+  grid-template-columns: repeat(var(--matsedel-columns, 4), minmax(0, 1fr));
+  gap: 1.25rem;
+}
+
+.correspondent--matsedel .matsedel-kitchens-head {
+  position: sticky;
+  top: var(--header-height);
+  z-index: 5;
+  align-items: end;
+  padding: 0.6rem 0 0.5rem;
+  border-bottom: 1px solid var(--border);
+  /* The days scroll underneath, so the bar cannot be transparent. Core's frost
+     tokens rather than a second recipe: the 88% written here first read as a
+     solid black band beside the header's 82%, which is two materials. */
+  background: var(--frost-bg);
+  backdrop-filter: var(--frost-blur);
+}
+
+.correspondent--matsedel .matsedel-kitchen-name {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+  line-height: 1.2;
+  /* No uppercase and no letterspacing here, deliberately: both flatten the
+     differences between four typefaces, which is the only thing this says. */
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* No underline: it runs straight through four different typefaces and is the one
+   thing that would make them look alike. The name is still a link to the
+   restaurant's own page, which the hover says. */
+.correspondent--matsedel .matsedel-kitchen-name a {
+  color: var(--text);
+  text-decoration: none;
+}
+.correspondent--matsedel .matsedel-kitchen-name a:hover {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 0.25em;
+}
+
+.correspondent--matsedel .matsedel-k--koppargrillen {
+  font-family: "Manrope", "Segoe UI", system-ui, sans-serif;
+}
+.correspondent--matsedel .matsedel-k--italia {
+  font-family: "Spectral", Georgia, "Times New Roman", serif;
+}
+.correspondent--matsedel .matsedel-k--vanerparken {
+  font-family: "Cardo", Georgia, "Times New Roman", serif;
+}
+.correspondent--matsedel .matsedel-k--kalasboden {
+  font-family: "Open Sans", "Segoe UI", system-ui, sans-serif;
+}
+
+/* --- a day ---------------------------------------------------------------- */
+
+.correspondent--matsedel .matsedel-day {
+  border-top: 1px solid var(--border);
+  padding: 1.25rem 0;
+  /* The card's href is `#day-2026-08-24`, so the day it lands on must clear the
+     site header AND the kitchen bar that sticks under it. */
+  scroll-margin-top: calc(var(--header-height) + var(--matsedel-head-height));
+}
+
+.correspondent--matsedel .matsedel-day:first-of-type { border-top: 0; }
+
+.correspondent--matsedel .matsedel-day.is-today {
+  border-left: 2px solid var(--accent);
+  padding-left: 1rem;
+}
+
+.correspondent--matsedel .matsedel-day-title {
+  margin: 0 0 0.75rem;
+  font-size: 1.1rem;
+}
+
+/* Said once in the sticky bar at full width. It comes back when the columns
+   stack, where the bar no longer sits above the cell it names. */
+.correspondent--matsedel .matsedel-cell-name { display: none; }
+
+.correspondent--matsedel .matsedel-cell-empty {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.correspondent--matsedel .matsedel-lines {
+  margin: 0;
+  padding-left: 1.1rem;
+  line-height: 1.6;
+}
+
+/* A heading the restaurant wrote inside its own menu. Not a bullet, because a
+   bullet says "you can order this" and `Fran Buffe:` is not something you can
+   order. It keeps the list's left edge by pulling back out of the indent. */
+.correspondent--matsedel .matsedel-line-label {
+  list-style: none;
+  margin: 0.7rem 0 0.2rem -1.1rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.correspondent--matsedel .matsedel-lines > .matsedel-line-label:first-child {
+  margin-top: 0;
+}
+
+/* --- narrow: the bar cannot name a column that is no longer there ---------- */
+
+@media (max-width: 1100px) {
+  .correspondent--matsedel .matsedel-kitchens-head { display: none; }
+  .correspondent--matsedel .matsedel-cells { grid-template-columns: minmax(0, 1fr); }
+  .correspondent--matsedel .matsedel-cell-name {
+    display: block;
+    margin: 0 0 0.4rem;
+    font-size: 1rem;
+    font-weight: 700;
+  }
+  .correspondent--matsedel .matsedel-day { scroll-margin-top: var(--header-height); }
+}
+
+/* --- tables (the stats page) ---------------------------------------------- */
+
+.correspondent--matsedel .matsedel-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 2rem;
+}
+
+.correspondent--matsedel .matsedel-table th,
+.correspondent--matsedel .matsedel-table td {
+  border-bottom: 1px solid var(--border);
+  padding: 0.4rem 0.6rem;
+  text-align: left;
+}
+
+.correspondent--matsedel .matsedel-table th {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.correspondent--matsedel .matsedel-table th.num,
+.correspondent--matsedel .matsedel-table td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- the Glance block --------------------------------------------------- */
+
+.correspondent--matsedel .matsedel-glance-day {
+  margin: 0 0 0.5rem;
+  font-weight: 700;
+}
+
+.correspondent--matsedel .matsedel-glance-kitchens {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.correspondent--matsedel .matsedel-glance-name {
+  display: block;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+/* A plain line each, no marker and no indent. It is still a <ul> because it is
+   a list of dishes and the block is read by more than eyes; the bullets are off
+   because the block is a summary sitting in a narrow column, and a column of
+   markers is decoration competing with four kitchen names for the same width. */
+.correspondent--matsedel .matsedel-glance-dishes {
+  margin: 0.15rem 0 0;
+  padding-left: 0;
+  list-style: none;
+  line-height: 1.45;
+}
+
+.correspondent--matsedel .matsedel-glance-dish { color: var(--muted); }
+
+/* The same treatment the week's page gives a label, at the block's scale: it
+   has to read as a heading over the lines under it rather than as one of them,
+   and there is no indent here for it to hang out of. */
+.correspondent--matsedel .matsedel-glance-label {
+  margin-top: 0.4rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.correspondent--matsedel .matsedel-glance-dishes > .matsedel-glance-label:first-child {
+  margin-top: 0;
+}

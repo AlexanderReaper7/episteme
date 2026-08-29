@@ -9,7 +9,7 @@ from ..db import SessionLocal
 from ..ingest import content_hash, get_adapter
 from ..ingest.base import RawItem
 from ..ingest.http import FetchError, escalate_mode, parse_retry_after
-from ..models import Source, SourceItem
+from ..models import Correspondent, Source, SourceItem
 from .app import app
 
 log = logging.getLogger("episteme.worker")
@@ -142,10 +142,28 @@ def _due_for_scheduled_fetch(source: Source, now: datetime) -> bool:
     return source.last_fetched_at + timedelta(minutes=interval) <= now
 
 
+def not_a_correspondents_source():
+    """**A correspondent's sources are read by the correspondent, never here** (0046).
+
+    They are ordinary `sources` rows so each site keeps its own cooldown, cache
+    validators and enabled flag, but their adapter fetches nothing and their
+    schedule is the correspondent's, so polling them would be four no-op jobs
+    every half hour.
+
+    One clause against the `correspondents` table rather than a registry lookup,
+    so it covers a configured correspondent whose plugin is not installed as well
+    as one that is. It is a named function rather than a line inside the query so
+    that a test can hold the rule itself.
+    """
+    return Source.type_name.not_in(select(Correspondent.slug))
+
+
 @app.task(name="episteme.ingest_all")
 async def ingest_all() -> None:
     """Defer an ingest_source job for every enabled, non-cooling-down source
-    that is due per its own fetch interval."""
+    that is due per its own fetch interval, minus every correspondent's own
+    sources (`not_a_correspondents_source`).
+    """
     now = datetime.now(UTC)
     async with SessionLocal() as session:
         sources = (
@@ -153,6 +171,7 @@ async def ingest_all() -> None:
                 await session.execute(
                     select(Source).where(
                         Source.enabled,
+                        not_a_correspondents_source(),
                         or_(
                             Source.cooldown_until.is_(None),
                             Source.cooldown_until <= now,

@@ -53,6 +53,50 @@
     }
   });
 
+  /* ===================== Glance blocks ================================== */
+
+  // A Glance block that does not answer has to SAY so (0046). htmx leaves a
+  // 4xx/5xx body unswapped and these fragments carry no `HX-Error-Page` header
+  // (they are not a navigation), so without this the block would sit on
+  // "loading" forever and read as a correspondent with nothing this week - which
+  // is exactly the state it must not be confusable with.
+  //
+  // Three events, because three different things go wrong: the correspondent
+  // answered with a status (responseError), the request never arrived
+  // (sendError), or it outlived the block's own `hx-request` timeout (timeout).
+  ["htmx:responseError", "htmx:sendError", "htmx:timeout"].forEach(function (name) {
+    document.body.addEventListener(name, function (e) {
+      var elt = e.detail && e.detail.elt;
+      var block = elt && elt.closest ? elt.closest(".glance-block") : null;
+      if (!block) return;
+      block.classList.add("glance-block--failed");
+      var failed = block.querySelector(".glance-block-failed");
+      if (failed) failed.hidden = false;
+      var body = block.querySelector(".glance-block-body");
+      if (body) body.hidden = true;
+    });
+  });
+
+  // Delegated: the retry line is in the document from the start, but the block it
+  // belongs to may be re-rendered by a swap at any point. The control is a
+  // <button>, not a link - every anchor on the page is boosted, and a boosted
+  // `href="#"` fires its own request and swaps #main-content out from under the
+  // blocks that did load. preventDefault does not stop that; htmx has already
+  // taken the click.
+  document.addEventListener("click", function (e) {
+    var retry = e.target.closest ? e.target.closest("[data-glance-retry]") : null;
+    if (!retry) return;
+    var block = retry.closest(".glance-block");
+    var body = block.querySelector(".glance-block-body");
+    block.classList.remove("glance-block--failed");
+    retry.closest(".glance-block-failed").hidden = true;
+    body.hidden = false;
+    body.innerHTML = '<span class="loading">loading…</span>';
+    // Re-fires this one fragment through its `retry` trigger. Reloading the page
+    // would re-fetch every block, including the ones that answered.
+    if (window.htmx) window.htmx.trigger(body, "retry");
+  });
+
   // Search `root` INCLUDING itself - htmx:load hands us the swapped element, which
   // may be the match or an ancestor of it.
   function pick(root, sel) {

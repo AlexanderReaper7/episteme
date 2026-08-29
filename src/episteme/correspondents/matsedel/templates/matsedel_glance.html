@@ -1,0 +1,43 @@
+{# Matsedel's Glance block: one day, every kitchen that published for it. A
+   fragment swapped into the frame core already drew, so no wrapper, no title and
+   no stylesheet link.
+
+   The week's page keeps a column open for a kitchen with nothing to say; here
+   the opposite is right, and `views.glance_block` drops the empty cells before
+   this renders. A block is a summary, and an empty column in a summary is noise.
+
+   An empty block is deliberately indistinguishable from a kitchen with nothing
+   this week (0046). What it must never look like is a correspondent that is
+   down, which is why this always answers 200 with a sentence. #}
+{% if day %}
+<p class="matsedel-glance-day">
+  <a href="/c/matsedel#day-{{ day.date }}">{{ day.name }} {{ day.date }}</a>
+</p>
+<ul class="matsedel-glance-kitchens">
+  {% for cell in day.kitchens %}
+  <li>
+    <span class="matsedel-glance-name matsedel-k--{{ cell.kitchen.site }}">{{ cell.kitchen.name }}</span>
+    {# One dish per line. Joined with a separator they ran together into a
+       paragraph that had to be truncated, so the kitchen with the most to offer
+       was the one whose menu got cut. A list has no length to trim.
+
+       A label is rendered as a heading, the same as on the week's page and by
+       the same rule (`tags.tag_of`). Dropping them was the first try and
+       it loses which dishes are the buffet and which come from the kitchen -
+       `Fran Buffe:` and `Fran koket:` are the only thing on the page saying so,
+       and a flat list of eight quietly asserts they are all the same thing. #}
+    <ul class="matsedel-glance-dishes">
+      {% for line in cell.lines %}
+      {% if line.label %}
+      <li class="matsedel-glance-label">{{ line.text }}</li>
+      {% else %}
+      <li class="matsedel-glance-dish">{{ line.text }}</li>
+      {% endif %}
+      {% endfor %}
+    </ul>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<p class="muted">No menus read for the week of {{ monday }} yet.</p>
+{% endif %}

@@ -22,7 +22,7 @@ from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
-from ..models import Post, SourceItem, Story
+from ..models import POST_KINDS, Post, SourceItem, Story
 from ..recommend import blocks
 from ..recommend.profile import ProfileState
 
@@ -58,19 +58,37 @@ def write_pending(profile: ProfileState) -> Select:
     )
 
 
+def _kinds(attr: str) -> list[str]:
+    """The kinds that opted into one stage, read off `models.POST_KINDS`.
+
+    An allowlist, not an exclusion. `qa_pending` used to say `kind != "aggregate"`,
+    which enrolled every future kind in main-model review by default and said so
+    nowhere - a filed post would have gone to the main model on the strength of
+    nobody having thought about it (0046). Naming the kinds that DO take part puts
+    the decision in one table, and the table refuses a kind that has not made it.
+    """
+    return [name for name, kind in POST_KINDS.items() if getattr(kind, attr)]
+
+
 def qa_pending() -> Select:
-    """Aggregate posts are identity-only cards - nothing generated to review."""
+    """Posts whose kind declares `reviewed`, and that have no verdict yet.
+    An aggregate is an identity-only card and a filed post arrived finished, so
+    neither has anything for the main model to review."""
     return select(Post.id).where(
         Post.quality_score.is_(None),
         Post.status == "published",
-        Post.kind != "aggregate",
+        Post.kind.in_(_kinds("reviewed")),
     )
 
 
 def score_pending() -> Select:
-    """Every published post, every time: the profile is one replayed object, so a
-    single signal can move everything's standing (see recommend.scoring)."""
-    return select(Post.id).where(Post.status == "published")
+    """Every published post whose kind declares `scored`, every time: the profile
+    is one replayed object, so a single signal can move everything's standing (see
+    recommend.scoring)."""
+    return select(Post.id).where(
+        Post.status == "published",
+        Post.kind.in_(_kinds("scored")),
+    )
 
 
 async def count(session: AsyncSession, query: Select) -> int:

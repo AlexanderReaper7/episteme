@@ -1,19 +1,12 @@
 {% extends "base.html" %}
 
-{% block title %} • {{ post.title or "Story cluster" }}{% endblock %}
+{% block title %} • {{ post.title }}{% endblock %}
 
+{# Only a self-rendering post reaches this template: /post/{id} redirects when
+   the post stores an href (0047), so the aggregate branch that used to relist the
+   cluster is gone along with `_stories.html`. Its provenance link now lives only
+   on the feed card. #}
 {% block content %}
-{% if post.kind == "aggregate" %}
-{# Identity-only card: nothing generated, the cluster renders from its items. #}
-<section class="feed stream">
-  {% with cards = [post] %}{% include "_stories.html" %}{% endwith %}
-</section>
-<p class="article-footnote">
-  Aggregated cluster card - the links above go straight to the sources.
-  <a href="/">{{ ico.icon("back") }} back to feed</a>
-  <a href="/post/{{ post.id }}/provenance">{{ ico.icon("provenance") }} provenance</a>
-</p>
-{% else %}
 <article class="article-page">
   <header class="article-header">
     <div class="card-meta">
@@ -64,5 +57,4 @@
     <a href="/post/{{ post.id }}/provenance">{{ ico.icon("provenance") }} provenance</a>
   </p>
 </article>
-{% endif %}
 {% endblock %}

@@ -25,6 +25,7 @@ from alembic import command
 from alembic.script import ScriptDirectory
 from sqlalchemy import text
 
+from .correspondents import ensure_rows as ensure_correspondent_rows
 from .db import SessionLocal, engine
 from .migrations import alembic_config
 from .seeds import seed_sources, seed_voices
@@ -48,10 +49,15 @@ async def main() -> None:
     async with SessionLocal() as session:
         added = await seed_sources(session)
         added_voices = await seed_voices(session)
+        # Not a seed: seeding only fires into an empty table, so an existing
+        # database would never get a row for a plugin installed later (0046).
+        added_correspondents = await ensure_correspondent_rows(session)
     if added:
         log.info("Seeded %d sources", added)
     if added_voices:
         log.info("Seeded %d voices", added_voices)
+    if added_correspondents:
+        log.info("Registered %d correspondents", added_correspondents)
     log.info("Bootstrap complete")
 
 

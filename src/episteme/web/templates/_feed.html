@@ -1,16 +1,21 @@
 {# Unified feed cards. Every unit is a Post; the WHOLE card is one link
    (`.card-link` stretched over it) - never image and title as separate anchors.
-   Secondary links (provenance) sit above the stretch via z-index. Article posts
-   open their generated read at /post/{id}; aggregate cluster cards open the
-   cluster detail at the same route (which lists the external sources). #}
+   Secondary links (provenance) sit above the stretch via z-index.
+
+   One destination rule for every kind (0047): a post stores where it goes, and a
+   NULL href means it renders itself. So an article card opens /post/{id} and an
+   aggregate card goes straight to the source instead of to a page that relists
+   the cluster the card just showed. `/post/{id}` redirects to the same place, so
+   the card and the canonical URL cannot disagree. #}
 {% for post in posts %}
+{% set destination = post.href or "/post/" ~ post.id %}
 {% if post.kind == "aggregate" %}
   {% set story = post.story %}
   {% set primary = story.items | first %}
   {% if primary %}
   {% set banner = story | story_banner %}
   <article class="card card--aggregate">
-    <a class="card-link" href="/post/{{ post.id }}"
+    <a class="card-link" href="{{ destination }}"
        aria-label="{{ primary.title or primary.url }}"></a>
     {% if banner %}
     {# Hotlinked (never cached, per spec §6) - drop the banner if the image is gone. #}
@@ -41,12 +46,66 @@
     </div>
   </article>
   {% endif %}
+{% elif post.kind == "filed" %}
+  {# Filed by a correspondent (0046): read somewhere else and handed over whole.
+     Nothing generated it, so there is no byline, no reading time, no difficulty
+     and no narration - a card claiming any of those would be claiming Episteme
+     wrote it. The chip names the correspondent instead, and `href` sends the
+     reader to the correspondent's page, where the standing content lives.
+
+     The correspondent's identity comes from the item's source: `type_name` IS
+     the slug (0046), and `web.app._correspondent_labels` resolves the page's
+     slugs to labels in one query. A slug with no row falls back to the source's
+     own name, which is what an external correspondent whose row was deleted
+     while its posts were still in the feed would render as. #}
+  {% set story = post.story %}
+  {% set primary = story.items | first %}
+  {% set banner = story | story_banner %}
+  <article class="card card--filed">
+    <a class="card-link" href="{{ destination }}" aria-label="{{ post.title }}"></a>
+    {% if banner %}
+    <div class="card-banner">
+      <img src="{{ banner }}" alt="" loading="lazy"
+           onerror="this.closest('.card-banner').remove()">
+    </div>
+    {% endif %}
+    <div class="card-body">
+      <div class="card-meta">
+        {% set slug = primary.source.type_name if primary else none %}
+        <span class="card-kind card-kind--filed">
+          {{ ico.icon("filed") }}
+          {{ correspondent_labels.get(slug) or (primary.source.name if primary else "Filed") }}
+        </span>
+        {% if primary %}
+        <span class="source-name">{{ primary.source.name }}</span>
+        {% if story.items | length > 1 %}
+        <span class="muted">+{{ (story.items | length) - 1 }} more</span>
+        {% endif %}
+        {% endif %}
+        {# When it became visible, not when the correspondent read it: one read of
+           a week mints five posts, and all five would otherwise wear Monday. #}
+        <time>{{ (post.publish_at or post.generated_at) | dt }}</time>
+        <a class="card-provenance" href="/post/{{ post.id }}/provenance">{{ ico.icon("provenance") }} provenance</a>
+      </div>
+      <h2 class="card-title">{{ post.title }}</h2>
+      {% if post.summary %}<p class="card-snippet">{{ post.summary | truncate(300) }}</p>{% endif %}
+      {% if post.topics %}
+      <div class="topic-chips">
+        {% for topic in post.topics %}<span class="chip">{{ topic }}</span>{% endfor %}
+      </div>
+      {% endif %}
+      {# Kept, though a filed post is never scored (models.POST_KINDS): the rating
+         still moves the topic weights, so it steers the rest of the feed even
+         when it cannot move this card. #}
+      {% with fb = feedback_contexts[post.id] %}{% include "_feedback.html" %}{% endwith %}
+    </div>
+  </article>
 {% else %}
   {# Denormalized at write time (pipeline.write_posts) so the feed never loads a
      article's story items just to find its banner - see web.app._feed_page. #}
   {% set banner = post.banner_url %}
   <article class="card card--article">
-    <a class="card-link" href="/post/{{ post.id }}" aria-label="{{ post.title }}"></a>
+    <a class="card-link" href="{{ destination }}" aria-label="{{ post.title }}"></a>
     {% if banner %}
     <div class="card-banner">
       <img src="{{ banner }}" alt="" loading="lazy"

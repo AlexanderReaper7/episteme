@@ -75,6 +75,7 @@ Nothing here is edited to reflect later changes. A decision that was replaced ge
 | [0032](0032-job-history-retention-is-tiered-by-class.md) | Job history is pruned by class; repeated jobs fold in the table | 2026-08-03 |
 | [0045](0045-the-long-form-kind-is-called-article.md) | The long-form post kind is called `article`, stored value included | 2026-08-28 |
 | [0047](0047-a-post-stores-its-destination.md) | A post stores its destination; a body means it renders itself | 2026-08-28 |
+| [0048](0048-the-browser-never-colours-a-link.md) | The browser never colours a link, and never marks one as visited | 2026-08-29 |
 
 ## Host, GPU, resources
 

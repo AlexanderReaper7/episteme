@@ -1,7 +1,7 @@
 # 0047. A post stores its destination, and a body means it renders itself
 
 - Date: 2026-08-28
-- Status: accepted, not yet built
+- Status: built and live-verified 2026-08-28
 - Rule: `posts.href` holds where a card and the canonical URL both go. NULL means the post renders itself at `/post/{id}`. A database CHECK ties the two together: `(href IS NULL) = (sections is a non-empty array)`. A story's primary item is its earliest `published_at`, then its lowest `id`.
 
 ## Context
@@ -73,3 +73,19 @@ Ordering by `source.credibility_rating` instead was the obvious editorial altern
 - The migration adds the column, backfills every aggregate from its primary item, and only then adds the CHECK. The backfill is exactly what the review rule means by "what the diff cannot see", so the revision is written by hand rather than trusted from `--autogenerate`. No aggregate has an item-less story (measured: 0), so the backfill cannot produce a NULL that the constraint then rejects.
 - A search hit on an aggregate now leaves Episteme on click, since `/api/posts/search` returns post ids the assistant links directly.
 - `/post/{id}/provenance` becomes reachable only from the card's `card-provenance` link (`_feed.html:30`), because the page that used to carry it no longer renders. That link stops being a convenience and becomes the only door.
+
+## What was built, and what was watched
+
+Landed 2026-08-28 as revision `499afada00fa`. `Story.items` carries `PRIMARY_ITEM_ORDER`, defined once in `models.py` and reused by `pipeline._primary_item`, so the SQL that picks a card's title and the SQL that picks its destination are the same expression. `models.POST_KINDS` records, per kind, whether it renders itself, and `Post.kind` refuses a value that is not in it: a kind cannot reach the database without someone saying where it points. The aggregate branch of `post.html` and `_stories.html` are deleted, along with the story-items half of `_post_page_etag` and the two CSS blocks only that template used.
+
+An htmx wrinkle the design did not anticipate: a boosted click arrives as a `fetch`, and a fetch that follows a **cross-origin** redirect fails on CORS with nothing shown. htmx does not boost cross-origin anchors, so the feed cards are safe on their own, but `/post/{id}` is still linked from search and the assistant. It answers `204` with `HX-Redirect` to an `HX-Request`, and `302` to anything else.
+
+Watched live against the compose stack, not merely unit-tested:
+
+- The backfill: 473 of 473 aggregates carry an href, 173 of 173 articles carry NULL.
+- The constraint rejects **both** directions. An article inserted with `sections = '[]'` and an aggregate inserted with both an href and a body each come back as `ck_posts_body_iff_self_rendering`.
+- The feed serves external URLs on aggregate cards and `/post/{id}` on article cards, in one page.
+- `/post/646` answers `302` to space.com; the same URL with `HX-Request: true` answers `204` with the same target in `HX-Redirect`; `/post/652` (an article) still renders 200; `/post/646/provenance` still answers 200; an unknown id still 404s.
+- `ensure_aggregate_post` and `_rehome_aggregate_card` run inside the worker container against the real database, in a transaction rolled back afterwards: a two-item story's card takes the OLDER item's URL, an item arriving with an earlier publish date re-points it, an item arriving later leaves it alone, and setting `sections` on that aggregate raises `IntegrityError`.
+
+Not watched: any of it in a browser, and no aggregate has been minted by a real triage pass since (that needs a pipeline run).

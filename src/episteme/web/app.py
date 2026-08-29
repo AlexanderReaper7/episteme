@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from urllib.parse import parse_qs
 
 from fastapi import FastAPI, HTTPException, Request, Response
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import and_, case, func, or_, select, text
 from sqlalchemy.orm import joinedload, selectinload
@@ -14,7 +14,7 @@ from starlette_compress import CompressMiddleware
 
 from ..config import settings
 from ..db import SessionLocal
-from ..models import Post, SourceItem, Story
+from ..models import POST_KINDS, Correspondent, Post, SourceItem, Story
 from ..recommend import blocks, profile
 from ..tts import list_voices, pick_default
 from .admin import _group_calls
@@ -23,6 +23,8 @@ from .api import api_post_llm_calls, api_story
 from .api import router as api_router
 from .bench import router as bench_router
 from .chat import router as chat_router
+from .correspondents import router as correspondents_router
+from .glance import router as glance_router
 from .errors import install_error_handlers
 from .feedback import feed_context as feedback_contexts
 from .feedback import post_context as feedback_context
@@ -71,6 +73,11 @@ app.include_router(admin_router)
 app.include_router(bench_router)
 app.include_router(feedback_router)
 app.include_router(chat_router)
+# `/c/<slug>/` (0046). Core owns the prefix; the plugins mounted under it are
+# whatever `correspondents/__init__` imported.
+app.include_router(correspondents_router)
+# Glance is core's own page, not a correspondent's, so it sits outside `/c` (0046).
+app.include_router(glance_router)
 # After the routers, so a failure anywhere in them renders the error page rather
 # than a bare `Internal Server Error` (0043). `/api` keeps its JSON bodies.
 install_error_handlers(app)
@@ -78,7 +85,14 @@ install_error_handlers(app)
 
 def _feed_sort_at(post: Post) -> datetime:
     """Python mirror of the SQL `feed_at` expression, so a rendered row can
-    produce the keyset cursor for the next page without re-querying."""
+    produce the keyset cursor for the next page without re-querying.
+
+    `publish_at` wins where there is one (0046). A correspondent creates a whole
+    week of posts from one read, so five of them share a `generated_at` of the day
+    they were made; sorting on that would land Friday's card in the feed already
+    five days stale."""
+    if post.publish_at is not None:
+        return post.publish_at
     if post.kind == "aggregate":
         return post.story.last_item_at or post.generated_at
     return post.generated_at
@@ -165,20 +179,68 @@ def _agg_banner(items) -> str | None:
     return None
 
 
-async def _load_aggregate_items(session, posts: list[Post]) -> None:
-    """Eager-load items (+ their sources) for the AGGREGATE posts only, in one
-    batched query keyed by story. Aggregate cards render from their story's items;
-    article cards read the denormalized `Post.banner_url` and never touch items, so
-    they're skipped. The `Story` rows were already loaded by the caller's
-    `selectinload(Post.story)`, so this populates `.items` on those same
-    identity-mapped instances (the query result itself is unused)."""
-    story_ids = [p.story_id for p in posts if p.kind == "aggregate"]
+async def _load_story_items(session, posts: list[Post]) -> None:
+    """Eager-load items (+ their sources) for the kinds whose cards read them, in
+    one batched query keyed by story.
+
+    Which kinds those are is `POST_KINDS[...].needs_items`, not a list of names
+    written here: an article card reads the denormalized `Post.banner_url` and
+    never touches items, and a kind added later would otherwise render from an
+    unloaded relationship and take a query per card to find out. The `Story` rows
+    were already loaded by the caller's `selectinload(Post.story)`, so this
+    populates `.items` on those same identity-mapped instances (the query result
+    itself is unused)."""
+    story_ids = [p.story_id for p in posts if POST_KINDS[p.kind].needs_items]
     if not story_ids:
         return
     await session.execute(
         select(Story)
         .options(selectinload(Story.items).joinedload(SourceItem.source))
         .where(Story.id.in_(story_ids))
+    )
+
+
+async def _correspondent_labels(session, posts: list[Post]) -> dict[str, str]:
+    """slug -> label for the correspondents behind this page's filed posts.
+
+    A filed card names its correspondent, and the post does not point at one:
+    the path is post -> story -> primary item -> source, and `sources.type_name`
+    IS the slug (0046). `filing._require_correspondent_source` is what makes that
+    hold. One query for the page rather than one per card, and a slug with no row
+    simply falls back to the source's own name in the template.
+    """
+    slugs = {
+        item.source.type_name
+        for post in posts
+        if post.kind == "filed"
+        for item in post.story.items[:1]
+    }
+    if not slugs:
+        return {}
+    rows = (
+        await session.execute(
+            select(Correspondent.slug, Correspondent.label).where(
+                Correspondent.slug.in_(slugs)
+            )
+        )
+    ).all()
+    return {slug: label for slug, label in rows}
+
+
+def _visible_now():
+    """When a post is in the feed, as clauses (0046).
+
+    Both halves of one policy, written together because they are one policy: a
+    post is in the stream between `publish_at` and `expires_at`, and NULL means
+    "no bound on that side". No job moves a post across either boundary; the
+    clock alone decides, so there is nothing that can fail to fire.
+
+    Expiry is FEED-only. The post keeps its own URL, and a correspondent's page
+    keeps the week, which is what standing content is for.
+    """
+    return (
+        or_(Post.publish_at.is_(None), Post.publish_at <= func.now()),
+        or_(Post.expires_at.is_(None), Post.expires_at > func.now()),
     )
 
 
@@ -201,9 +263,14 @@ async def _feed_page(session, cursor: tuple[float, int] | None = None) -> dict:
     Only new feedback can reorder rows mid-scroll, and that is the reader's own
     deliberate act."""
     size = settings.feed_page_size
-    feed_at = case(
-        (Post.kind == "aggregate", func.coalesce(Story.last_item_at, Post.generated_at)),
-        else_=Post.generated_at,
+    # `_feed_sort_at` is this expression in Python; `test_scoring` pins them
+    # together, because a cursor minted from one is compared against the other.
+    feed_at = func.coalesce(
+        Post.publish_at,
+        case(
+            (Post.kind == "aggregate", func.coalesce(Story.last_item_at, Post.generated_at)),
+            else_=Post.generated_at,
+        ),
     )
     rank = _rank_expr(feed_at)
     profile_state = await profile.load(session)
@@ -224,6 +291,7 @@ async def _feed_page(session, cursor: tuple[float, int] | None = None) -> dict:
         .join(Post.story)
         .where(
             Post.status == "published",
+            *_visible_now(),
             *blocks.filters(
                 profile_state, Post.story_id, text_columns=(Post.title, Post.summary)
             ),
@@ -240,7 +308,7 @@ async def _feed_page(session, cursor: tuple[float, int] | None = None) -> dict:
     has_more = len(rows) > size
     rows = rows[:size]
     posts = [row.Post for row in rows]
-    await _load_aggregate_items(session, posts)
+    await _load_story_items(session, posts)
     next_cursor = None
     if has_more and rows:
         next_cursor = {"at": repr(float(rows[-1].rank)), "id": rows[-1].Post.id}
@@ -253,6 +321,7 @@ async def _feed_page(session, cursor: tuple[float, int] | None = None) -> dict:
         # and topic chips render in whatever state the reader left them
         # (web.feedback.feed_context).
         "feedback_contexts": await feedback_contexts(session, posts),
+        "correspondent_labels": await _correspondent_labels(session, posts),
     }
 
 
@@ -301,7 +370,7 @@ async def _items_page(session, cursor: tuple[datetime | None, int] | None = None
     }
 
 
-def _feed_cards_sig(posts) -> list:
+def _feed_cards_sig(posts, labels: dict[str, str] | None = None) -> list:
     """The per-card render signature for `_feed.html` — every field the cards read,
     in order — shared by the full-feed validator (`_feed_etag`) and the
     infinite-scroll partial validator (`_feed_partial_etag`) so both mirror the
@@ -310,7 +379,11 @@ def _feed_cards_sig(posts) -> list:
     only body sections legitimately leaves it unchanged (the post PAGE etag still
     moves). An aggregate card renders from `story.items | first` + the item count +
     topics + `last_item_at`, so those are folded in — the row alone can't see a new
-    cluster item."""
+    cluster item. A filed card reads the row plus its correspondent's LABEL, which
+    is not on the row at all: `labels` is the page's slug -> label map, and folding
+    the resolved label in is what keeps a renamed correspondent from being hidden
+    behind a 304."""
+    labels = labels or {}
     sig: list = []
     for post in posts:
         if post.kind == "aggregate":
@@ -337,10 +410,32 @@ def _feed_cards_sig(posts) -> list:
                     ),
                 )
             )
+        elif post.kind == "filed":
+            story = post.story
+            items = story.items if story is not None else []
+            primary = items[0] if items else None
+            slug = primary.source.type_name if primary and primary.source else None
+            sig.append(
+                (
+                    "c",
+                    post.id,
+                    post.title,
+                    post.summary,
+                    tuple(post.topics or ()),
+                    (post.publish_at or post.generated_at).isoformat()
+                    if (post.publish_at or post.generated_at)
+                    else None,
+                    len(items),
+                    _agg_banner(items),
+                    slug,
+                    labels.get(slug),
+                    None if primary is None else (primary.source.name if primary.source else None),
+                )
+            )
         else:
             sig.append(
                 (
-                    "f",
+                    "art",
                     post.id,
                     post.generated_at.isoformat() if post.generated_at else None,
                     post.title,
@@ -400,7 +495,7 @@ def _feed_etag(page: dict, block: str | None) -> str:
     one tag over two different bodies (see `fragment_block`)."""
     sig = [
         ("frag", block),
-        *_feed_cards_sig(page["posts"]),
+        *_feed_cards_sig(page["posts"], page.get("correspondent_labels")),
         _pagination_sig(page),
         ("fb", _feedback_sig(page)),
     ]
@@ -416,7 +511,11 @@ def _feed_partial_etag(page: dict) -> str:
     answers a stale 304, while an unchanged deep page revalidates as a cheap bodyless
     304 and re-scrolls within the freshness window are pure cache hits."""
     return _weak_etag(
-        [*_feed_cards_sig(page["posts"]), _pagination_sig(page), ("fb", _feedback_sig(page))]
+        [
+            *_feed_cards_sig(page["posts"], page.get("correspondent_labels")),
+            _pagination_sig(page),
+            ("fb", _feedback_sig(page)),
+        ]
     )
 
 
@@ -523,7 +622,8 @@ async def feed(request: Request):
     response = render(
         request,
         "feed.html",
-        {"feed": page, "fallback": fallback},
+        # Spread, so `_feed.html` reads the same names here and in the partial.
+        {**page, "fallback": fallback},
     )
     return _apply_validators(response, etag) if etag else response
 
@@ -533,14 +633,12 @@ def _post_page_etag(
 ) -> str:
     """A weak validator for a post's page, covering everything the render reads.
 
-    AN ARTICLE reads its own columns: a QA revision mutates `sections`/`quality_score`
-    in place (hashed here, so it re-validates), while a rewrite mints a new post
-    id / URL. An AGGREGATE has NULL content columns and renders entirely from its
-    story's items (which keep growing as ingestion feeds the cluster), so those are
-    folded in instead — a row hash alone would be stale the moment a new item lands.
-    Narration controls (voice catalog + default + tts-configured) drive the article
-    player and are included for both kinds (harmless over-invalidation on an
-    aggregate, which has no player).
+    Only a self-rendering post gets this far (0047): one that stores an href
+    redirects before the page is built, so the aggregate's story-items hash this
+    used to carry is gone with the branch that rendered it. What is left is the
+    post's own columns — a QA revision mutates `sections`/`quality_score` in place
+    (hashed here, so it re-validates), while a rewrite mints a new post id / URL —
+    plus the narration controls (voice catalog + default + tts-configured).
 
     `block` is what `templating.fragment_block` will render (the `content` block for
     a boosted navigation, None for the whole document), folded into the hash so two
@@ -573,25 +671,6 @@ def _post_page_etag(
             feedback_ctx.get("post_sources"),
         ],
     }
-    if post.kind == "aggregate" and post.story is not None:
-        story = post.story
-        payload_obj["story"] = {
-            "topics": story.topics,
-            "last_item_at": story.last_item_at.isoformat() if story.last_item_at else None,
-            "banner": _agg_banner(story.items),
-            "items": [
-                (
-                    item.id,
-                    item.title,
-                    item.url,
-                    item.source.name if item.source else None,
-                    item.published_at.isoformat() if item.published_at else None,
-                    item.extracted_text,
-                    item.raw_content,
-                )
-                for item in story.items
-            ],
-        }
     payload = json.dumps(payload_obj, default=str, sort_keys=True)
     return 'W/"' + hashlib.md5(payload.encode()).hexdigest() + '"'
 
@@ -599,19 +678,24 @@ def _post_page_etag(
 @app.get("/post/{post_id}", response_class=HTMLResponse)
 async def post_view(request: Request, post_id: int):
     async with SessionLocal() as session:
-        post = (
-            await session.execute(
-                select(Post)
-                .options(
-                    selectinload(Post.story)
-                    .selectinload(Story.items)
-                    .joinedload(SourceItem.source),
-                )
-                .where(Post.id == post_id)
-            )
-        ).scalar_one_or_none()
+        # No story eager-load: the article page reads none of it, and the only
+        # branch that did was the aggregate one the redirect below replaced.
+        post = await session.get(Post, post_id)
         if post is None:
             raise HTTPException(status_code=404)
+        # A post that stores an href does not render (0047). /post/{id} is still
+        # its identity, so search results, provenance and the assistant keep
+        # linking here, and here resolves to wherever the content actually lives.
+        if post.href is not None:
+            # 302, not 301: `cluster_items` may re-point a card at a better
+            # primary item, and a permanent redirect would outlive the change in
+            # every browser that ever saw it.
+            # `HX-Redirect` because an in-app boosted click arrives as a fetch,
+            # and a fetch that follows a cross-origin redirect fails on CORS
+            # instead of navigating. htmx reads the header and navigates.
+            if request.headers.get("HX-Request") == "true":
+                return Response(status_code=204, headers={"HX-Redirect": post.href})
+            return RedirectResponse(post.href, status_code=302)
         # One query for the catalog; the default is derived from it (was a second
         # identical `default_voice_id` query — it calls `list_voices` internally).
         voices = await list_voices(session)
@@ -622,11 +706,11 @@ async def post_view(request: Request, post_id: int):
         feedback_ctx = await feedback_context(session, post_id)
     tts_configured = bool(settings.fish_api_key)
 
-    # Conditional GET for both post kinds AND both representations (full document +
-    # boosted-htmx fragment): the etag folds in everything the render reads (article
-    # columns / aggregate story items + narration controls) plus the block being
-    # emitted, so it changes exactly when the page would and no entry can satisfy a
-    # request for a different representation. This is what makes in-app article
+    # Conditional GET for both representations (full document + boosted-htmx
+    # fragment): the etag folds in everything the render reads (the post's own
+    # columns + narration controls) plus the block being emitted, so it changes
+    # exactly when the page would and no entry can satisfy a request for a
+    # different representation. This is what makes in-app article
     # navigation and the hover-prefetch cacheable; continuous-mode `fetch("/post/N")`
     # (no HX headers) and hard refreshes also benefit.
     etag = _post_page_etag(

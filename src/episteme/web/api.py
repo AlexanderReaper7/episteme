@@ -80,6 +80,9 @@ DEFERRABLE_TASKS: dict[str, tuple[str, frozenset[str]]] = {
     "qa": ("episteme.pipeline_stage", frozenset({"limit", "post_id"})),
     "narrate": ("episteme.pipeline_stage", frozenset({"limit", "post_id"})),
     "score": ("episteme.pipeline_stage", frozenset({"limit", "post_id"})),
+    # A correspondent's own schedule (0046). Weekly by cron; this is the lever
+    # for reading the kitchens now rather than waiting for Monday.
+    "matsedel_scrape": ("episteme.matsedel_scrape", frozenset()),
 }
 
 

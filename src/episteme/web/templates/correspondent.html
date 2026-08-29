@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+
+{# The wrapper every correspondent page is rendered inside (0046). This template
+   IS the page: `web/correspondents.py:page` renders it and includes the plugin's
+   own template by name, so the scoping class and the stylesheet link are emitted
+   by core and cannot be forgotten or widened.
+
+   Include, not inheritance, and that is not a style choice. `render_block`
+   resolves only blocks defined in the LEAF template (web/templating.py), so a
+   plugin template that extended this one would define neither `content` nor
+   `title`, `fragment_block` would answer "whole document", and a boosted click
+   would nest the entire page - header, sprite and all - inside #main-content.
+   Watched happening in the browser on 2026-08-28 before this was turned around.
+
+   `.correspondent--<slug>` is what a plugin's additive CSS is scoped to, and it
+   is the ONLY class it may assume: the same modifier wraps that correspondent's
+   Glance block, where `.correspondent-page`'s page padding would be wrong. The
+   <link> sits in the body deliberately: the app is boosted, so a click swaps
+   #main-content and never re-renders <head>. Here it arrives with the fragment
+   and leaves with it, which is also what keeps it off the feed. #}
+
+{% block title %} • {{ correspondent.label }}{% endblock %}
+
+{% block content %}
+<div class="correspondent-page correspondent--{{ correspondent.slug }}">
+  {% if correspondent.stylesheet %}
+  <link rel="stylesheet" href="/c/{{ correspondent.slug }}/style.css">
+  {% endif %}
+  {% include inner_template %}
+</div>
+{% endblock %}

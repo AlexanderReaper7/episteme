@@ -56,6 +56,10 @@ ICONS = {
     "back": "arrow--left",
     "external-link": "launch",
     "provenance": "flow",
+    # Glance is the standing-content page. `dashboard` is the admin sidebar's
+    # and naming this one for its layout is what 0046 rejected, so: a view of
+    # content, which is what the page is.
+    "glance": "content-view",
     "tune": "settings--adjust",
     "admin": "settings",
     "remove": "close",
@@ -74,6 +78,11 @@ ICONS = {
     # --- card meta
     "article": "document",
     "aggregate": "layers",
+    # A filed post: read somewhere else, handed over whole, and not written here.
+    "filed": "report",
+    # --- paging through weeks (a correspondent's own page)
+    "previous": "chevron--left",
+    "next": "chevron--right",
     "clock": "time",
     # --- article sections
     "quiz-correct": "checkmark--outline",

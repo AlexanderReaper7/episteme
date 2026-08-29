@@ -12,6 +12,7 @@ import nh3
 from fastapi import Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
+from jinja2 import ChoiceLoader, FileSystemLoader
 from jinja2_fragments import render_block
 from markupsafe import Markup, escape
 
@@ -21,6 +22,20 @@ from ..models import Story
 BASE_DIR = Path(__file__).parent
 
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
+
+# A correspondent plugin may ship its own templates (0046). The loader is a
+# ChoiceLoader whose list is READ at template-load time, so `add_template_dir`
+# can extend it after this module has been imported - which it has to be, since
+# `web/correspondents.py` mounts plugins and this module is imported long before
+# that. Core's own directory stays first, so a plugin cannot shadow `base.html`.
+_loader = ChoiceLoader([FileSystemLoader(str(BASE_DIR / "templates"))])
+templates.env.loader = _loader
+
+
+def add_template_dir(path) -> None:
+    """Let a correspondent plugin's templates be found by name, after core's."""
+    _loader.loaders.append(FileSystemLoader(str(path)))
+
 
 # Expose the admin UI macros as a global so `ui.status_badge(...)` works in any
 # render path — including render_block (below), which renders a single block in
@@ -93,6 +108,48 @@ def render(request: Request, template: str, context: dict, status_code: int = 20
         )
     return templates.TemplateResponse(
         request, template, context, status_code=status_code
+    )
+
+
+def correspondent_page(
+    request: Request,
+    plugin,
+    template: str,
+    context: dict | None = None,
+    status_code: int = 200,
+):
+    """Render one of a correspondent's own pages inside the core wrapper (0046).
+
+    A plugin calls this from its view with the name of a template in the
+    directory it registered. Core renders `correspondent.html` and includes that
+    template by name, which is what makes the wrapper unforgettable: there is no
+    path to a `/c/<slug>/` page that skips the scoping class or the stylesheet
+    link. It is also the only shape that survives a boosted click, because
+    `render_block` resolves blocks defined in the LEAF template only and the leaf
+    has to be the template that defines `content` and `title`.
+
+    It lives HERE and not in `web/correspondents.py` for one reason: a plugin
+    ships inside `episteme.correspondents`, and that package is what
+    `web/correspondents.py` imports. A plugin importing back into it at module
+    scope is a circular import, watched crashing the web container on
+    2026-08-28. This module imports nothing from the correspondents package and
+    never will - the plugin is passed in.
+    """
+    return render(
+        request,
+        "correspondent.html",
+        {
+            **(context or {}),
+            # LAST, so core's values win: a page cannot claim a slug, a label or
+            # a stylesheet it does not have by passing one in its context.
+            "correspondent": {
+                "slug": plugin.slug,
+                "label": plugin.label,
+                "stylesheet": plugin.stylesheet is not None,
+            },
+            "inner_template": template,
+        },
+        status_code=status_code,
     )
 
 

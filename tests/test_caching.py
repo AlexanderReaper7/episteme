@@ -212,17 +212,12 @@ def test_post_etag_tracks_narration_controls():
     assert _post_page_etag(_article(), more_voices, "v1", True) != base         # catalog
 
 
-def test_aggregate_post_etag_folds_in_story_items():
-    base = _post_page_etag(_aggregate(items=[_item(id=1)]), _VOICES, "v1", True)
-    grown = _post_page_etag(
-        _aggregate(items=[_item(id=1), _item(id=2)]), _VOICES, "v1", True
-    )
-    assert grown != base
-    # An item's rendered content changing (a re-fetch) must move it too.
-    edited = _post_page_etag(
-        _aggregate(items=[_item(id=1, title="Retitled")]), _VOICES, "v1", True
-    )
-    assert edited != base
+# `test_aggregate_post_etag_folds_in_story_items` lived here until 2026-08-28. An
+# aggregate no longer HAS a page to validate: it stores an href and /post/{id}
+# redirects to it (0047), so the story-items hash went with the branch that
+# rendered them. The feed-card validator above still folds those items in, which
+# is now the only place they are read. The redirect itself is covered by
+# tests/test_post_destination.py.
 
 
 # --- representation distinctness ------------------------------------------

@@ -29,6 +29,7 @@
   /* Structural one-offs. */
   --banner-bg: #0a0a0d;                /* image placeholder behind card banners */
   --card-article-border: #2b3a5e;      /* generated-article card accent border */
+  --filed: #b48ead;                    /* filed by a correspondent: neither generated nor aggregated */
   --role-system: #565f89;              /* provenance system-message rail */
   /* Feed column width. The feed cards are short (title + snippet + image), so
      they can run wider than the long-form article body (`.article`, ~46rem)
@@ -47,6 +48,20 @@
      literals here would drift and the dashboard would stop matching the pages
      around it. */
   --admin-gap: 1.25rem;
+  /* The site header's height, and the offset everything that sticks BELOW it
+     uses. `.site-header` takes this as a `min-height` rather than deriving it
+     from its padding, so the token is the height by construction instead of a
+     guess at it: a page that sticks something at `top: var(--header-height)`
+     lands flush. It is a few px looser than the natural padding + line box, so
+     the min-height is what binds even if a late font grows the wordmark.
+     Every literal that stood in for this was wrong by a fraction of a pixel and
+     showed the page scrolling through the seam. */
+  --header-height: 4.25rem;
+  /* One frosted surface for the whole app: the site header, and anything that
+     parks under it while content scrolls behind. Two recipes drifted once
+     already (82% here, 88% in a plugin) and read as two different materials. */
+  --frost-bg: color-mix(in srgb, var(--bg) 82%, transparent);
+  --frost-blur: blur(10px);
 }
 
 * { box-sizing: border-box; }
@@ -58,6 +73,28 @@ body {
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   line-height: 1.55;
 }
+
+/* Every link's colour is decided here or by the component it sits in, and never
+   by the browser, whose default sheet paints `:link` blue and `:visited` purple.
+   That is what made a lunch card the reader opened yesterday a different colour
+   from one they did not, and neither colour is a token in this file.
+
+   A single-user feed has nobody to tell where they have already been, and the
+   distinction is not free: the feed ranks by freshness and interest, and a
+   second colour arriving from the browser ranks by "already clicked" underneath
+   it, saying something about the reader's history the app never decided to say.
+
+   `a` on its own already matches a link in either state, so the `:visited` here
+   matches nothing the first half does not. It is written out because the rule
+   only holds while no OTHER rule singles `:visited` out, and this is where a
+   reader looks for that; `tests/test_stylesheets.py` is what actually enforces
+   it, across core's sheet and every correspondent's. `a:visited { color:
+   inherit }` would not do: `inherit` takes the PARENT's colour, not this one's.
+
+   `:where()` makes the whole thing specificity zero, so it is a default rather
+   than an override. A plain `a, a:visited` is (0,1,1), the same as every
+   `.foo a`, and would have silently taken `.card-provenance`'s colour away. */
+:where(a, a:visited) { color: var(--accent); }
 
 /* --- Icons -----------------------------------------------------------------
    One Carbon symbol sprite for the whole site (templates/_icon_sprite.html,
@@ -171,10 +208,14 @@ body {
   display: flex;
   align-items: baseline;
   gap: 1rem;
+  /* `min-height` and not `height`: the token decides the height, and the header
+     may still grow past it rather than clip if the nav ever wraps. Anything
+     sticking below reads the same token, so the seam cannot open. */
+  min-height: var(--header-height);
   padding: 1rem 2rem 0.85rem;
   border-bottom: 1px solid var(--border);
-  background: color-mix(in srgb, var(--bg) 82%, transparent);
-  backdrop-filter: blur(10px);
+  background: var(--frost-bg);
+  backdrop-filter: var(--frost-blur);
 }
 
 .site-header h1 {
@@ -232,6 +273,10 @@ main {
 /* Generated articles read as the "hero" tier even inside the unified stream. */
 .card--article {
   border-color: color-mix(in srgb, var(--accent) 22%, var(--border));
+}
+
+.card--filed {
+  border-color: color-mix(in srgb, var(--filed) 22%, var(--border));
 }
 
 /* The ENTIRE card is one link: this anchor is stretched over the whole card, so
@@ -294,6 +339,14 @@ main {
 }
 
 .card-kind--aggregate { color: var(--muted); }
+
+/* Filed by a correspondent (0046). Written somewhere else, so it gets neither the
+   article tier's accent nor the aggregate tier's grey: its own hue is the whole
+   signal that Episteme did not write this one. */
+.card-kind--filed {
+  color: var(--filed);
+  border-color: color-mix(in srgb, var(--filed) 45%, transparent);
+}
 
 /* Provenance is a real link inside a fully-linked card, so it must sit above the
    stretched .card-link (which otherwise swallows the click). */
@@ -775,14 +828,6 @@ main {
 
 .card:hover .card-title { color: var(--accent); }
 
-/* Detail-page cards (_stories.html) still use an inner title link. */
-.card-title a {
-  color: var(--text);
-  text-decoration: none;
-}
-
-.card-title a:hover { color: var(--accent); }
-
 .card-snippet {
   margin: 0;
   font-size: 0.95rem;
@@ -829,23 +874,6 @@ main {
   flex: 1;
   border-top: 1px solid var(--border);
 }
-
-.story-links {
-  list-style: none;
-  margin: 0.6rem 0 0;
-  padding: 0.6rem 0 0;
-  border-top: 1px solid var(--border);
-  font-size: 0.82rem;
-}
-
-.story-links li { margin-bottom: 0.3rem; }
-
-.story-links a {
-  color: var(--muted);
-  text-decoration: none;
-}
-
-.story-links a:hover { color: var(--accent); }
 
 .note {
   color: var(--muted);
@@ -973,6 +1001,9 @@ main {
 .section-sources li { margin-bottom: 0.5rem; }
 
 .section-sources a { color: var(--text); }
+/* Already `--text` at rest, so the file's default hover (to `--text`) would be
+   invisible here. This is the same swap the nav and the attribution line make. */
+.section-sources a:hover { color: var(--accent); }
 
 .section-sources .source-name {
   margin-left: 0.5rem;
@@ -1188,6 +1219,14 @@ main {
   font-size: 0.85rem;
 }
 
+/* Every htmx placeholder says "loading…" in the same voice. A no-op inside
+   `.load-sentinel`, which already sets both; the rule exists for the ones that
+   sit in ordinary body text, like a Glance block. */
+.loading {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
 .empty-state code {
   display: block;
   margin-top: 0.75rem;
@@ -1228,7 +1267,9 @@ main {
 
 .admin-sidebar {
   position: sticky;
-  top: 4.5rem;
+  /* Was 4.5rem, which was the same guess at the header's height made a second
+     time and 4px out. */
+  top: var(--header-height);
   align-self: start;
   border-right: 1px solid var(--border);
   padding-right: 1rem;
@@ -2890,3 +2931,121 @@ main {
   display: flex;
   gap: 1.2rem;
 }
+
+/* --- Correspondents --------------------------------------------------------
+   The wrapper core emits around every `/c/<slug>/` page (0046). It is the page
+   column and nothing else: a correspondent's own look comes from the additive
+   stylesheet it ships, scoped to `.correspondent--<slug>`, which loads with the
+   page fragment and never on the feed.
+
+   A plugin's CSS should be written against the custom properties at the top of
+   this file (--bg, --card-bg, --text, --muted, --accent, --border and the chip
+   and status colors). Those are inherited here, so a correspondent that uses
+   them tracks the theme instead of restating it. */
+.correspondent-page {
+  margin: 0 auto;
+  max-width: var(--feed-width);
+  padding: 1.5rem 1rem 4rem;
+}
+
+/* --- Glance ----------------------------------------------------------------
+   The standing-content page (0046). Core owns everything here; a correspondent's
+   own look comes from its additive stylesheet, scoped to `.correspondent--<slug>`
+   which is on the block itself.
+
+   Blocks are a grid rather than a column because they are read by scanning: a
+   correspondent with three lines and one with fifteen sit side by side and
+   neither pushes the other off the screen. `auto-fill` with a min track means
+   the count follows the window instead of being declared here. */
+.glance {
+  margin: 0 auto;
+  max-width: var(--feed-width);
+  padding: 1.5rem 1rem 4rem;
+}
+
+.glance-title { margin: 0 0 0.4rem; }
+
+.glance-intro { margin: 0 0 1.5rem; font-size: 0.85rem; }
+
+.glance-blocks {
+  display: grid;
+  gap: 1rem;
+  /* auto-FIT, not auto-fill: with one correspondent registered, auto-fill holds
+     the empty tracks open and the single block sits in an 18rem column with most
+     of a 2560px page beside it, wrapping every dish. auto-fit collapses the
+     tracks nothing landed in, so one block spans the row. Identical once there
+     are enough blocks to fill it. */
+  grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+}
+
+.glance-block {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem 1.1rem 1.2rem;
+}
+
+.glance-block-title {
+  font-size: 0.95rem;
+  margin: 0 0 0.7rem;
+}
+
+.glance-block-title a {
+  color: var(--text);
+  text-decoration: none;
+}
+
+.glance-block-title a:hover { color: var(--accent); }
+
+/* A block that answered with nothing and a block that never answered have to
+   look different, which is the whole reason the failure line exists rather than
+   an empty body (0046). */
+.glance-block-failed {
+  align-items: baseline;
+  color: var(--bad-muted);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 0.85rem;
+  gap: 0.35rem;
+  margin: 0;
+}
+
+/* `display: flex` above beats the UA stylesheet's `[hidden] { display: none }`
+   on specificity, so without this the failure line shows on every block from the
+   moment the page renders. Watched in the browser on 2026-08-28: the markup was
+   right and the test asserting `hidden` passed. */
+.glance-block-failed[hidden] { display: none; }
+
+.glance-block-failed .icon { color: var(--bad-fg); }
+
+.glance-block--failed { border-color: var(--bad-chip-border); }
+
+/* A button that reads as a link. It is an action on this page, not a
+   destination, and an anchor here would be boosted into a navigation. */
+.glance-retry {
+  background: none;
+  border: 0;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+  text-decoration: underline;
+}
+
+.glance-retry:hover { color: var(--text); }
+
+/* --- the default link hover ------------------------------------------------
+   Last in the file on purpose, and the only rule here that depends on where it
+   sits. `a:hover` is (0,1,1), the same specificity as every `.foo a` that gives
+   a link its resting colour, so source order is what decides: at the top it
+   would lose to all of them and hovering would do nothing. At the bottom it
+   beats a resting colour and still loses to any component's own `.foo a:hover`,
+   which is (0,2,1). That is the rule in one line - a component that has an
+   opinion about hovering keeps it, and every other link gets this.
+
+   `--text` rather than `--accent` because the default resting colour above is
+   already `--accent`, and `.glance-retry` sets the same precedent: what is
+   accent at rest goes to text on hover. The one component that is `--text` at
+   rest and had no hover of its own is `.section-sources`, given the opposite
+   swap beside its own rule. */
+a:hover { color: var(--text); }

@@ -33,6 +33,10 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from episteme import models
+# Imported for its side effect: a correspondent plugin may define tables, and
+# they go in core's single history (0046). Autogenerate compares against
+# `Base.metadata`, which only knows about a table whose class has been imported.
+import episteme.correspondents  # noqa: F401
 from episteme.config import settings
 from episteme.migrations import MIGRATIONS_DIR
 from episteme.migrations.guard import verify

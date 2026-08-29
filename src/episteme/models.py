@@ -1,12 +1,22 @@
 from __future__ import annotations
 
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, ForeignKey, Index, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, validates
 
 # Dimension of the `embed` model role output. 1024 = native dim of
 # Octen-Embedding-0.6B; larger models (4B = 2560) are truncated + re-normalized
@@ -50,7 +60,13 @@ class SourceItem(Base):
     source_id: Mapped[int] = mapped_column(ForeignKey("sources.id"))
     story_id: Mapped[int | None] = mapped_column(ForeignKey("stories.id"))
     url: Mapped[str] = mapped_column(Text)
-    hash: Mapped[str] = mapped_column(String(64), unique=True)  # sha256(canonical url)
+    # sha256 of whatever identifies this item to its producer. Ingestion hashes
+    # the canonical URL, and article dedup depends on that: two feed entries for
+    # one URL have to collide. A correspondent hashes its period key instead
+    # (0046), e.g. `Matsedel/koppargrillen/2026w35`, because it re-reads one
+    # unchanging URL every week and the column is unique. Still a 64-char digest;
+    # only the choice of what goes into it belongs to the producer.
+    hash: Mapped[str] = mapped_column(String(64), unique=True)
     title: Mapped[str | None] = mapped_column(Text)
     author: Mapped[str | None] = mapped_column(Text)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -69,6 +85,21 @@ class SourceItem(Base):
     story: Mapped[Story | None] = relationship(back_populates="items")
 
 
+# The primary item of a story: earliest publish date, then lowest id (0047). It
+# supplies an aggregate card's title, source name, snippet AND destination, which
+# is why it is one definition rather than four call sites. `nulls_last` is what
+# Postgres already does for ASC, written out so the ordering stays total if an
+# item ever arrives without a publish date.
+PRIMARY_ITEM_ORDER = (SourceItem.published_at.asc().nulls_last(), SourceItem.id.asc())
+
+
+def primary_item_key(item: SourceItem) -> tuple[datetime, int]:
+    """`PRIMARY_ITEM_ORDER` evaluated in Python, for the one caller that compares
+    an item still being clustered against a story's current primary. The two have
+    to agree, so they are written next to each other."""
+    return (item.published_at or datetime.max.replace(tzinfo=UTC), item.id)
+
+
 class Story(Base):
     """A cluster of SourceItems about the same underlying event/paper (spec §4)."""
 
@@ -81,7 +112,12 @@ class Story(Base):
     # it sorts to the front of the write queue. A property of the story rather
     # than of the job, so it survives a retry and a later rewrite.
     origin: Mapped[str] = mapped_column(String(20), default="ingest")
-    # new -> triaged (decision recorded) -> written | aggregated | skipped
+    # new -> triaged (decision recorded) -> written | aggregated | skipped.
+    # `filed` is a fourth terminal state and never passes through `new`: a
+    # correspondent hands over a finished post (0046), and nothing triaged it,
+    # so recording `triaged` with a fabricated decision would be a lie. It is
+    # out of `triage_pending()` and `write_pending()` by construction, because
+    # both match a status by name rather than excluding one.
     status: Mapped[str] = mapped_column(String(20), default="new")
     triage_decision: Mapped[str | None] = mapped_column(String(20))
     triage_reason: Mapped[str | None] = mapped_column(Text)
@@ -100,8 +136,60 @@ class Story(Base):
         DateTime(timezone=True), server_default=func.now()
     )
 
-    items: Mapped[list[SourceItem]] = relationship(back_populates="story")
+    # Ordered so that `story.items | first` IS the primary item (0047): the card
+    # title, the source name, the snippet and the destination are all read off
+    # the same row, and two renders of one card cannot disagree. Without an
+    # order_by this was physical row order, which is not a guarantee at all.
+    items: Mapped[list[SourceItem]] = relationship(
+        back_populates="story", order_by=PRIMARY_ITEM_ORDER
+    )
     posts: Mapped[list[Post]] = relationship(back_populates="story")
+
+
+@dataclass(frozen=True)
+class PostKind:
+    """Everything a kind has to declare before a post of it can exist.
+
+    One table rather than a filter per stage, because the alternative is what
+    `qa_pending()` used to be: `kind != "aggregate"`, which silently enrolled
+    every future kind in main-model review (0046). `Post.kind` refuses a value
+    that is not in `POST_KINDS`, so a new kind cannot reach the database without
+    answering every question here.
+    """
+
+    #: Renders itself at /post/{id} and carries `sections` (0047). False = it
+    #: stores an `href` and carries no body. The database enforces the invariant
+    #: itself, over `href` and `sections` rather than over `kind`
+    #: (ck_posts_body_iff_self_rendering); this is the producer-side decision.
+    renders_itself: bool
+    #: Enters `qa_pending()`: the main model reviews and may demote it.
+    reviewed: bool
+    #: Enters `score_pending()`: the profile gives it an affinity score.
+    scored: bool
+    #: Its feed card reads the story's items, so the feed batch-loads them (and
+    #: their sources) for this kind. An article card reads the denormalized
+    #: `banner_url` and never touches items; an aggregate reads its primary item;
+    #: a filed card reads the source behind it to name its correspondent.
+    needs_items: bool
+
+
+POST_KINDS: dict[str, PostKind] = {
+    "article": PostKind(
+        renders_itself=True, reviewed=True, scored=True, needs_items=False
+    ),
+    # An identity-only cluster card. Nothing was generated, so there is nothing
+    # to review; it still ranks against the profile like any other feed unit.
+    "aggregate": PostKind(
+        renders_itself=False, reviewed=False, scored=True, needs_items=True
+    ),
+    # Filed by a correspondent, finished on arrival (0046). It touches no
+    # pipeline stage at first: scoring is the first to integrate later, QA much
+    # later, and neither is a decision to make before there is a filed post to
+    # look at.
+    "filed": PostKind(
+        renders_itself=False, reviewed=False, scored=False, needs_items=True
+    ),
+}
 
 
 class Post(Base):
@@ -115,10 +203,28 @@ class Post(Base):
     typed-section data of spec §6."""
 
     __tablename__ = "posts"
+    __table_args__ = (
+        # A post carries a body exactly when it renders itself (0047). Not a rule
+        # about kinds: it is written over the two columns it constrains, so a kind
+        # that arrives later is covered without editing it.
+        # `jsonb_typeof` is not decoration: `jsonb_array_length` RAISES on a JSON
+        # scalar rather than returning false, and a constraint that errors is
+        # harder to diagnose than one that rejects.
+        CheckConstraint(
+            "(href IS NULL) = "
+            "(jsonb_typeof(sections) = 'array' AND jsonb_array_length(sections) > 0)",
+            name="ck_posts_body_iff_self_rendering",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     story_id: Mapped[int] = mapped_column(ForeignKey("stories.id"))
     kind: Mapped[str] = mapped_column(String(20), default="article")
+    # Where the card and the canonical URL both go (0047). NULL = this post
+    # renders itself; an aggregate holds its primary item's URL. Stored rather
+    # than derived so the CHECK can exist: a constraint cannot join to
+    # source_items to work out what an aggregate's destination would be.
+    href: Mapped[str | None] = mapped_column(Text)
     title: Mapped[str | None] = mapped_column(Text)
     summary: Mapped[str | None] = mapped_column(Text)
     difficulty: Mapped[str | None] = mapped_column(String(20))
@@ -144,6 +250,20 @@ class Post(Base):
     generated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    # When this post becomes visible; NULL = immediately (0046). A correspondent
+    # reads a week's content once and creates all five posts from that one read,
+    # each with its own date, so lunch does not depend on a nightly job firing.
+    # The feed filters on it AND sorts on it: without the second half, five posts
+    # created on Sunday all carry Sunday's `generated_at` and Friday's card
+    # arrives five days stale.
+    publish_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # When this post stops being visible; NULL = never. The mirror of
+    # `publish_at`, and the same mechanism: one clause in the feed query, no job.
+    # Today's lunch menu is worth reading until the kitchen closes and is purely
+    # historical after (TODO.md). Expiry removes it from the FEED only - the post
+    # is still at its own URL and the week is still on the correspondent's page,
+    # which is where standing content lives. Nothing archives it (0046).
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Set when the post leaves "published" (rewrite supersession or QA demote);
     # archived posts older than llm_log_retention_days are pruned with their calls.
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -154,6 +274,54 @@ class Post(Base):
     story: Mapped[Story] = relationship(back_populates="posts")
     audios: Mapped[list[PostAudio]] = relationship(
         back_populates="post", cascade="all, delete-orphan"
+    )
+
+    @validates("kind")
+    def _validate_kind(self, _key: str, value: str) -> str:
+        """Reject a kind nobody has decided the destination of.
+
+        Fires on assignment, not on load, so existing rows are unaffected and the
+        failure lands on whoever wrote the producer. Same move as
+        `chat_tools.validate_registry`: the property is checked mechanically over
+        the table instead of being remembered."""
+        if value not in POST_KINDS:
+            raise ValueError(
+                f"unknown post kind {value!r}: add it to models.POST_KINDS with a "
+                "decision about whether it renders itself (0047)"
+            )
+        return value
+
+
+class Correspondent(Base):
+    """The configuration half of a correspondent (0046); the code half is the
+    plugin the registry resolves from `slug`.
+
+    Same split `sources` already uses: a row names the thing and carries its
+    settings, an in-tree implementation does the work. A row with no plugin is a
+    correspondent that is configured but not installed, which is what an external
+    service would be if any existed.
+
+    **No credential columns.** 0046 designed two, encrypted at rest, and both
+    belong entirely to the external-service path, which that same decision
+    defers with no members. Adding an encryption dependency and a key in `.env`
+    for a class that is empty is more than the job needs; two nullable columns
+    are a cheap migration on the day something outside this repository files a
+    post.
+    """
+
+    __tablename__ = "correspondents"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # Permanent identity, and what `/c/<slug>/` is built from. Renaming it moves
+    # every URL the correspondent owns, which is why `label` exists separately.
+    slug: Mapped[str] = mapped_column(String(50), unique=True)
+    label: Mapped[str] = mapped_column(String(200))
+    enabled: Mapped[bool] = mapped_column(default=True)
+    # Whatever the plugin declares configurable. Opaque to core, exactly as
+    # `sources.config` is to everything but its adapter.
+    config: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
     )
 
 

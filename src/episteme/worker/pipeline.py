@@ -25,7 +25,16 @@ from ..llm.agent import run_writer_loop
 from ..llm.observe import llm_context
 from ..llm.prompts import SUMMARIZE_SYSTEM, TRIAGE_SYSTEM, WRITER_AGENT_SYSTEM
 from ..llm.schemas import SourceSummary, TriageResult
-from ..models import LlmCall, PipelineRun, Post, PostAudio, SourceItem, Story
+from ..models import (
+    PRIMARY_ITEM_ORDER,
+    LlmCall,
+    PipelineRun,
+    Post,
+    PostAudio,
+    SourceItem,
+    Story,
+    primary_item_key,
+)
 from ..recommend import profile, scorers, scoring, topics
 from ..tts import build_script, default_voice_id, get_voice, script_hash, synthesize_to_file
 from ..tts.store import upsert_post_audio as _upsert_post_audio
@@ -101,6 +110,41 @@ async def embed_new_items(session: AsyncSession, limit: int | None = None) -> in
 # --- Stage 2: cluster ------------------------------------------------------------
 
 
+async def _rehome_aggregate_card(session: AsyncSession, story: Story, item: SourceItem) -> None:
+    """Keep a published aggregate card pointed at its primary item (0047).
+
+    The nearest-story match below has no filter on story status, so a story that
+    already published a card keeps absorbing items for the rest of its window. An
+    arriving item that sorts AHEAD of the current primary changes the card's
+    title, source name and snippet — those re-render from `story.items` — and its
+    destination, which is stored and would go quietly stale instead.
+
+    Measured at 0 occurrences across 473 aggregate posts: nine clusters grew after
+    their post existed and none of them changed primary, because items are
+    clustered oldest-published first. This is insurance against a lagging feed, a
+    source added mid-window or a backfill, not a fix for an observed bug.
+
+    Called before `item.story_id` is set, so the primary it reads is still the
+    story's current one.
+    """
+    post = (
+        await session.execute(
+            select(Post).where(
+                Post.story_id == story.id,
+                Post.kind == "aggregate",
+                Post.status == "published",
+            )
+        )
+    ).scalars().first()
+    if post is None:
+        return
+    current = await _primary_item(session, story.id)
+    if current is not None and primary_item_key(current) <= primary_item_key(item):
+        return
+    log.info("Story %d: item %d takes the aggregate card's lead", story.id, item.id)
+    post.href = item.url
+
+
 async def cluster_items(session: AsyncSession, limit: int | None = None) -> int:
     # No pause check: pure DB work, done in seconds — nothing worth interrupting.
     query = pending.cluster_pending().order_by(
@@ -131,6 +175,7 @@ async def cluster_items(session: AsyncSession, limit: int | None = None) -> int:
             story.item_count += 1
             story.last_item_at = max(story.last_item_at, _item_time(item))
             story.first_item_at = min(story.first_item_at, _item_time(item))
+            await _rehome_aggregate_card(session, story, item)
         else:
             story = Story(
                 centroid=list(item.embedding),
@@ -425,19 +470,45 @@ async def _stamp_post_calls(session: AsyncSession, attempt_id: str, post_id: int
         log.debug("stamping llm_calls for post %d failed: %s", post_id, exc)
 
 
+async def _primary_item(session: AsyncSession, story_id: int) -> SourceItem | None:
+    """The story's primary item (0047), fetched without loading the whole cluster.
+    Ordered by `PRIMARY_ITEM_ORDER`, the same expression `Story.items` carries, so
+    this and a rendered card cannot pick different rows."""
+    return (
+        await session.execute(
+            select(SourceItem)
+            .where(SourceItem.story_id == story_id)
+            .order_by(*PRIMARY_ITEM_ORDER)
+            .limit(1)
+        )
+    ).scalars().first()
+
+
 async def ensure_aggregate_post(session: AsyncSession, story: Story) -> None:
     """All feed content is a post: an aggregated story is represented by an
     identity-only row (kind="aggregate" — no stored content, the card renders
     from the story's items at read time). Created only when the story has no
     published post, so a card never coexists with a live article (at most one
-    published post per story)."""
+    published post per story).
+
+    `href` is the primary item's URL (0047): the card and /post/{id} both go
+    straight to the source instead of to a page that relists the cluster. A story
+    with no items gets no post at all — it would have nowhere to point, and the
+    body-iff-self-rendering CHECK would reject the row rather than let a dead card
+    exist.
+    """
     published = (
         await session.execute(
             select(Post.id).where(Post.story_id == story.id, Post.status == "published").limit(1)
         )
     ).scalar_one_or_none()
-    if published is None:
-        session.add(Post(story_id=story.id, kind="aggregate"))
+    if published is not None:
+        return
+    primary = await _primary_item(session, story.id)
+    if primary is None:
+        log.warning("Story %d has no items; no aggregate card to make", story.id)
+        return
+    session.add(Post(story_id=story.id, kind="aggregate", href=primary.url))
 
 
 async def _retire_aggregate_post(session: AsyncSession, story_id: int) -> None:

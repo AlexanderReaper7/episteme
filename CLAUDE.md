@@ -23,6 +23,7 @@ Phases 1 to 4 are built and live. "Live" and "tested" are different claims:
 | host control agent, resource governor | live-verified 2026-08-01 |
 | assistant rail, reader-requested articles (5) | built 2026-08-11, NOT yet watched running |
 | benchmarks (`quick`) | live-verified 2026-08-15; `ladder`/`longctx`/`sweep` built, not watched |
+| correspondents, Glance, Matsedel (0046) | live-verified 2026-08-29: two scrapes, four kitchens, five filed posts; a re-read that carries no menu keeps what is stored |
 
 **Read [CLAUDE-TODO.md](CLAUDE-TODO.md) before claiming a path works.** It holds the paths that were rewritten but not yet observed running, and the open content-quality gaps.
 
@@ -96,6 +97,13 @@ POST   /api/pipeline/resume
 # AUTOMATIC unload goes through control.unload_unless_interactive instead (0037).
 POST   /api/llm/unload  # free VRAM now, no pause
 
+# Correspondents and Glance (0046). HTML routes, no /api prefix. `/c` is core's
+# prefix; a plugin's router is mounted under it with the enabled flag as one
+# Depends, and every plugin must declare GET /glance. No plugins ship yet.
+GET    /glance  # one block per enabled correspondent, each an htmx fragment
+GET    /c/<slug>  # the correspondent's own page; /c/<slug>/style.css is its CSS
+docker compose exec -T db psql -U episteme -d episteme -c 'select slug,label,enabled from correspondents;'
+
 # The assistant rail (0036, 0037, 0038). HTML routes, no /api prefix; the turn
 # itself is text/event-stream. One conversation at a time, id in app_state.
 GET    /chat/panel  # the rail; base.html fetches it on load, outside <main>
@@ -141,6 +149,12 @@ POST   /admin/benchmarks/run  # scenario=quick|longctx|ladder|sweep, models, rep
 POST   /admin/benchmarks/{id}/cancel  # a flag on the row, read between stream chunks
 GET    /admin/benchmarks/{id}/progress  # SSE; worker writes run.progress, web polls it
 # sweep restarts llama-server with different flags, so it 422s without the host agent.
+
+# Correspondents (0046, 0047). Matsedel is the only one: `/c/matsedel` is the
+# week, `/c/matsedel/stats` its history, `/glance` the dashboard of blocks. The
+# cron is Monday 02:00 UTC, and every fetch goes through polite_get.
+POST   /api/jobs/defer/matsedel_scrape  # re-reads all four sites, then re-files
+docker compose exec -T db psql -U episteme -d episteme -c 'select w.week_key,s.name,count(d.id) from matsedel_weeks w join sources s on s.id=w.source_id left join matsedel_dishes d on d.week_id=w.id group by 1,2 order by 2;'
 
 GET    /api/status  # /api/{status,sources,runs,jobs,stories,posts,llm-calls}
 GET    /api/llm-calls?story_id=284&full=true  # full prompts/responses
@@ -197,13 +211,14 @@ Names to navigate by. The reasoning is in the numbered decision.
 - **The assistant** (`llm/chat.py` + `llm/chat_tools.py`, `web/chat.py`, 0036). **A `writes=True` tool is NEVER executed from `dispatch`** — it raises `WriteProposed`, and `execute_approved` is the only other path to a handler. Do not add a "just this once" branch; the gate is structural because a per-handler check is a convention that fails silently. Tool table + `validate_registry` in `chat_tools.py`, `tests/test_chat_tools.py` parametrizes the property over the registry.
 - **One tool loop** (`agent.run_tool_loop`), shared by writer, QA and chat. Chat enters through the injected `turn` seam (0038); a second loop is the thing that is not wanted. Reader-requested stories: `Story.origin == "user"`, first in the queue, no `demote_story`, no thin-gate (0037). Interactive lease in `worker/control.py`: every AUTOMATIC unload goes through `unload_unless_interactive`.
 - **Narration** (`src/episteme/tts/`, 0035). `script.build_script` is the seam an LLM preprocessing pass replaces.
-- **Correspondents** (0046, 0047, GLOSSARY.md), designed 2026-08-28, **not yet built**. A correspondent files finished posts, skipping triage and the writer, and owns a page under `/c/<slug>/` for standing content that never enters the feed. Plugins ship in-tree and run in-process, because only in-process code can be held to `polite_get`; external services keep their own database and are never copied into ours. `posts.href` is where a card and the canonical URL both go, and a CHECK ties a body to rendering yourself. Implementation order is in CLAUDE-TODO.md.
+- **A post stores its destination** (0047, built 2026-08-28): `posts.href` is where a card and `/post/{id}` both go, NULL means the post renders itself, and `ck_posts_body_iff_self_rendering` ties a body to rendering yourself. `models.POST_KINDS` records the decision per kind and `Post.kind` **refuses a value that is not in it**. The primary item is `models.PRIMARY_ITEM_ORDER`, one expression shared by `Story.items` and `pipeline._primary_item`.
+- **Correspondents** (0046, GLOSSARY.md). A correspondent files finished posts, skipping triage and the writer, and owns a page under `/c/<slug>/` for standing content that never enters the feed. Plugins ship in-tree and run in-process, because only in-process code can be held to `polite_get`; external services keep their own database and are never copied into ours. **Filing is built** (`correspondents/filing.py`, 2026-08-28): one story per period, found through its items' hashes rather than a `period_key` column, upserted on a re-file. `posts.publish_at` is when a post becomes visible and `posts.expires_at` when it stops being, both NULL for no bound; the feed filters on both and sorts on the first, so a week of posts can come from one read and each leaves when it stops being true. **Registration and the routes are built too**: a `correspondents` row is the configuration, `correspondents/registry.py` resolves the slug to the plugin the way `get_adapter` resolves `Source.type_name`, and **core owns the `/c/<slug>/` prefix** (`web/correspondents.py`) so a plugin cannot declare a path that shadows a core route. The enabled flag is a `Depends` on the mount, not a check each view remembers. **Glance is built** (`web/glance.py`): core lays out one block per enabled correspondent and fetches each from that correspondent's own `GET /c/<slug>/glance`, required at registration so a missing block is a startup failure rather than a correspondent that looks down. A plugin's page goes through `templating.correspondent_page`, which renders `correspondent.html` and INCLUDES the plugin's template: inheritance breaks the boosted-fragment path, and importing the helper from `web/correspondents.py` is a circular import. **The filed card is built**: it names its correspondent by walking post -> story -> primary item -> `sources.type_name`, which IS the slug, and `filing._require_correspondent_source` is what keeps that true. **Matsedel is the first plugin** (`correspondents/matsedel/`): four restaurants' lunch menus, one read a week, five weekday posts filed from it. Its reader works on the page's visible LINES, never on each site's markup, because a stale CSS selector yields an empty menu and an empty menu looks like a kitchen that posted nothing (0046). **What a line IS comes from `tags.tag_of` and nowhere else** (label, dish, hidden): a hand-written `site -> exact line -> tag` table, falling back to `readers.is_label` for anything untagged. Tags are applied on read, so `matsedel_dishes` keeps what the restaurant wrote and a tag added today fixes every stored week. Its `tasks.py` is deliberately not imported by its `__init__.py`. `ingest_all` skips every source whose `type_name` is a correspondent slug (`worker/tasks.py:not_a_correspondents_source`), so the four rows keep their own `enabled` switch.
 - **Benchmarks** (`src/episteme/bench/`, 0039): a peer of `llm/`, never a caller. `BenchError` is its whole error contract and streaming is the only path, because prefill curves and cancellation both need the stream. **Never store or plot llama-server's aggregate rates** (0040): `prompt_progress` counters are CUMULATIVE, so `series.py` differences them, and `report.py` aggregates totals-over-totals, never means-of-ratios. `bench_run(run_id)` takes one int: the row is the parameter record. The host agent applies preset edits it is handed and chooses nothing (0041).
 - **Jobs**: procrastinate on Postgres, no broker. Worker and web are one image, two entrypoints; crons in settings. Stalls 0016, retention 0032.
 - **Schema is Alembic**, migrations inside the package so `COPY src ./src` ships them. **No `create_all` anywhere**, deliberately (0014). `bootstrap.py` adopts-or-upgrades, applies the procrastinate schema guarded (`schema --apply` is NOT idempotent), then seeds sources. Backup 0015.
 - **Politeness is a hard requirement** (spec §5, 0005, 0006). All source HTTP through `ingest/http.py:polite_get`, which new adapters MUST use. **Never `docker compose down -v` casually**: re-ingesting re-fetches every article from every source.
 - **Feed**: one ranked stream, `web/app.py:_rank_expr`, articles and aggregate cards interleaved as equal units. The spec's divider and diversity quotas are deferred, so don't hunt for them. Infinite scroll is htmx `revealed` sentinels into `/partials/*`. **All feed content is a post** (0011).
-- **Rendering and caching**: `templating.fragment_block(request, template)` decides what a response is, and every ETag derives from it (0031). Polling fragments 204 on an unchanged digest (0033). Icons only through `ico.icon` / `ico.toggle` (0029).
+- **Rendering and caching**: `templating.fragment_block(request, template)` decides what a response is, and every ETag derives from it (0031). Polling fragments 204 on an unchanged digest (0033). Icons only through `ico.icon` / `ico.toggle` (0029). **Never style `:visited`** (0048): a link looks the same opened or not, and `tests/test_stylesheets.py` fails on any rule that singles it out, in a plugin's sheet as well as core's.
 - **Failures render `web/errors.py` + `error.html`** (0043): HTML gets the full traceback, `/api` keeps FastAPI's JSON body untouched. **No debug/production toggle**, deliberately — single-user, no auth, tailnet only. A boosted navigation gets it as a fragment marked `HX-Error-Page`, which `app.js` swaps; nothing else is marked, so a failing 10s poll still leaves the page alone.
 
 ## Migrations: the review rule (user feedback, hard)

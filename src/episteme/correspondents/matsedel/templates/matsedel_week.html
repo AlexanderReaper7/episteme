@@ -1,0 +1,78 @@
+{# Matsedel's week. Included by core's `correspondent.html`, which owns the
+   scoping wrapper and the stylesheet link, so this file is only the contents.
+
+   Each day carries `id="day-{{ day.date }}"`, which is the anchor a lunch card's
+   href points at: `/c/matsedel#day-2026-08-24`. The `day-` prefix is not
+   decoration: an id may begin with a digit in HTML, but `#2026-08-24` is not a
+   valid CSS selector, and htmx resolves a boosted navigation's hash with
+   `querySelector`. Watched throwing `DOMException` in Firefox on 2026-08-28.
+
+   The restaurants are named ONCE, in a header that sticks under the site header
+   as the week scrolls. That is why `_week_context` hands every day a cell per
+   kitchen even when the kitchen published nothing: the header and each day's row
+   are the same grid, and an empty cell is what holds a column under its name.
+   `--matsedel-columns` carries the roster's length into the CSS so both use it.
+
+   A line the restaurant wrote as a heading is rendered as one (`tags.tag_of`),
+   because `Fran Buffe:` in a bulleted list reads as something you can order. #}
+<div class="matsedel" style="--matsedel-columns: {{ kitchens | length or 1 }}">
+  <div class="matsedel-nav">
+    {# An arrow only where `week_view` found a week to go to. Icon-only, so the
+       control carries the accessible name (`title` + `aria-label`) and the glyph
+       stays decorative, which is the rule `_icons.html` states. Naming the week
+       it lands on beats "previous week": the reader is choosing a date. #}
+    {% if previous %}
+    <a class="matsedel-step" href="/c/matsedel?monday={{ previous }}"
+       title="Week of {{ previous }}" aria-label="Week of {{ previous }}">{{ ico.icon("previous") }}</a>
+    {% endif %}
+    <span class="matsedel-week">Week of {{ monday }}</span>
+    {% if next %}
+    <a class="matsedel-step" href="/c/matsedel?monday={{ next }}"
+       title="Week of {{ next }}" aria-label="Week of {{ next }}">{{ ico.icon("next") }}</a>
+    {% endif %}
+    <a class="matsedel-stats-link" href="/c/matsedel/stats">{{ ico.icon("aggregate") }} what Matsedel has collected</a>
+  </div>
+
+  {% if not kitchens_read %}
+  <p class="empty-state">Nothing read for this week. Matsedel reads each kitchen once a week.</p>
+  {% else %}
+  <div class="matsedel-kitchens-head">
+    {% for kitchen in kitchens %}
+    {# Each restaurant's own typeface, from its own site. The modifier is the
+       `sources` config key, and the faces are declared in matsedel.css. #}
+    <h2 class="matsedel-kitchen-name matsedel-k--{{ kitchen.site }}">
+      {% if kitchen.url %}<a href="{{ kitchen.url }}" rel="noopener">{{ kitchen.name }}</a>
+      {% else %}{{ kitchen.name }}{% endif %}
+    </h2>
+    {% endfor %}
+  </div>
+
+  {% for day in days %}
+  <section class="matsedel-day {{ 'is-today' if day.date == today else '' }}" id="day-{{ day.date }}">
+    <h3 class="matsedel-day-title">{{ day.name }} <span class="muted">{{ day.date }}</span></h3>
+    <div class="matsedel-cells">
+      {% for cell in day.cells %}
+      <div class="matsedel-cell">
+        {# The kitchen's name again, hidden at full width where the sticky header
+           already says it, and shown once the columns stack. #}
+        <p class="matsedel-cell-name matsedel-k--{{ cell.kitchen.site }}">{{ cell.kitchen.name }}</p>
+        {% if cell.lines %}
+        <ul class="matsedel-lines">
+          {% for line in cell.lines %}
+          {% if line.label %}
+          <li class="matsedel-line-label">{{ line.text }}</li>
+          {% else %}
+          <li>{{ line.text }}</li>
+          {% endif %}
+          {% endfor %}
+        </ul>
+        {% else %}
+        <p class="matsedel-cell-empty muted">&mdash;</p>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+  {% endfor %}
+  {% endif %}
+</div>
