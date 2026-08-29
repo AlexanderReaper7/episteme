@@ -110,6 +110,18 @@ The llama-server on port 5002, a separate process from the router and always res
 
 The process on the host that starts, stops and senses llama-server. It is a sensor and an actuator, never a decision maker (0023).
 
+### Harness
+
+Everything one agentic run needs, in one object built per run: which model, what it is told, what tools it may call, how long it gets, and how the run ends (0049). The writer, the QA reviewer and the assistant differ only in their harness. A condition known before the run starts is a filled slot in the prompt; one that arrives mid-run is `offer`, which adds a tool and returns the sentence that tells the model about it.
+
+### Tool
+
+One entry in the registry every harness selects from, `llm/tools.py`. It carries the schema the model is shown, the handler, the least context that handler needs, whether it is terminal, and whether it writes.
+
+### Tool context
+
+A harness's per-run state, handed to every handler. Budgets live here rather than in `settings`, which is what lets one `web_search` serve a writer allowed six searches and a chat turn allowed two.
+
 ## Recommendation
 
 ### Feedback

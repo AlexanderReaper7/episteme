@@ -282,8 +282,8 @@ class Post(Base):
 
         Fires on assignment, not on load, so existing rows are unaffected and the
         failure lands on whoever wrote the producer. Same move as
-        `chat_tools.validate_registry`: the property is checked mechanically over
-        the table instead of being remembered."""
+        `llm.tools._validate`: the property is checked mechanically over the
+        table instead of being remembered."""
         if value not in POST_KINDS:
             raise ValueError(
                 f"unknown post kind {value!r}: add it to models.POST_KINDS with a "
@@ -619,7 +619,7 @@ class ChatMessage(Base):
     and `tool_call_id` reconstruct the exact assistant/tool message pair the
     model sees when the loop resumes, so an approved write continues a real
     conversation instead of a paraphrase of one. The sentence on the approval
-    card is `chat_tools.describe(args)`, computed at render time — derivable, so
+    card is the tool's own `describe(args)`, computed at render time — derivable, so
     not stored. `content` is NULL while a proposal is pending and holds the
     tool's result (or the rejection note) afterwards.
 

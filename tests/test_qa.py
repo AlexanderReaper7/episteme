@@ -3,23 +3,21 @@ and everything they refuse), the verdict schema, and screenshot stripping in the
 observability layer."""
 
 import json
-import time
 
 import pytest
 
 import episteme.llm.agent as agent
 from episteme.config import settings
+from episteme.llm import tools
 from episteme.llm.observe import _hash_messages, _strip_images
 from episteme.llm.schemas import QAReview
 from episteme.models import Post
 from episteme.worker.qa import (
-    QA_TOOLS,
-    QA_TOOLS_VISUAL,
-    _dispatch,
     _Editor,
     _flush,
     _Renderer,
     needs_render,
+    qa_harness,
 )
 
 _QUIZ = {"type": "quiz", "questions": [
@@ -42,12 +40,26 @@ class FakeSession:
         self.commits += 1
 
 
-def _editor(candidates=None, sections=None):
+def _editor(candidates=None, sections=None, *, session=None, renderer=None, visual=False):
+    """An editor with the harness that would be driving it in a real review.
+
+    The harness rides along on the editor purely so these tests can stay written
+    about the editor: it is the same object `harness.context.editor` is, and the
+    handlers only ever see it through the context.
+    """
     post = Post(
         id=1, kind="article", title="T", summary="S", difficulty="intermediate",
         topics=["astronomy"], sections=sections or [dict(s) for s in _SECTIONS],
     )
-    return _Editor.of(post, candidates or {})
+    editor = _Editor.of(post, candidates or {})
+    editor.harness = qa_harness(
+        editor,
+        session or FakeSession(),
+        renderer or FakeRenderer(),
+        visual=visual,
+        on_idle=lambda _text: None,
+    )
+    return editor
 
 
 class FakeRenderer:
@@ -61,10 +73,15 @@ class FakeRenderer:
         return b"PNG"
 
 
-async def _call(editor, name, args, session=None, renderer=None):
-    return await _dispatch(
-        name, args, editor, session or FakeSession(), renderer or FakeRenderer()
-    )
+async def _call(editor, name, args):
+    """One tool call, through the path a real run takes: `agent._dispatch` looks
+    the tool up in the harness and hands it the context. A test that called a
+    handler directly would keep passing after the loop stopped offering it."""
+    return await agent._dispatch(editor.harness, name, args)
+
+
+def _names(editor) -> list[str]:
+    return [tool.name for tool in editor.harness.tools]
 
 
 # --- what the tools address ------------------------------------------------------
@@ -87,7 +104,7 @@ async def test_replace_section_touches_only_that_section():
     editor = _editor()
     reply = await _call(editor, "replace_section",
                         {"index": 0, "section": {"type": "prose", "text": "new body"}})
-    assert not reply.stop and not reply.refused
+    assert not reply.refused
     assert editor.body[0] == {"type": "prose", "text": "new body"}
     assert editor.body[1] == _SECTIONS[1]
     assert editor.body[2] == _QUIZ
@@ -115,8 +132,9 @@ async def test_set_meta_changes_only_what_is_supplied():
 
 
 async def test_flush_splices_the_citation_tail_back_on():
-    editor, session = _editor(), FakeSession()
-    await _call(editor, "delete_section", {"index": 1}, session)
+    session = FakeSession()
+    editor = _editor(session=session)
+    await _call(editor, "delete_section", {"index": 1})
     await _flush(session, editor)
     assert [s["type"] for s in editor.post.sections] == [
         "prose", "quiz", "sources", "further_reading"]
@@ -244,14 +262,10 @@ async def test_loop_applies_edits_then_stops_on_finish_review(monkeypatch):
         _toolcall("delete_section", '{"index": 0}', "c3"),  # never reached
     ])
     monkeypatch.setattr(agent, "gateway", gw)
-    editor, session = _editor(), FakeSession()
+    editor = _editor()
     messages = [{"role": "system", "content": "sys"}]
 
-    await agent.run_tool_loop(
-        messages, QA_TOOLS,
-        lambda name, args: _dispatch(name, args, editor, session, None),
-        max_steps=8, deadline=time.monotonic() + 60,
-    )
+    await agent.run_tool_loop(editor.harness, messages)
 
     assert gw.turns == 2  # finish_review ended it; c3 never ran
     assert editor.body[0] == {"type": "prose", "text": "grounded"}
@@ -261,10 +275,11 @@ async def test_loop_applies_edits_then_stops_on_finish_review(monkeypatch):
 async def test_rerender_flushes_first_then_returns_a_fresh_screenshot():
     """The screenshot has to show the edits, so the re-render persists them before
     rendering — the worker screenshots the post through the real web app."""
-    editor, session, renderer = _editor(), FakeSession(), FakeRenderer()
+    session, renderer = FakeSession(), FakeRenderer()
+    editor = _editor(session=session, renderer=renderer, visual=True)
     await _call(editor, "replace_section",
-                {"index": 0, "section": {"type": "prose", "text": "fixed"}}, session)
-    reply = await _call(editor, "rerender", {}, session, renderer)
+                {"index": 0, "section": {"type": "prose", "text": "fixed"}})
+    reply = await _call(editor, "rerender", {})
 
     assert session.commits == 1 and not editor.dirty
     assert editor.post.sections[0]["text"] == "fixed"
@@ -277,7 +292,7 @@ async def test_rerender_flushes_first_then_returns_a_fresh_screenshot():
 
 async def test_rerender_budget_is_enforced(monkeypatch):
     monkeypatch.setattr(settings, "qa_max_screenshots", 0)
-    reply = await _call(_editor(), "rerender", {})
+    reply = await _call(_editor(visual=True), "rerender", {})
     assert reply.refused
 
 
@@ -285,8 +300,8 @@ def test_qa_tools_constrain_the_section_argument():
     """Tool arguments are grammar-constrained like a response_format, so `section`
     carries the real Section union — and its `$defs` must sit on the `parameters`
     object, the root the converter resolves `#/$defs/…` against."""
-    replace = next(t for t in QA_TOOLS if t["function"]["name"] == "replace_section")
-    params = replace["function"]["parameters"]
+    replace = tools.get("replace_section")
+    params = replace.schema["function"]["parameters"]
     assert "QuizSection" in params["$defs"]
     refs = {branch["$ref"] for branch in params["properties"]["section"]["oneOf"]}
     assert "#/$defs/QuizSection" in refs
@@ -299,8 +314,8 @@ def test_qa_has_no_network_tools():
     the injection surface for no reviewing benefit (decided 2026-08-02)."""
     editing = {"replace_section", "insert_section", "delete_section",
                "set_meta", "finish_review"}
-    assert {t["function"]["name"] for t in QA_TOOLS} == editing
-    assert {t["function"]["name"] for t in QA_TOOLS_VISUAL} == editing | {"rerender"}
+    assert set(_names(_editor())) == editing
+    assert set(_names(_editor(visual=True))) == editing | {"rerender"}
 
 
 # --- when a screenshot is worth taking --------------------------------------------
@@ -322,12 +337,10 @@ def test_only_client_rendered_sections_need_a_screenshot():
 def test_rerender_is_offered_only_where_a_render_could_show_something():
     """Leaving it in the table for a text-only post hands the model a multi-second,
     ~1k-image-token way to re-read what its listing says exactly."""
-    assert "rerender" not in {t["function"]["name"] for t in QA_TOOLS}
+    assert "rerender" not in _names(_editor())
     # ...and it stays the last-but-one tool, ahead of finish_review, so the closing
     # affordance is still what the model sees last.
-    assert [t["function"]["name"] for t in QA_TOOLS_VISUAL][-2:] == [
-        "rerender", "finish_review"
-    ]
+    assert _names(_editor(visual=True))[-2:] == ["rerender", "finish_review"]
 
 
 _CHART = {
@@ -348,30 +361,28 @@ async def test_inserting_a_chart_escalates_a_text_only_review_to_visual():
     editor adds would otherwise be published unseen and scored — never re-reviewed.
     That is the post-427 blank box, reintroduced through the editing path."""
     editor = _editor()
-    editor.tools = list(QA_TOOLS)
-    table = editor.tools  # the exact object run_tool_loop re-reads every turn
     reply = await _call(editor, "insert_section", {"index": 0, "section": _CHART})
 
-    assert "rerender" in {t["function"]["name"] for t in editor.tools}
-    assert editor.tools is table, "grown in place, or the running loop never sees it"
+    assert "rerender" in _names(editor)
+    # Ahead of the terminal tool, so the closing affordance is still read last.
+    assert _names(editor)[-2:] == ["rerender", "finish_review"]
     assert "rerender" in reply.content  # and the model is told, in the tool result
-    assert "rerender" not in {t["function"]["name"] for t in QA_TOOLS}  # constant intact
+    # The harness grew; the registry it selected from did not.
+    assert "rerender" not in _names(_editor())
 
 
 async def test_editing_prose_does_not_escalate():
     editor = _editor()
-    editor.tools = list(QA_TOOLS)
     await _call(editor, "replace_section",
                 {"index": 0, "section": {"type": "prose", "text": "fixed"}})
-    assert "rerender" not in {t["function"]["name"] for t in editor.tools}
+    assert "rerender" not in _names(editor)
 
 
 async def test_escalation_offers_rerender_exactly_once():
     editor = _editor()
-    editor.tools = list(QA_TOOLS)
     await _call(editor, "insert_section", {"index": 0, "section": _CHART})
     reply = await _call(editor, "insert_section", {"index": 1, "section": _CHART})
-    names = [t["function"]["name"] for t in editor.tools]
+    names = _names(editor)
     assert names.count("rerender") == 1
     assert "rerender" not in reply.content
 

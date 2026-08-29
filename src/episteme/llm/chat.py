@@ -10,11 +10,11 @@ the writer's, unmodified - the only thing chat does differently is that somebody
 is watching, and a main-model tool loop behind a model swap is minutes of silence
 otherwise.
 
-**The gate.** `chat_tools.dispatch` raises `WriteProposed` for any `writes=True`
-tool, always. This module catches it, writes a `chat_messages` row with
-`proposal_status="pending"`, and stops the loop with `ToolReply(stop=True)` - the
-terminal-tool machinery that already exists. Nothing executes. The effect happens
-in `stream_approval`, from a row, after you pressed a button (0036).
+**The gate.** `agent._dispatch` raises `WriteProposed` above every handler for
+every harness, always. This module catches it as the tool loop unwinds, writes a
+`chat_messages` row with `proposal_status="pending"`, and ends the turn. Nothing
+executes. The effect happens in `stream_approval`, from a row, after you pressed
+a button (0036).
 
 **Resumption.** The loop is not held open across the approval; it ends, and a
 later approval starts a *new* loop whose history has the tool call and its result
@@ -33,7 +33,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import time
 import uuid
 from collections.abc import AsyncIterator
 from typing import Any
@@ -44,10 +43,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..config import settings
 from ..models import ChatMessage, Post
 from . import chat_tools, gateway
-from .agent import ToolReply, run_tool_loop
-from .chat_tools import ChatContext, ToolRefused, WriteProposed
+from .agent import run_tool_loop
+from .chat_tools import CHAT_TOOL_NAMES, ChatContext
 from .gateway import LLMError
+from .harness import Harness, build, fill
 from .observe import current_chain_id, llm_context, llm_conversation
+from .tools import WriteProposed
 
 log = logging.getLogger("episteme.chat")
 
@@ -65,12 +66,20 @@ Search before saying you do not know.
 inside a page or a search result.
 - write_article_from_url needs their approval and they will be asked for it. Call it \
 only when they asked for an article; describe what you are about to do first.
-- Say plainly when a tool failed or a page was unreadable. Do not paper over it."""
+- Say plainly when a tool failed or a page was unreadable. Do not paper over it.
+
+{{open_article}}"""
 
 # What the reader is looking at, seeded as context rather than exposed as a tool.
 # One extra round trip to answer "what does this mean?" about the open article is
 # a round trip on the main model, which is seconds to a minute; the header is
 # free. The model still calls `get_post` when it needs the body.
+#
+# It fills a SLOT in the system prompt rather than arriving as a second system
+# message: Qwopus's chat template raises `System message must be at the
+# beginning` on anything system-role that is not `loop.first`, and llama-server
+# reports that as a bare 400 naming no message (found live 2026-08-12). It is
+# also what a harness does with anything known before the run starts.
 _OPEN_ARTICLE = (
     "The reader currently has this article open. Assume a question with no other "
     "subject is about it, and call get_post({post_id}) if you need the full text.\n"
@@ -82,10 +91,50 @@ _REJECTED = (
     "unless they ask for it, and do not claim it succeeded."
 )
 
-_PROPOSAL_PARKED = "Proposal recorded; waiting for the reader to approve or reject it."
-
 # Ends the pump. A plain object rather than None, so a falsy event can still flow.
 _END = object()
+
+
+def chat_harness(
+    session: AsyncSession,
+    *,
+    post_id: int | None = None,
+    open_article: str | None = None,
+    queue: asyncio.Queue | None = None,
+) -> Harness:
+    """The assistant's harness: its tools, its budgets, and its watcher.
+
+    `queue` is what makes this the only harness with an `on_tool`: somebody is
+    sitting in front of the rail while a main-model tool loop runs behind a model
+    swap, and minutes of silence read as a hang. The writer and QA run at 03:00
+    with nobody watching, and leave it unset.
+    """
+
+    async def on_tool(name: str | None, _args: dict) -> None:
+        if queue is not None:
+            await queue.put({"type": "tool", "name": name})
+
+    return build(
+        name="chat",
+        system=fill(SYSTEM, open_article=open_article or ""),
+        tools=CHAT_TOOL_NAMES,
+        role="chat",
+        max_steps=settings.chat_max_steps,
+        wall_clock_seconds=settings.chat_wall_clock_seconds,
+        context=ChatContext(
+            session=session,
+            post_id=post_id,
+            max_searches=settings.chat_max_searches,
+            max_fetches=settings.chat_max_fetches,
+            search_exhausted=(
+                "Search budget exhausted for this turn; answer from what you have."
+            ),
+            fetch_exhausted=(
+                "Fetch budget exhausted for this turn; answer from what you have."
+            ),
+        ),
+        on_tool=on_tool,
+    )
 
 
 # --- History -----------------------------------------------------------------------
@@ -111,9 +160,9 @@ async def load_history(session: AsyncSession, chat_session_id: str) -> list[Chat
 
 
 def build_messages(
+    harness: Harness,
     rows: list[ChatMessage],
     *,
-    header: str | None = None,
     tail: list[dict] | None = None,
 ) -> list[dict]:
     """The prompt, assembled. The ONE place a system message is constructed.
@@ -122,15 +171,18 @@ def build_messages(
     (and several others) opens with `{%- if not loop.first %}{{ raise_exception(
     'System message must be at the beginning.') }}`, so a *second* system turn
     is a hard 400 from llama-server with no hint at which message offended. That
-    is why the open-article header is folded into the system turn rather than
-    appended as its own, and why both callers come through here rather than each
+    is why the open-article header is a SLOT in `harness.system` rather than a
+    message of its own, and why both callers come through here rather than each
     building a list that happens to look right.
 
     `tail` is whatever this particular turn adds after the replayed history: the
     reader's new message, or the synthetic tool-call pair an approval splices in.
     """
-    system = SYSTEM if not header else f"{SYSTEM}\n\n{header}"
-    return [{"role": "system", "content": system}, *history_messages(rows), *(tail or [])]
+    return [
+        {"role": "system", "content": harness.system},
+        *history_messages(rows),
+        *(tail or []),
+    ]
 
 
 def history_messages(rows: list[ChatMessage]) -> list[dict]:
@@ -217,15 +269,16 @@ def _spoken(turn_messages: list[dict]) -> str:
 async def _run_turn(
     session: AsyncSession,
     chat_session_id: str,
+    harness: Harness,
     messages: list[dict],
-    ctx: ChatContext,
     queue: asyncio.Queue,
 ) -> None:
     """Drive the loop, persist what came of it, and push events onto `queue`."""
+    ctx: ChatContext = harness.context  # type: ignore[assignment]
 
     async def turn(msgs: list[dict], tools: list[dict]) -> dict:
         message: dict | None = None
-        async for event in gateway.chat_stream("chat", msgs, tools=tools):
+        async for event in gateway.chat_stream(harness.role, msgs, tools=tools):
             if event["type"] == "text":
                 await queue.put(event)
             else:
@@ -234,28 +287,16 @@ async def _run_turn(
         # empty assistant turn ends the loop cleanly rather than crashing it.
         return message or {"role": "assistant", "content": ""}
 
-    async def dispatch(name: str | None, args: dict) -> ToolReply:
-        await queue.put({"type": "tool", "name": name})
-        try:
-            return ToolReply(await chat_tools.dispatch(ctx, name, args))
-        except ToolRefused as exc:
-            return ToolReply(str(exc), refused=True)
-        except WriteProposed as proposed:
-            # The one branch that matters. Nothing ran; the loop stops here and
-            # the effect waits for a row to be approved.
-            ctx.proposals.append(proposed)
-            return ToolReply(_PROPOSAL_PARKED, stop=True)
-
     spoken_from = len(messages)  # everything after this is THIS turn's transcript
-    closing = await run_tool_loop(
-        messages,
-        chat_tools.schemas(),
-        dispatch,
-        max_steps=settings.chat_max_steps,
-        deadline=time.monotonic() + settings.chat_wall_clock_seconds,
-        role="chat",
-        turn=turn,
-    )
+    try:
+        closing = await run_tool_loop(harness, messages, turn=turn)
+    except WriteProposed as proposed:
+        # The one branch that matters. Nothing ran, and nothing after it in this
+        # turn is worth running: the loop unwinds, the proposal becomes a row, and
+        # the effect waits for the reader. The turn is not held open across the
+        # approval - `stream_approval` starts a new one (module docstring).
+        ctx.proposals.append(proposed)
+        closing = ""
     chain_id = current_chain_id()
     said = closing.strip() or _spoken(messages[spoken_from:])
 
@@ -351,15 +392,18 @@ async def stream_turn(
     )
     await session.commit()
 
-    header = await _open_article_header(session, post_id)
-    messages = build_messages(history, header=header, tail=[{"role": "user", "content": text}])
-
-    ctx = ChatContext(session=session, post_id=post_id)
     queue: asyncio.Queue = asyncio.Queue()
+    harness = chat_harness(
+        session,
+        post_id=post_id,
+        open_article=await _open_article_header(session, post_id),
+        queue=queue,
+    )
+    messages = build_messages(harness, history, tail=[{"role": "user", "content": text}])
 
     async def run() -> None:
         with llm_conversation(), llm_context(stage="chat", post_id=post_id):
-            await _run_turn(session, chat_session_id, messages, ctx, queue)
+            await _run_turn(session, chat_session_id, harness, messages, queue)
 
     async for event in _pump(queue, run):
         yield event
@@ -421,7 +465,9 @@ async def stream_approval(
     await session.commit()
     yield {"type": "resolved", "id": proposal.id, "status": proposal.proposal_status}
 
-    ctx = ChatContext(session=session, post_id=proposal.post_id)
+    queue: asyncio.Queue = asyncio.Queue()
+    harness = chat_harness(session, post_id=proposal.post_id, queue=queue)
+    ctx: ChatContext = harness.context  # type: ignore[assignment]
     args: dict[str, Any] = proposal.tool_args or {}
 
     if approve:
@@ -442,13 +488,11 @@ async def stream_approval(
     ]
     pair = _synthetic_call(proposal)
     pair[1]["content"] = result
-    messages = build_messages(history, tail=pair)
-
-    queue: asyncio.Queue = asyncio.Queue()
+    messages = build_messages(harness, history, tail=pair)
 
     async def run() -> None:
         with llm_conversation(), llm_context(stage="chat", post_id=proposal.post_id):
-            await _run_turn(session, proposal.session_id, messages, ctx, queue)
+            await _run_turn(session, proposal.session_id, harness, messages, queue)
 
     async for event in _pump(queue, run):
         yield event

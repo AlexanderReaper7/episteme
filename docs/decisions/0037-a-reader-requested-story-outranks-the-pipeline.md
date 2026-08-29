@@ -27,7 +27,7 @@ def _user_first(stories: Sequence[Story]) -> list[Story]:
 
 Applied at *both* of `_rank_write_queue`'s returns, so "the reader outranks the pipeline" is one rule rather than a property of one branch. `sorted` is stable, so the ranking it was handed survives inside each group. A test pins the ordering (`[2, 1, 3]` for a requested story sitting between two better-ranked ones), because the rule is invisible in a run where the request happened to rank well anyway.
 
-**Privilege is withheld tools, not refused calls.** `demote_story` is absent from `writer_tools(allow_demote=False)` rather than rejected in dispatch, so the model never spends a step on a choice we were never going to honour. The deterministic thin-gate is skipped too: it exists to spend the nightly budget well, and the reader spending it on a short page is their call.
+**Privilege is withheld tools, not refused calls.** `demote_story` is absent from `writer_harness(allow_demote=False)` rather than rejected in dispatch, so the model never spends a step on a choice we were never going to honour. *(Only half of this was built: the prompt went on naming the tool for another two weeks. 0049 is the fix, and the reason it could happen.)* The deterministic thin-gate is skipped too: it exists to spend the nightly budget well, and the reader spending it on a short page is their call.
 
 A consequence worth naming: for a requested story, "no draft" is a **failure**, not an editorial decline, because the tool to decline was not on the table. The log line says so, and the aggregate card is a fallback rather than a verdict.
 

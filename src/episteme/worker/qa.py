@@ -39,9 +39,9 @@ from __future__ import annotations
 import base64
 import json
 import logging
-import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from functools import partial
 from datetime import UTC, datetime
 
 from pydantic import ValidationError
@@ -49,7 +49,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
-from ..llm.agent import ToolReply, request_validated, run_tool_loop
+from ..llm.agent import ToolReply, close, run_tool_loop
+from ..llm.harness import Closing, Harness, build
+from ..llm.tools import Tool, ToolContext, ToolRefused, register
 from ..llm.observe import llm_context, llm_conversation
 from ..llm.prompts import QA_SYSTEM
 from ..llm.schemas import (
@@ -192,7 +194,6 @@ class _Editor:
     dirty: bool = False
     # The live tool table this review is running against — a copy, because it can grow
     # mid-loop (see `_offer_rerender`) and the module constants must not.
-    tools: list[dict] = field(default_factory=list)
 
     @classmethod
     def of(cls, post: Post, candidates: dict[str, dict]) -> "_Editor":
@@ -258,25 +259,25 @@ def _quiz_survives(body: list[dict], index: int, replacement: dict | None) -> bo
     return has_quiz(after)
 
 
-def _offer_rerender(editor: _Editor) -> str:
-    """Add `rerender` to this review's tool table, once, when the EDITOR introduces a
-    section only a render can vouch for.
+def _offer_rerender(ctx: "QAContext") -> str:
+    """Add `rerender` to this review, once, when an EDIT introduces a section only
+    a render can vouch for, and return the sentence that tells the model so.
 
     `visual` is decided before the loop from what the writer left, so a chart or
-    diagram QA inserts would otherwise be published unseen — and scored, which means
-    never re-reviewed. That is exactly the post-427 failure (a blank figure served at
-    quality_score 9), reintroduced through the editing path.
+    diagram QA inserts would otherwise be published unseen - and scored, which
+    means never re-reviewed. That is exactly the post-427 failure (a blank figure
+    served at quality_score 9), reintroduced through the editing path.
 
-    Growing the table mid-conversation re-prefills the prompt, since tools are
-    rendered ahead of the messages. That is the deliberate trade: it fires only when
-    an edit adds a chart or diagram, and a re-prefill is cheaper than a blank figure.
+    The sentence is the point, not decoration: a tool list that grows silently is
+    a table the model has no reason to re-read (`harness.offer`). Growing it
+    re-prefills the prompt, since tools are rendered ahead of the messages. That
+    is the deliberate trade: it fires only when an edit adds a chart or diagram,
+    and a re-prefill is cheaper than a blank figure.
     """
-    if any(tool["function"]["name"] == "rerender" for tool in editor.tools):
-        return ""
-    editor.tools[:] = QA_TOOLS_VISUAL  # in place: run_tool_loop reads this list each turn
-    return (
+    return ctx.harness.offer(
+        "rerender",
         " That section renders from a spec rather than from its own text, so "
-        "`rerender` is now available — use it to confirm the figure actually draws."
+        "`rerender` is now available - use it to confirm the figure actually draws.",
     )
 
 
@@ -294,88 +295,98 @@ async def _flush(session: AsyncSession, editor: _Editor) -> None:
     editor.dirty = False
 
 
-async def _dispatch(
-    name: str | None, args: dict, editor: _Editor, session: AsyncSession, renderer
-) -> ToolReply:
-    if name == "finish_review":
-        return ToolReply("Editing closed.", stop=True)
+@dataclass
+class QAContext(ToolContext):
+    """The QA reviewer's per-run state. It has no research budgets: this stage
+    reads the post and the trusted source items and nothing off the open web."""
 
-    if name == "rerender":
-        if editor.screenshots >= settings.qa_max_screenshots:
+    editor: "_Editor" = None  # type: ignore[assignment]
+    session: AsyncSession = None  # type: ignore[assignment]
+    renderer: object = None
+
+
+async def _finish_review(ctx: QAContext, args: dict) -> str:
+    return "Editing closed."
+
+
+async def _rerender(ctx: QAContext, args: dict) -> ToolReply:
+    if ctx.editor.screenshots >= settings.qa_max_screenshots:
+        raise ToolRefused("Re-render budget exhausted; finish the review from what you have.")
+    ctx.editor.screenshots += 1
+    await _flush(ctx.session, ctx.editor)
+    png = await ctx.renderer.screenshot(ctx.editor.post.id)
+    return ToolReply(
+        "Re-rendered; the new screenshot follows.",
+        follow_up=_vision_message("The post as it now renders.", png),
+    )
+
+
+async def _set_meta(ctx: QAContext, args: dict) -> ToolReply:
+    editor = ctx.editor
+    title, summary = args.get("title"), args.get("summary")
+    if not title and not summary:
+        return ToolReply("Rejected - set_meta needs a title, a summary, or both.")
+    if title:
+        editor.post.title = str(title)[:300]
+    if summary:
+        editor.post.summary = str(summary)[:1000]
+    editor.dirty = True
+    return editor.state_reply("Updated.")
+
+
+async def _edit_section(ctx: QAContext, args: dict, *, kind: str) -> ToolReply:
+    """replace_section, insert_section and delete_section: one body edit each.
+
+    One handler for the three because they share every guard - the edit budget,
+    the index range, the quiz that must survive - and three copies would be three
+    places to forget one.
+    """
+    editor = ctx.editor
+    if editor.edits >= settings.qa_max_edits:
+        raise ToolRefused("Edit budget exhausted; finish the review from what you have.")
+    try:
+        index = int(args.get("index"))
+    except (TypeError, ValueError):
+        return ToolReply("Rejected - `index` must be an integer.")
+
+    if kind == "insert_section":
+        if not 0 <= index <= len(editor.body):
             return ToolReply(
-                "Re-render budget exhausted; finish the review from what you have.",
-                refused=True,
+                f"Rejected - index {index} is out of range; insert accepts "
+                f"0..{len(editor.body)}."
             )
-        editor.screenshots += 1
-        await _flush(session, editor)
-        png = await renderer.screenshot(editor.post.id)
-        return ToolReply(
-            "Re-rendered; the new screenshot follows.",
-            follow_up=_vision_message("The post as it now renders.", png),
-        )
-
-    if name == "set_meta":
-        title, summary = args.get("title"), args.get("summary")
-        if not title and not summary:
-            return ToolReply("Rejected — set_meta needs a title, a summary, or both.")
-        if title:
-            editor.post.title = str(title)[:300]
-        if summary:
-            editor.post.summary = str(summary)[:1000]
-        editor.dirty = True
-        return editor.state_reply("Updated.")
-
-    if name in ("replace_section", "insert_section", "delete_section"):
-        if editor.edits >= settings.qa_max_edits:
+        section, error = _validate_section(args.get("section"), editor.candidates)
+        if section is None:
+            return ToolReply(error)
+        editor.body.insert(index, section)
+    else:
+        if not 0 <= index < len(editor.body):
             return ToolReply(
-                "Edit budget exhausted; finish the review from what you have.",
-                refused=True,
+                f"Rejected - index {index} is out of range; the body has "
+                f"{len(editor.body)} sections."
             )
-        try:
-            index = int(args.get("index"))
-        except (TypeError, ValueError):
-            return ToolReply("Rejected — `index` must be an integer.")
-
-        if name == "insert_section":
-            if not 0 <= index <= len(editor.body):
-                return ToolReply(
-                    f"Rejected — index {index} is out of range; insert accepts "
-                    f"0..{len(editor.body)}."
-                )
+        section = None
+        if kind == "replace_section":
             section, error = _validate_section(args.get("section"), editor.candidates)
             if section is None:
                 return ToolReply(error)
-            editor.body.insert(index, section)
+        if not _quiz_survives(editor.body, index, section):
+            return ToolReply(
+                f"Rejected - {NO_QUIZ_MESSAGE}, and that is the only quiz section. "
+                "Replace it with a corrected quiz, or drop the bad question from "
+                "its `questions` list instead of removing the section."
+            )
+        if section is None:
+            del editor.body[index]
         else:
-            if not 0 <= index < len(editor.body):
-                return ToolReply(
-                    f"Rejected — index {index} is out of range; the body has "
-                    f"{len(editor.body)} sections."
-                )
-            section = None
-            if name == "replace_section":
-                section, error = _validate_section(args.get("section"), editor.candidates)
-                if section is None:
-                    return ToolReply(error)
-            if not _quiz_survives(editor.body, index, section):
-                return ToolReply(
-                    f"Rejected — {NO_QUIZ_MESSAGE}, and that is the only quiz section. "
-                    "Replace it with a corrected quiz, or drop the bad question from "
-                    "its `questions` list instead of removing the section."
-                )
-            if section is None:
-                del editor.body[index]
-            else:
-                editor.body[index] = section
+            editor.body[index] = section
 
-        editor.edits += 1
-        editor.dirty = True
-        verb = {"replace_section": "Replaced", "insert_section": "Inserted",
-                "delete_section": "Deleted"}[name]
-        extra = _offer_rerender(editor) if section is not None and needs_render([section]) else ""
-        return editor.state_reply(f"{verb} section {index}.{extra}")
-
-    return ToolReply(f"Unknown tool: {name}")
+    editor.edits += 1
+    editor.dirty = True
+    verb = {"replace_section": "Replaced", "insert_section": "Inserted",
+            "delete_section": "Deleted"}[kind]
+    extra = _offer_rerender(ctx) if section is not None and needs_render([section]) else ""
+    return editor.state_reply(f"{verb} section {index}.{extra}")
 
 
 def _tools(*, rerender: bool) -> list[dict]:
@@ -474,14 +485,59 @@ def _tools(*, rerender: bool) -> list[dict]:
     return tools
 
 
-QA_TOOLS = _tools(rerender=False)
-QA_TOOLS_VISUAL = _tools(rerender=True)
+#: Registered once at import, then selected by name per review. `rerender` is a
+#: registry entry like any other; what changes is whether a harness offers it.
+for _schema in _tools(rerender=True):
+    _name = _schema["function"]["name"]
+    register(
+        Tool(
+            name=_name,
+            schema=_schema,
+            handler=(
+                _finish_review
+                if _name == "finish_review"
+                else _rerender
+                if _name == "rerender"
+                else _set_meta
+                if _name == "set_meta"
+                else partial(_edit_section, kind=_name)
+            ),
+            context=QAContext,
+            terminal=_name == "finish_review",
+        )
+    )
+
+#: Every review offers these. `finish_review` is not among them because it is
+#: terminal and therefore goes LAST, after whatever else the harness adds, so the
+#: closing affordance is the last thing the model reads.
+QA_EDIT_TOOLS = ["replace_section", "insert_section", "delete_section", "set_meta"]
 
 _NUDGE = (
     "Do not describe the edits you would make — call the tools to make them, then "
     "call finish_review. If the post needs no changes, call finish_review now."
 )
 _MAX_NUDGES = 1
+
+def qa_harness(editor, session, renderer, *, visual: bool, on_idle) -> Harness:
+    """One review's harness. `visual` decides whether `rerender` starts on the table.
+
+    A text-only post does not get it, because leaving it in hands the model a
+    ~1k-token, multi-second way to re-read what its listing already tells it. An
+    EDIT can still put it there mid-run (`_offer_rerender`), which is a different
+    question from whether the post arrived with something to look at.
+    """
+    return build(
+        name="qa.visual" if visual else "qa",
+        system=QA_SYSTEM,
+        tools=QA_EDIT_TOOLS + (["rerender"] if visual else []) + ["finish_review"],
+        role="main",
+        max_steps=settings.qa_max_steps,
+        wall_clock_seconds=settings.qa_wall_clock_seconds,
+        context=QAContext(editor=editor, session=session, renderer=renderer),
+        on_idle=on_idle,
+        closing=Closing(request=_VERDICT_REQUEST, schema=QAReview),
+    )
+
 
 _VERDICT_REQUEST = (
     "Now give your verdict on the post as it stands after your edits. Respond with "
@@ -521,7 +577,6 @@ async def _qa_post(session: AsyncSession, renderer, post: Post) -> None:
     items = await _story_items(session, story)
     editor = _Editor.of(post, media_candidates(items))
     visual = needs_render(post.sections)
-    editor.tools = list(QA_TOOLS_VISUAL if visual else QA_TOOLS)
 
     def on_idle(_text: str) -> str | None:
         if editor.nudges < _MAX_NUDGES:
@@ -529,28 +584,22 @@ async def _qa_post(session: AsyncSession, renderer, post: Post) -> None:
             return _NUDGE
         return None
 
+    harness = qa_harness(editor, session, renderer, visual=visual, on_idle=on_idle)
+
     with llm_conversation():  # the whole review renders as one provenance chain
-        messages: list[dict] = [{"role": "system", "content": QA_SYSTEM}]
+        messages: list[dict] = [{"role": "system", "content": harness.system}]
         prompt = _initial_prompt(items, story, editor, visual=visual)
         if visual:
             editor.screenshots += 1
             messages.append(_vision_message(prompt, await renderer.screenshot(post.id)))
         else:
             messages.append({"role": "user", "content": prompt})
-        await run_tool_loop(
-            messages,
-            editor.tools,
-            lambda name, args: _dispatch(name, args, editor, session, renderer),
-            max_steps=settings.qa_max_steps,
-            deadline=time.monotonic() + settings.qa_wall_clock_seconds,
-            on_idle=on_idle,
-        )
+        await run_tool_loop(harness, messages)
         # Edits are the model's, not the verdict's: they stand whether it approves,
         # runs out of budget, or fails to produce a parsable verdict below.
         await _flush(session, editor)
 
-        messages.append({"role": "user", "content": _VERDICT_REQUEST})
-        review = await request_validated("main", messages, QAReview)
+        review = await close(harness, messages, QAReview)
         if review is None:
             log.warning("QA verdict failed validation for post %d", post.id)
             return

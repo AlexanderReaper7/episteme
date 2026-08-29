@@ -23,7 +23,7 @@ from ..db import SessionLocal
 from ..llm import LLMError, gateway
 from ..llm.agent import run_writer_loop
 from ..llm.observe import llm_context
-from ..llm.prompts import SUMMARIZE_SYSTEM, TRIAGE_SYSTEM, WRITER_AGENT_SYSTEM
+from ..llm.prompts import SUMMARIZE_SYSTEM, TRIAGE_SYSTEM
 from ..llm.schemas import SourceSummary, TriageResult
 from ..models import (
     PRIMARY_ITEM_ORDER,
@@ -772,15 +772,14 @@ async def write_posts(
             continue
         items, seed, source_chars, attempt = prepared[story.id]
         # The reader asked for this one, so the writer is not offered the option
-        # of declining it: `demote_story` is withheld from the tool list rather
-        # than refused in dispatch, which means the model never spends a step on
-        # a choice we were never going to honour (see agent.writer_tools).
+        # of declining it. One flag reaches `agent.writer_harness`, which decides
+        # the tool list, the prompt paragraph and the budget-refusal sentence
+        # together: the model never spends a step on a choice we were never going
+        # to honour, and is never told to make one it cannot make.
         requested = story.origin == "user"
         try:
             with llm_context(stage="write", story_id=story.id, attempt_id=attempt):
-                outcome = await run_writer_loop(
-                    WRITER_AGENT_SYSTEM, seed, allow_demote=not requested
-                )
+                outcome = await run_writer_loop(seed, allow_demote=not requested)
         except Exception as exc:
             log.warning("Writer loop failed for story %d: %s", story.id, exc)
             continue

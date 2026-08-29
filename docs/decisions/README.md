@@ -76,6 +76,7 @@ Nothing here is edited to reflect later changes. A decision that was replaced ge
 | [0045](0045-the-long-form-kind-is-called-article.md) | The long-form post kind is called `article`, stored value included | 2026-08-28 |
 | [0047](0047-a-post-stores-its-destination.md) | A post stores its destination; a body means it renders itself | 2026-08-28 |
 | [0048](0048-the-browser-never-colours-a-link.md) | The browser never colours a link, and never marks one as visited | 2026-08-29 |
+| [0049](0049-a-harness-is-one-agentic-run.md) | A harness is one agentic run, and the prompt cannot disagree with the tool list | 2026-08-29 |
 
 ## Host, GPU, resources
 

@@ -7,8 +7,8 @@ carries relative paths and is mounted here.
 **The enabled flag is a mounted dependency, not a check each view remembers.**
 One `Depends` on the include, so every route the plugin has now or adds later is
 covered by construction. That is the same reasoning as the `writes=True` gate in
-`llm/chat_tools.py`: a per-view check is a convention that fails silently the
-first time someone forgets.
+`llm/agent.py`: a per-view check is a convention that fails silently the first
+time someone forgets.
 
 **Why the stylesheet link is in the body and not in `<head>`.** The whole app is
 boosted (`base.html`), so a click swaps `#main-content` and the document head is

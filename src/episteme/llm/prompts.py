@@ -58,10 +58,7 @@ issue the tool call instead. When you have gathered enough to write with depth a
 accuracy, call finish_research with a short editorial note on what you found and
 which sources are strongest; you will then be asked for the post itself.
 
-If, even after research, the material is too thin or of too little learning value for
-a full article, call demote_story with a short reason instead of forcing an article
-out of nothing — the aggregation stream is a fine home for minor items. demote_story
-KILLS the article; never call it to signal that research is done.
+{{demote}}
 
 Writing rules for the post you will produce:
 1. Only state facts from the source items or pages you actually fetched. Never invent
@@ -107,6 +104,26 @@ Writing rules for the post you will produce:
    pages that turned out to be about something else, and the original source items.
    An empty list is fine. Only URLs you actually fetched count — anything else is
    dropped.
+"""
+
+#: Filled into `WRITER_AGENT_SYSTEM`'s `{{demote}}` slot when the harness offers
+#: `demote_story`, and left out when it does not. A reader-requested story is not
+#: declinable (0037), and before this it was told to decline anyway: the tool was
+#: withheld from the list while the prose went on naming it (post 543).
+WRITER_MAY_DEMOTE = """\
+If, even after research, the material is too thin or of too little learning value for
+a full article, call demote_story with a short reason instead of forcing an article
+out of nothing — the aggregation stream is a fine home for minor items. demote_story
+KILLS the article; never call it to signal that research is done.\
+"""
+
+#: The other half of the same rule. The reader ASKED for this one, so there is no
+#: declining it, and the prompt says so rather than leaving a silence where the
+#: way out used to be.
+WRITER_MUST_WRITE = """\
+The reader asked for this story specifically, so there is no declining it: write the
+best article the material supports. If it turns out thinner than you hoped, say so
+plainly in the piece rather than padding it.\
 """
 
 QA_SYSTEM = """\

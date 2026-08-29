@@ -1,11 +1,21 @@
 """Writer loop: it drives tools, holds editorial authority (write vs demote),
-enforces budgets, and produces the schema-constrained draft in-conversation."""
+enforces budgets, and produces the schema-constrained draft in-conversation.
+
+The research tools are patched on `episteme.research`, not on this module: one
+`web_search` and one `fetch_page` serve every stage and live in `llm/tools.py`,
+which imports them from there at call time (`llm/tools.py`'s docstring says why
+there is only one of each).
+"""
 
 import json
-import time
+
+import pytest
 
 import episteme.llm.agent as agent
+import episteme.research as research
 from episteme.config import settings
+from episteme.llm.harness import Harness
+from episteme.llm.tools import Tool, ToolContext, WriteProposed, function
 
 _DRAFT = {
     "title": "T",
@@ -67,9 +77,9 @@ async def test_loop_gathers_then_writes(monkeypatch):
         return {"url": url, "title": f"title of {url}",
                 "text": f"A far richer description from {url}.", "links": []}
 
-    monkeypatch.setattr(agent, "fetch_page", fake_fetch)
+    monkeypatch.setattr(research, "fetch_page", fake_fetch)
 
-    outcome = await agent.run_writer_loop("sys", "seed")
+    outcome = await agent.run_writer_loop("seed")
 
     assert outcome.decision == "write"
     assert outcome.draft is not None and outcome.draft.title == "T"
@@ -92,9 +102,9 @@ async def test_demote_story_skips_drafting(monkeypatch):
     async def fake_fetch(url):
         return {"url": url, "title": url, "text": "thin", "links": []}
 
-    monkeypatch.setattr(agent, "fetch_page", fake_fetch)
+    monkeypatch.setattr(research, "fetch_page", fake_fetch)
 
-    outcome = await agent.run_writer_loop("sys", "seed")
+    outcome = await agent.run_writer_loop("seed")
 
     assert outcome.decision == "aggregate"
     assert outcome.reason == "just a photo caption"
@@ -118,9 +128,9 @@ async def test_finish_research_ends_loop_and_carries_note(monkeypatch):
     async def fake_fetch(url):
         return {"url": url, "title": url, "text": "rich text", "links": []}
 
-    monkeypatch.setattr(agent, "fetch_page", fake_fetch)
+    monkeypatch.setattr(research, "fetch_page", fake_fetch)
 
-    outcome = await agent.run_writer_loop("sys", "seed")
+    outcome = await agent.run_writer_loop("seed")
 
     assert outcome.decision == "write"
     assert outcome.notes == "Nature piece is strongest."
@@ -144,9 +154,9 @@ async def test_loop_nudges_when_model_narrates_instead_of_acting(monkeypatch):
     async def fake_fetch(url):
         return {"url": url, "title": url, "text": f"rich text {url}", "links": []}
 
-    monkeypatch.setattr(agent, "fetch_page", fake_fetch)
+    monkeypatch.setattr(research, "fetch_page", fake_fetch)
 
-    outcome = await agent.run_writer_loop("sys", "seed")
+    outcome = await agent.run_writer_loop("seed")
     assert len(outcome.fetch_log) == 2  # the nudge got it to act
     assert outcome.decision == "write"
 
@@ -168,9 +178,9 @@ async def test_fetch_budget_is_enforced(monkeypatch):
         calls.append(url)
         return {"url": url, "title": url, "text": "text", "links": []}
 
-    monkeypatch.setattr(agent, "fetch_page", fake_fetch)
+    monkeypatch.setattr(research, "fetch_page", fake_fetch)
 
-    outcome = await agent.run_writer_loop("sys", "seed")
+    outcome = await agent.run_writer_loop("seed")
 
     assert calls == ["https://a.org"]  # second fetch refused by the budget
     assert len(outcome.fetch_log) == 1
@@ -199,9 +209,9 @@ async def test_stuck_budget_loop_forces_draft(monkeypatch):
     async def fake_search(q):
         return [{"title": "t", "url": "https://x.org", "snippet": "s"}]
 
-    monkeypatch.setattr(agent, "web_search", fake_search)
+    monkeypatch.setattr(research, "web_search", fake_search)
 
-    outcome = await agent.run_writer_loop("sys", "seed")
+    outcome = await agent.run_writer_loop("seed")
     # Turn 1 spends the budget; turns 2 and 3 are all-refused -> break. Never 12.
     assert gw.tool_turns == 3
     assert outcome.decision == "write"
@@ -216,7 +226,7 @@ async def test_draft_validation_retries_with_repair(monkeypatch):
         ],
     )
     monkeypatch.setattr(agent, "gateway", gw)
-    outcome = await agent.run_writer_loop("sys", "seed")
+    outcome = await agent.run_writer_loop("seed")
     assert outcome.decision == "write"
     assert outcome.draft is not None
     assert gw.draft_turns == 2
@@ -229,7 +239,7 @@ async def test_draft_failure_demotes(monkeypatch):
         draft_script=[_assistant_final("not json"), _assistant_final("still not json")],
     )
     monkeypatch.setattr(agent, "gateway", gw)
-    outcome = await agent.run_writer_loop("sys", "seed")
+    outcome = await agent.run_writer_loop("seed")
     assert outcome.decision == "aggregate"
     assert "validation" in outcome.reason
 
@@ -255,9 +265,9 @@ async def test_loop_stops_at_max_steps(monkeypatch):
     async def fake_search(q):
         return [{"title": "t", "url": "https://x.org", "snippet": "s"}]
 
-    monkeypatch.setattr(agent, "web_search", fake_search)
+    monkeypatch.setattr(research, "web_search", fake_search)
 
-    outcome = await agent.run_writer_loop("sys", "seed")
+    outcome = await agent.run_writer_loop("seed")
     assert gw.tool_turns == 3  # capped at enrich_max_steps, no runaway
     assert outcome.decision == "write"  # still drafts from what it has
 
@@ -276,23 +286,34 @@ _SCRIPT = [
 ]
 
 
-async def _run_once(turn, gateway_script):
-    """One identical run of the loop, driven either by a `turn` or by the gateway."""
-    seen: list[tuple[str | None, dict]] = []
+def _harness(*tools_: Tool, context=None, max_steps=6) -> Harness:
+    """A harness over tools that exist only for this test.
 
-    async def dispatch(name, args):
-        seen.append((name, args))
-        return agent.ToolReply(f"result for {args.get('q')}")
-
-    messages = [{"role": "system", "content": "sys"}, {"role": "user", "content": "go"}]
-    closing = await agent.run_tool_loop(
-        messages,
-        [{"type": "function", "function": {"name": "look"}}],
-        dispatch,
-        max_steps=6,
-        deadline=time.monotonic() + 30,
-        turn=turn,
+    Built directly rather than through `build`, because registering them would
+    put them in the table every other stage selects from - and the registry
+    refusing a duplicate name is a property another test relies on.
+    """
+    return Harness(
+        name="test",
+        system="sys",
+        role="main",
+        max_steps=max_steps,
+        wall_clock_seconds=30,
+        context=context if context is not None else ToolContext(),
+        _tools=list(tools_),
     )
+
+
+async def _run_once(turn, seen: list):
+    """One identical run of the loop, driven either by a `turn` or by the gateway."""
+
+    async def look(ctx, args):
+        seen.append(("look", args))
+        return f"result for {args.get('q')}"
+
+    harness = _harness(Tool(name="look", schema=function("look", "d", {}, []), handler=look))
+    messages = [{"role": "system", "content": "sys"}, {"role": "user", "content": "go"}]
+    closing = await agent.run_tool_loop(harness, messages, turn=turn)
     return closing, messages, seen
 
 
@@ -303,7 +324,7 @@ async def test_an_injected_turn_changes_nothing_but_where_the_message_came_from(
     diff, and the equivalence stays checked as the loop grows."""
     gw = ScriptedGateway(list(_SCRIPT))
     monkeypatch.setattr(agent, "gateway", gw)
-    through_gateway = await _run_once(None, gw)
+    through_gateway = await _run_once(None, [])
 
     scripted = list(_SCRIPT)
     saw: list[int] = []
@@ -312,7 +333,7 @@ async def test_an_injected_turn_changes_nothing_but_where_the_message_came_from(
         # The loop passes the live transcript and the same tool list every time;
         # the streaming agent relies on both to build its request.
         saw.append(len(messages))
-        assert tools == [{"type": "function", "function": {"name": "look"}}]
+        assert [t["function"]["name"] for t in tools] == ["look"]
         return scripted.pop(0)
 
     exploded = ScriptedGateway([])
@@ -322,30 +343,78 @@ async def test_an_injected_turn_changes_nothing_but_where_the_message_came_from(
 
     exploded.chat_messages = refuse
     monkeypatch.setattr(agent, "gateway", exploded)
-    through_turn = await _run_once(turn, exploded)
+    through_turn = await _run_once(turn, [])
 
     assert through_turn == through_gateway
     assert saw == [2, 4, 6]  # two seeds, then +1 assistant +1 tool result per turn
 
 
-async def test_a_stopping_tool_ends_an_injected_run_before_the_next_turn(monkeypatch):
-    """What the chat agent's permission gate is built on: a write tool parks the
-    loop by returning `stop=True`, and nothing may ask the model for another turn
-    after that — the next thing to happen is the reader approving a card."""
+async def test_a_terminal_tool_ends_an_injected_run_before_the_next_turn():
+    """Which tools end a run is read off the registry, not decided by a dispatcher
+    that each stage writes for itself. Nothing may ask the model for another turn
+    after one fires."""
     turns = 0
 
     async def turn(messages, tools):
         nonlocal turns
         turns += 1
-        return _assistant_toolcall("propose", "{}", f"c{turns}")
+        return _assistant_toolcall("wrap_up", "{}", f"c{turns}")
 
-    async def dispatch(name, args):
-        return agent.ToolReply("awaiting approval", stop=True)
+    async def wrap_up(ctx, args):
+        return "closed"
 
-    messages: list[dict] = []
-    closing = await agent.run_tool_loop(
-        messages, [], dispatch, max_steps=6, deadline=time.monotonic() + 30, turn=turn
+    harness = _harness(
+        Tool(name="wrap_up", schema=function("wrap_up", "d", {}, []),
+             handler=wrap_up, terminal=True)
     )
+    messages: list[dict] = []
+    closing = await agent.run_tool_loop(harness, messages, turn=turn)
     assert turns == 1
     assert closing == ""
-    assert messages[-1]["content"] == "awaiting approval"
+    assert messages[-1]["content"] == "closed"
+
+
+async def test_a_write_tool_leaves_the_loop_instead_of_running():
+    """The assistant's permission gate, seen from the loop's side: `WriteProposed`
+    is the one exception that is not turned into a tool result, because the reader
+    has to answer before anything else in the run is worth doing (0036). It fires
+    for ANY harness, not only the assistant's."""
+
+    async def turn(messages, tools):
+        return _assistant_toolcall("do_it", '{"url": "u"}', "c1")
+
+    async def never(ctx, args):
+        raise AssertionError("a write tool executed inside the loop")
+
+    harness = _harness(
+        Tool(name="do_it", schema=function("do_it", "d", {}, []), handler=never,
+             writes=True, describe=lambda args: f"do {args['url']}")
+    )
+    with pytest.raises(WriteProposed) as raised:
+        await agent.run_tool_loop(harness, [], turn=turn)
+    assert raised.value.tool.name == "do_it"
+    assert raised.value.tool_args == {"url": "u"}
+
+
+async def test_on_tool_is_told_before_the_tool_runs():
+    """What the assistant's rail shows while a main-model call is in flight. The
+    order is the point: announced first, run second, or the notice arrives after
+    the wait it exists to explain."""
+    events: list[str] = []
+
+    async def turn(messages, tools):
+        return _assistant_toolcall("look", '{"q": "a"}', "c1") if not events else (
+            _assistant_final("done")
+        )
+
+    async def look(ctx, args):
+        events.append("ran")
+        return "ok"
+
+    async def on_tool(name, args):
+        events.append(f"announced {name} {args['q']}")
+
+    harness = _harness(Tool(name="look", schema=function("look", "d", {}, []), handler=look))
+    harness.on_tool = on_tool
+    await agent.run_tool_loop(harness, [], turn=turn)
+    assert events == ["announced look a", "ran"]
