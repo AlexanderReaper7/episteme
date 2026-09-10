@@ -82,6 +82,7 @@ Nothing here is edited to reflect later changes. A decision that was replaced ge
 | [0052](0052-a-card-is-two-thirds-text-one-third-picture.md) | A card is two thirds text and one third picture, and the summary is clamped by the room it has | 2026-08-31 |
 | [0053](0053-the-header-nav-folds-into-one-button.md) | The header nav folds into one button, and stays one list | 2026-08-31 |
 | [0054](0054-a-menu-is-read-until-it-exists.md) | A menu is read until it exists: Matsedel reads every weekday, skips a whole week, and refuses a page showing an older one | 2026-09-05 |
+| [0055](0055-a-dead-endpoint-stops-the-batch.md) | A dead endpoint stops the batch, and the run says so | 2026-09-10 |
 
 ## Host, GPU, resources
 

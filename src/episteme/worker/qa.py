@@ -49,6 +49,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
+from ..llm import LLMUnavailable
 from ..llm.agent import ToolReply, close, run_tool_loop
 from ..llm.harness import Closing, Harness, build
 from ..llm.tools import Tool, ToolContext, ToolRefused, register
@@ -680,6 +681,9 @@ async def qa_posts(
                 with llm_context(stage="qa", story_id=post.story_id, post_id=post.id):
                     await _qa_post(session, renderer, post)
                 reviewed += 1
+            except LLMUnavailable:  # not per-post: no post can be reviewed now
+                await session.rollback()
+                raise
             except Exception as exc:  # per-post; the next post still gets reviewed
                 log.warning("QA failed for post %d: %s", post_id, exc)
                 await session.rollback()

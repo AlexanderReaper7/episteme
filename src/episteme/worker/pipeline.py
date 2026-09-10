@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
 from ..db import SessionLocal
-from ..llm import LLMError, gateway
+from ..llm import LLMError, LLMUnavailable, gateway
 from ..llm.agent import run_writer_loop
 from ..llm.observe import llm_context
 from ..llm.prompts import (
@@ -88,6 +88,8 @@ async def embed_new_items(session: AsyncSession, limit: int | None = None) -> in
     if await topics.pending_embeddings(session):
         try:
             await topics.backfill_embeddings(session)
+        except LLMUnavailable:
+            raise
         except LLMError as exc:
             log.warning("Topic embedding backfill skipped: %s", exc)
 
@@ -237,6 +239,8 @@ async def triage_stories(
                 result = await gateway.complete_json(
                     "fast", TRIAGE_SYSTEM, prompt, TriageResult
                 )
+        except LLMUnavailable:
+            raise
         except LLMError as exc:
             log.warning("Triage failed for story %d: %s", story.id, exc)
             continue
@@ -681,6 +685,8 @@ async def _resolve_deferred_topics(
         return
     try:
         entries = await topics.resolve_entries(session, outstanding, review=True)
+    except LLMUnavailable:
+        raise
     except LLMError as exc:
         # The dedup turn degrades to "no matches" on its own; this catches the
         # embedding call behind it, which has no such fallback.
@@ -789,6 +795,8 @@ async def write_posts(
         try:
             with llm_context(stage="write", story_id=story.id, attempt_id=attempt):
                 outcome = await run_writer_loop(seed, allow_demote=not requested)
+        except LLMUnavailable:
+            raise
         except Exception as exc:
             log.warning("Writer loop failed for story %d: %s", story.id, exc)
             continue
@@ -964,6 +972,8 @@ async def summarize_posts(
         try:
             with llm_context(stage="summarize", story_id=post.story_id, post_id=pid):
                 result = await gateway.complete_json("fast", system, user, CardSummary)
+        except LLMUnavailable:
+            raise
         except LLMError as exc:
             log.warning("Summarize failed for post %d (%s)", pid, exc)
             continue
@@ -1168,6 +1178,11 @@ async def narrate_posts(
                 "Narrated post %d voice %s (%d chars, %d bytes)",
                 pid, voice_id, len(script), result.bytes_written,
             )
+        except LLMUnavailable:
+            # Nothing here talks to a model today; `script.build_script` is the
+            # seam an LLM preprocessing pass replaces (0035), and when it does,
+            # a dead endpoint must stop this loop like every other one.
+            raise
         except Exception as exc:  # per-(post,voice); the next one still gets narrated
             await session.rollback()
             log.warning("Narration failed for post %d voice %s: %s", pid, voice_id, exc)
@@ -1213,6 +1228,7 @@ async def run_pipeline() -> None:
             return
 
         paused = False
+        vanished: str | None = None
         errors: list[str] = []
         # Track counters locally and only ever *assign* run.stages: a stage's
         # rollback() expires every object in the shared session, and reading an
@@ -1242,6 +1258,16 @@ async def run_pipeline() -> None:
                     log.info("Pipeline stage %s: %d processed", name, count)
                     stages[name] = count
                     run.stages = dict(stages)
+                except LLMUnavailable as exc:
+                    # The endpoint the pre-flight probe found is gone. Not this
+                    # stage's failure, and no reason to start the next one: every
+                    # remaining stage would run its whole queue out in
+                    # milliseconds and report 0 processed, which reads exactly
+                    # like a quiet night (0055).
+                    log.warning("LLM endpoint went away during %s: %s", name, exc)
+                    vanished = f"{name}: {exc}"
+                    await session.rollback()
+                    break
                 except LLMError as exc:
                     log.warning("Pipeline stage %s skipped: %s", name, exc)
                     errors.append(f"{name}: {exc}")
@@ -1260,7 +1286,14 @@ async def run_pipeline() -> None:
             await session.commit()
             raise
 
-        run.status = "paused" if paused else ("failed" if errors else "succeeded")
+        if vanished:
+            # Same verdict the pre-flight probe gives, reached later in the run:
+            # the models were not there. Kept distinct from "failed" so a night
+            # llama-server was down does not look like a night the code broke.
+            run.status = "skipped"
+            errors.append(f"LLM endpoint unavailable during {vanished}")
+        else:
+            run.status = "paused" if paused else ("failed" if errors else "succeeded")
         run.error = "; ".join(errors) or None
         run.finished_at = datetime.now(UTC)
         await session.commit()
@@ -1338,7 +1371,10 @@ async def pipeline_stage(
             count = await runner(session, **kwargs)
         except Exception as exc:
             await session.rollback()
-            run.status = "failed"
+            # The endpoint was up for the probe above and gone by the first call.
+            # Same row status the probe would have written, and the job still
+            # raises: a hand-deferred stage that did nothing is a failed job.
+            run.status = "skipped" if isinstance(exc, LLMUnavailable) else "failed"
             run.error = f"{stage}: {type(exc).__name__}: {exc}"
             run.finished_at = datetime.now(UTC)
             await session.commit()

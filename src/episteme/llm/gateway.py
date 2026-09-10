@@ -42,6 +42,25 @@ class LLMError(Exception):
     pass
 
 
+class LLMUnavailable(LLMError):
+    """The request never reached a model, because nothing was listening (0055).
+
+    A subclass, so `LLMError` is still the whole contract: every caller that
+    degrades on a failed call keeps degrading exactly as it did, with no edit.
+    What the distinct type buys is the callers for whom "skip this one and try
+    the next" is nonsense. A stage loop over 36 posts cannot succeed on post 2
+    when the server is gone, and a run that spent 0.9 seconds discovering that
+    must not be recorded as having found nothing to do.
+
+    Only a connection that was never established counts. A read timeout is the
+    opposite case (the server took the work and is still chewing on it, which is
+    ordinary here, see below) and a mid-response disconnect is left ordinary too,
+    since a keep-alive socket closing under a healthy server looks the same from
+    this side. A server that has really died fails the *next* connect, so the
+    loop stops one item later instead of never.
+    """
+
+
 def _as_llm_error(exc: Exception) -> Exception:
     """Transport failures reach callers as `LLMError`, like every other way an LLM
     call can fail.
@@ -64,7 +83,14 @@ def _as_llm_error(exc: Exception) -> Exception:
     object, a truncated stream, a proxy's own page). Leaving the parse outside the
     guarded region would have left exactly one route — the response arriving but
     being unusable — that still bypasses every `except LLMError` in the codebase.
+
+    One failure is separated out rather than degraded: a connect that found
+    nothing listening says the endpoint is gone, not that this call was
+    unlucky, and `LLMUnavailable` is how a batch stage is told to stop instead
+    of running its queue out against a dead port.
     """
+    if isinstance(exc, httpx.ConnectError | httpx.ConnectTimeout):
+        return LLMUnavailable(f"{type(exc).__name__}: {exc}")
     if isinstance(exc, httpx.HTTPError | ValueError | KeyError | IndexError | TypeError):
         return LLMError(f"{type(exc).__name__}: {exc}")
     return exc

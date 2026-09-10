@@ -33,7 +33,7 @@ from pydantic import BaseModel, ValidationError
 
 from ..config import settings
 from . import gateway
-from .gateway import Role
+from .gateway import LLMUnavailable, Role
 from .harness import Closing, Harness, build, fill
 from .observe import llm_conversation
 from .prompts import WRITER_AGENT_SYSTEM, WRITER_MAY_DEMOTE, WRITER_MUST_WRITE
@@ -271,6 +271,11 @@ async def _dispatch(harness: Harness, name: str | None, args: dict) -> ToolReply
     except ToolRefused as exc:
         return ToolReply(str(exc), refused=True)
     except WriteProposed:
+        raise
+    except LLMUnavailable:
+        # A tool that reaches a model has the same problem the loop does. Telling
+        # the model to route around a dead endpoint asks it to spend a turn it
+        # cannot take, on a server that will not answer the turn either.
         raise
     except Exception as exc:  # a tool's own failure is the model's problem to route around
         log.warning("%s: %s failed: %s", harness.name, name, exc)
