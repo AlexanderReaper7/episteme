@@ -73,6 +73,11 @@ DEFERRABLE_TASKS: dict[str, tuple[str, frozenset[str]]] = {
     # Normally automatic (the embed stage heals what an outage left behind); this
     # is the lever for not waiting for the next run.
     "backfill_topic_embeddings": ("episteme.backfill_topic_embeddings", frozenset()),
+    # The morning digest and the lunch push (0056). Both run on their own cron;
+    # these are the levers for sending one now, which is also how a new ntfy
+    # server gets checked without waiting for tomorrow.
+    "send_digest": ("episteme.send_digest", frozenset()),
+    "matsedel_notify": ("episteme.matsedel_notify", frozenset()),
     "embed": ("episteme.pipeline_stage", frozenset({"limit"})),
     "cluster": ("episteme.pipeline_stage", frozenset({"limit"})),
     "triage": ("episteme.pipeline_stage", frozenset({"limit", "story_id"})),
@@ -81,8 +86,8 @@ DEFERRABLE_TASKS: dict[str, tuple[str, frozenset[str]]] = {
     "summarize": ("episteme.pipeline_stage", frozenset({"limit", "post_id"})),
     "narrate": ("episteme.pipeline_stage", frozenset({"limit", "post_id"})),
     "score": ("episteme.pipeline_stage", frozenset({"limit", "post_id"})),
-    # A correspondent's own schedule (0046). Weekly by cron; this is the lever
-    # for reading the kitchens now rather than waiting for Monday.
+    # A correspondent's own schedule (0046). Every weekday by cron (0054); this
+    # is the lever for reading the kitchens now rather than waiting for morning.
     "matsedel_scrape": ("episteme.matsedel_scrape", frozenset()),
 }
 

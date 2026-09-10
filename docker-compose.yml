@@ -44,6 +44,15 @@ services:
       # Empty disables the backend panel and the resource governor entirely.
       LLM_HOST_AGENT_URL: ${LLM_HOST_AGENT_URL:-}
       RESOURCE_GOVERNOR_ENABLED: ${RESOURCE_GOVERNOR_ENABLED:-false}
+      # Notifications (ntfy, 0056). Empty NTFY_BASE_URL is the off switch: the
+      # digest and the lunch push return before building a message. The topics
+      # are separate so lunch can be muted without muting the digest, and
+      # PUBLIC_BASE_URL is the address the PHONE opens, never web:8200.
+      NTFY_BASE_URL: ${NTFY_BASE_URL:-}
+      NTFY_TOKEN: ${NTFY_TOKEN:-}
+      NTFY_TOPIC_DIGEST: ${NTFY_TOPIC_DIGEST:-episteme}
+      NTFY_TOPIC_LUNCH: ${NTFY_TOPIC_LUNCH:-episteme}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
     # Same bind-mount as the worker: pre-migration dumps land beside the regular
     # backups, on the host, outside the pgdata volume.
     volumes:

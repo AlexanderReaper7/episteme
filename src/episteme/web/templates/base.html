@@ -15,6 +15,12 @@
      The mark is NOT in the header lockup: it is WIP, and the wordmark stands alone
      until it is signed off (graphics/logo/README.md). #}
   <link rel="icon" type="image/svg+xml" href="{{ asset('logo/episteme.svg') }}">
+  {# Installable as a home-screen app (0056). No service worker: `display:
+     standalone` is what puts Episteme in its own window with its own icon, and a
+     worker would only add an offline cache for a page that is nothing without its
+     database. The theme colour is what the Android status bar takes on. #}
+  <link rel="manifest" href="{{ asset('manifest.webmanifest') }}">
+  <meta name="theme-color" content="#000000">
   <!-- Vendored htmx preferred; falls back to CDN until static/htmx.min.js exists. -->
   <script src="{{ asset('htmx.min.js') }}"
           onerror="var s=document.createElement('script');s.src='https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js';document.head.appendChild(s);"></script>

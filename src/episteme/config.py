@@ -397,6 +397,35 @@ class Settings(BaseSettings):
     tts_latency: str = "balanced"  # normal (best quality) | balanced | low
     audio_dir: str = "/media"  # narration audio lands here (host bind-mount in compose)
 
+    # --- Notifications (ntfy; 0056) ---
+    # Empty base URL is the off switch for every push: nothing is built, nothing
+    # is sent, and no job fails for it. The same shape as llm_host_agent_url.
+    ntfy_base_url: str = ""  # e.g. https://ntfy.example.ts.net
+    ntfy_token: str = ""  # tk_... ; sent as Authorization: Bearer
+    # Two topics, defaulting to the same one. Splitting them is how the phone
+    # mutes lunch without muting the digest, which is a subscription the ntfy app
+    # owns rather than a flag here.
+    ntfy_topic_digest: str = "episteme"
+    ntfy_topic_lunch: str = "episteme"
+    ntfy_timeout_seconds: float = 10.0
+    # Where a notification's tap-through goes: this app as the PHONE reaches it,
+    # which is the tailnet address, not web_internal_url (compose service DNS,
+    # meaningless off the docker network). Empty = notifications with no link.
+    public_base_url: str = ""
+    # 06:00 UTC is 08:00 in Vanersborg through the summer and 07:00 through the
+    # winter, the same drift matsedel_cron accepts and for the same reason: the
+    # worker's zone is UTC and a cron that chased the wall clock would need a
+    # timezone-aware scheduler procrastinate does not have. The nightly run
+    # starts at 03:00 and has always finished by then.
+    digest_cron: str = "0 6 * * *"
+    # A digest whose newest finished run is older than this says so instead of
+    # re-reporting a run the reader was already told about. 20 hours, so a run
+    # that slipped a couple of hours is still last night's.
+    digest_stale_hours: int = 20
+    # 09:00 UTC is 11:00 local in summer: after the 06:00 scrape has had time to
+    # pick up a kitchen that published late, before anyone decides where to eat.
+    matsedel_notify_cron: str = "0 9 * * 1-5"
+
     @property
     def sqlalchemy_url(self) -> str:
         """DATABASE_URL is plain libpq form (used by procrastinate/psycopg);

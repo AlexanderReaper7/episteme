@@ -13,6 +13,7 @@ app = procrastinate.App(
         "episteme.worker.governor",
         "episteme.worker.topics",
         "episteme.worker.bench",
+        "episteme.worker.digest",
         # A correspondent's own schedule. Its tasks live with the plugin, not in
         # worker/, because they are the plugin's (0046).
         "episteme.correspondents.matsedel.tasks",

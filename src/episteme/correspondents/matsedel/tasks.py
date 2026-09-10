@@ -31,12 +31,17 @@ because Wednesday's post was minted the moment the week was readable.
 from __future__ import annotations
 
 import logging
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
+from sqlalchemy import select
+
+from ... import notify
 from ...config import settings
 from ...db import SessionLocal
+from ...models import Post
 from ...worker.app import app
-from .posts import file_week
+from .posts import day_href, file_week
 from .readers import MatsedelError, NotPublishedYet, read_source
 from .sources import ensure_sources, restaurants
 from .store import kitchens_with_a_full_week, store_week
@@ -99,3 +104,63 @@ async def matsedel_scrape() -> None:
 @app.task(name="episteme.matsedel_scheduled_scrape")
 async def matsedel_scheduled_scrape(timestamp: int) -> None:
     await matsedel_scrape.defer_async()
+
+
+def lunch_message(summary: str | None) -> str:
+    """The card's one line, one kitchen per line.
+
+    `posts.summary_line` joins the kitchens with a middle dot because a feed card
+    is a paragraph. A notification is read on a lock screen, where four kitchens
+    on one line is a single unreadable run of text.
+    """
+    return (summary or "").replace(" · ", "\n")
+
+
+@app.task(name="episteme.matsedel_notify")
+async def matsedel_notify() -> None:
+    """Push today's menu to the phone (0056), if there is one.
+
+    Reads the post rather than the dishes. `file_week` already picked the
+    headline dish per kitchen (`posts.summary_line`) and already decided which
+    days exist at all, so going back to `matsedel_dishes` here would be a second
+    implementation of both, free to disagree with the page the notification links
+    to. The post's `href` carries the day's own anchor, which is what makes the
+    tap land on today rather than the top of the week.
+
+    A day nobody published gets no post and therefore no notification. Silence is
+    the honest report: there is no lunch to tell anyone about.
+
+    This cannot hang off `matsedel_scrape`, which is the obvious place for it. The
+    scrape skips a kitchen whose week is already whole (0054), so on an ordinary
+    week it does its reading on Monday and then does nothing at all until the
+    following Monday, while the menu it stored is served on five separate days.
+    """
+    if not notify.enabled():
+        log.info("No ntfy configured; skipping the lunch notification")
+        return
+    today = datetime.now(ZoneInfo(settings.display_timezone)).date()
+    href = day_href(today)
+    async with SessionLocal() as session:
+        post = (
+            await session.execute(
+                select(Post).where(Post.href == href, Post.status == "published")
+            )
+        ).scalars().first()
+        if post is None:
+            log.info("No lunch post for %s; nothing to notify", today)
+            return
+        title = post.title or f"Lunch on {today}"
+        message = lunch_message(post.summary)
+    await notify.publish(
+        settings.ntfy_topic_lunch,
+        title,
+        message,
+        tags=("plate_with_cutlery",),
+        click=notify.link(href),
+    )
+
+
+@app.periodic(cron=settings.matsedel_notify_cron)
+@app.task(name="episteme.matsedel_scheduled_notify")
+async def matsedel_scheduled_notify(timestamp: int) -> None:
+    await matsedel_notify.defer_async()

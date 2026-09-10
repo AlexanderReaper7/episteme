@@ -1,6 +1,7 @@
 import hashlib
 import json
 import math
+import mimetypes
 from datetime import UTC, datetime
 from urllib.parse import parse_qs
 
@@ -62,6 +63,10 @@ app = FastAPI(title="Episteme")
 # Negotiates zstd > brotli > gzip > identity per request's Accept-Encoding;
 # htmx partials and JSON API responses are the main beneficiaries.
 app.add_middleware(CompressMiddleware)
+# Python's mimetypes table has no entry for .webmanifest, so StaticFiles would
+# serve the PWA manifest as application/octet-stream and Chrome would ignore it,
+# leaving "install app" greyed out with nothing in the console to say why (0056).
+mimetypes.add_type("application/manifest+json", ".webmanifest")
 app.mount("/static", RevalidateStaticFiles(directory=BASE_DIR / "static"), name="static")
 # Narration MP3s the narrate stage writes into settings.audio_dir (bind-mounted to
 # the host in compose). check_dir=False so importing the app never fails when the

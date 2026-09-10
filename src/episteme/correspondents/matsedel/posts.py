@@ -69,6 +69,16 @@ def summary_line(source: Source, lines: list[str]) -> str:
     return f"{source.name}: {lines[0]}" if lines else source.name
 
 
+def day_href(served_on: date) -> str:
+    """Where one day's post points, and where its notification links to (0047).
+
+    Shared with `tasks.matsedel_notify`, which finds the day's post by this exact
+    string. Two f-strings in two modules would be one silent rename away from a
+    notification that never fires and a job history that says it ran.
+    """
+    return f"/c/{SLUG}#day-{served_on}"
+
+
 def _title(served_on: date) -> str:
     # The day number is interpolated rather than formatted, because the strftime
     # directive for an unpadded day is `%-d` on glibc and `%#d` on Windows, and
@@ -138,7 +148,7 @@ async def file_week(session: AsyncSession, monday: date) -> list[Post]:
             # content lives on the correspondent's page, not at /post/{id}). The
             # `day-` prefix is what makes `#day-2026-08-24` a valid CSS selector,
             # which is what htmx resolves a boosted hash with.
-            href=f"/c/{SLUG}#day-{served_on}",
+            href=day_href(served_on),
             publish_at=published,
             expires_at=_at(served_on, expire_hour),
         )
