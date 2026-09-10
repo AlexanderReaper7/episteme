@@ -77,6 +77,11 @@ Nothing here is edited to reflect later changes. A decision that was replaced ge
 | [0047](0047-a-post-stores-its-destination.md) | A post stores its destination; a body means it renders itself | 2026-08-28 |
 | [0048](0048-the-browser-never-colours-a-link.md) | The browser never colours a link, and never marks one as visited | 2026-08-29 |
 | [0049](0049-a-harness-is-one-agentic-run.md) | A harness is one agentic run, and the prompt cannot disagree with the tool list | 2026-08-29 |
+| [0050](0050-one-stage-writes-every-feed-card.md) | One stage writes every feed card, and a post is not in the feed until it has one | 2026-08-30 |
+| [0051](0051-the-window-is-the-measure.md) | The window is the measure | 2026-08-30 |
+| [0052](0052-a-card-is-two-thirds-text-one-third-picture.md) | A card is two thirds text and one third picture, and the summary is clamped by the room it has | 2026-08-31 |
+| [0053](0053-the-header-nav-folds-into-one-button.md) | The header nav folds into one button, and stays one list | 2026-08-31 |
+| [0054](0054-a-menu-is-read-until-it-exists.md) | A menu is read until it exists: Matsedel reads every weekday, skips a whole week, and refuses a page showing an older one | 2026-09-05 |
 
 ## Host, GPU, resources
 

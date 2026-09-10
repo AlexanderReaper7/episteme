@@ -128,6 +128,28 @@ class MatsedelError(Exception):
     """A page that could not be read as a week of lunch."""
 
 
+class NotPublishedYet(MatsedelError):
+    """A perfectly good week of lunch, but an older one than the week asked for.
+
+    Watched on 2026-08-31: the Monday 04:00 read found Vanerparken still showing
+    week 35. The page parsed, the week dated itself correctly, and the scrape
+    stored it over the week-35 row it already had and re-filed week 35's posts.
+    It reported four kitchens read and none failed, and week 36 simply had no
+    Vanerparken column all week.
+
+    So a reader that only asks "is this a week of lunch" cannot answer "is this
+    THIS week", and the two are indistinguishable from the outside. This is the
+    same failure the module docstring argues against for CSS selectors, one level
+    up: there, an empty menu looks like a kitchen that posted nothing; here, last
+    week looks like this week.
+
+    A LATER week is not this: a kitchen that puts next week up on Friday is ahead,
+    and storing that is the point. Only an EARLIER week means "has not published
+    yet", which is a kitchen to come back to rather than a site to fix, and
+    `tasks.matsedel_scrape` counts it separately for exactly that reason.
+    """
+
+
 @dataclass
 class DayMenu:
     """One weekday's lines, in the order the restaurant wrote them."""
@@ -295,8 +317,13 @@ def parse_week(html: str, *, url: str, today: date) -> WeekMenu:
     return week
 
 
-async def read_source(source: Source, *, today: date) -> WeekMenu:
-    """Fetch and parse one restaurant. Its URL is `source.config["url"]`."""
+async def read_source(source: Source, *, today: date, wanted_monday: date) -> WeekMenu:
+    """Fetch and parse one restaurant. Its URL is `source.config["url"]`.
+
+    `wanted_monday` is which week the caller is reading FOR, and it has no
+    default on purpose: a caller that does not say cannot be told that the page
+    is a week behind, which is the whole of `NotPublishedYet`.
+    """
     url = (source.config or {}).get("url")
     if not url:
         raise MatsedelError(f"source {source.id} ({source.name}) has no url in config")
@@ -312,6 +339,11 @@ async def read_source(source: Source, *, today: date) -> WeekMenu:
     except Exception as exc:  # httpx/curl transport failures
         raise MatsedelError(f"{source.name}: {type(exc).__name__}: {exc}") from exc
     week = parse_week(response.text or "", url=url, today=today)
+    if week.monday < wanted_monday:
+        raise NotPublishedYet(
+            f"{source.name}: the page still shows the week of {week.monday}, "
+            f"not {wanted_monday}"
+        )
     log.info(
         "Read %s: %s, %d day(s)", source.name, week.week_key, len(week.days)
     )

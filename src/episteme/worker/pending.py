@@ -81,6 +81,32 @@ def qa_pending() -> Select:
     )
 
 
+def summarize_pending() -> Select:
+    """Posts whose kind declares `summarized`, whose card summary is missing or
+    stale (0050).
+
+    Staleness is mechanical, which is the whole point: a cluster that grows moves
+    `stories.last_item_at` past the summary that described it and so invalidates
+    its own card, with no code anywhere remembering to do it. The one thing that
+    is not visible from a column is a QA body edit, so `qa` clears
+    `summarized_at` - it never clears `summary`, because a published post is
+    never left without a card. The old text stands until a better one exists.
+    """
+    return (
+        select(Post.id)
+        .join(Story, Story.id == Post.story_id)
+        .where(
+            Post.status == "published",
+            Post.kind.in_(_kinds("summarized")),
+            or_(
+                Post.summary.is_(None),
+                Post.summarized_at.is_(None),
+                Post.summarized_at < Story.last_item_at,
+            ),
+        )
+    )
+
+
 def score_pending() -> Select:
     """Every published post whose kind declares `scored`, every time: the profile
     is one replayed object, so a single signal can move everything's standing (see
@@ -112,6 +138,7 @@ async def stage_backlog(session: AsyncSession, profile: ProfileState) -> dict[st
         "triage": await count(session, triage_pending()),
         "write": await count(session, write_pending(profile)),
         "qa": await count(session, qa_pending()),
+        "summarize": await count(session, summarize_pending()),
         "score": await count(session, score_pending()),
     }
     blocked = {
@@ -120,5 +147,7 @@ async def stage_backlog(session: AsyncSession, profile: ProfileState) -> dict[st
     }
     return {
         stage: {"due": counts.get(stage), "blocked": blocked.get(stage)}
-        for stage in ("embed", "cluster", "triage", "write", "qa", "narrate", "score")
+        for stage in (
+            "embed", "cluster", "triage", "write", "qa", "summarize", "narrate", "score"
+        )
     }

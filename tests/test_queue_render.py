@@ -467,7 +467,7 @@ def test_every_stage_button_says_what_it_consumes_and_produces():
 def test_the_stage_chain_is_rendered_in_pipeline_order():
     """It is a sequence and it was drawn as a set of six equal buttons."""
     assert [s["task"] for s in STAGES] == [
-        "embed", "cluster", "triage", "write", "qa", "narrate", "score"
+        "embed", "cluster", "triage", "write", "qa", "summarize", "narrate", "score"
     ]
     html = _jobs_page()
     positions = [html.index(f"/admin/defer/{s['task']}") for s in STAGES]

@@ -166,6 +166,11 @@ class PostKind:
     reviewed: bool
     #: Enters `score_pending()`: the profile gives it an affinity score.
     scored: bool
+    #: Enters `summarize_pending()`: the `summarize` stage writes its card
+    #: summary. False means the summary arrived with the post and no stage may
+    #: overwrite it — a filed post's summary is its correspondent's words (0046),
+    #: and re-summarizing it would be Episteme claiming to have read the source.
+    summarized: bool
     #: Its feed card reads the story's items, so the feed batch-loads them (and
     #: their sources) for this kind. An article card reads the denormalized
     #: `banner_url` and never touches items; an aggregate reads its primary item;
@@ -175,19 +180,22 @@ class PostKind:
 
 POST_KINDS: dict[str, PostKind] = {
     "article": PostKind(
-        renders_itself=True, reviewed=True, scored=True, needs_items=False
+        renders_itself=True, reviewed=True, scored=True, needs_items=False,
+        summarized=True,
     ),
     # An identity-only cluster card. Nothing was generated, so there is nothing
     # to review; it still ranks against the profile like any other feed unit.
     "aggregate": PostKind(
-        renders_itself=False, reviewed=False, scored=True, needs_items=True
+        renders_itself=False, reviewed=False, scored=True, needs_items=True,
+        summarized=True,
     ),
     # Filed by a correspondent, finished on arrival (0046). It touches no
     # pipeline stage at first: scoring is the first to integrate later, QA much
     # later, and neither is a decision to make before there is a filed post to
     # look at.
     "filed": PostKind(
-        renders_itself=False, reviewed=False, scored=False, needs_items=True
+        renders_itself=False, reviewed=False, scored=False, needs_items=True,
+        summarized=False,
     ),
 }
 
@@ -226,7 +234,15 @@ class Post(Base):
     # source_items to work out what an aggregate's destination would be.
     href: Mapped[str | None] = mapped_column(Text)
     title: Mapped[str | None] = mapped_column(Text)
+    # The card's whole text: what the feed shows and, for an aggregate, all the
+    # reader ever gets. Written by the `summarize` stage for every kind whose
+    # `PostKind.summarized` is true, and by nothing else - the writer is not
+    # asked for one and QA cannot edit it (0050). A `filed` post brings its own.
     summary: Mapped[str | None] = mapped_column(Text)
+    # When `summary` was written. The staleness test is mechanical: a summary is
+    # due again once the post's body or its story's cluster is newer than this,
+    # so a cluster that grows invalidates its own card with no code remembering.
+    summarized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     difficulty: Mapped[str | None] = mapped_column(String(20))
     topics: Mapped[list[str]] = mapped_column(JSONB, default=list)
     sections: Mapped[list[Any]] = mapped_column(JSONB, default=list)
@@ -321,6 +337,38 @@ class Correspondent(Base):
     # `sources.config` is to everything but its adapter.
     config: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class PostSummary(Base):
+    """A card summary this post USED to have (0050).
+
+    Only superseded versions live here. `posts.summary` is the current one, so
+    the same text is never in two places and there is no "which row is live"
+    question to get wrong. Nothing reads this table on the hot path: it exists so
+    a rewritten summary can be compared against what it replaced, and so the
+    record survives the `llm_calls` prune, which would otherwise take the only
+    copy on the retention tiers (0012).
+
+    `summarized_at` is when the replaced text was written and `replaced_at` when
+    it stopped being current, so the pair of them is the interval this summary
+    was the card.
+
+    No `model_used`, deliberately: nothing records which model wrote a summary
+    that is already stored, so the column could only ever be NULL or a guess at
+    the model doing the replacing. The `llm_calls` row for the summarize call has
+    it, scoped to the post (0012) - what this table adds is the text surviving
+    that table's prune, not a second copy of its metadata.
+    """
+
+    __tablename__ = "post_summaries"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    post_id: Mapped[int] = mapped_column(ForeignKey("posts.id", ondelete="CASCADE"), index=True)
+    summary: Mapped[str] = mapped_column(Text)
+    summarized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    replaced_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
 

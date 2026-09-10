@@ -1121,3 +1121,109 @@ def test_no_dish_is_dropped_for_being_far_down_the_menu(glance_template):
     out = _glance(glance_template, dishes)
     assert out.count('class="matsedel-glance-dish"') == 12
     assert "…" not in out
+
+
+# --- reading for a WEEK, not just for a week (0054) -------------------------
+
+
+class _Response:
+    def __init__(self, text):
+        self.text = text
+
+    def raise_for_status(self):
+        pass
+
+
+def _served(monkeypatch, page_name):
+    """Make every kitchen serve one fixture page, whatever URL is asked for."""
+    body = _page(page_name)
+
+    async def fake_get(url, **kwargs):
+        return _Response(body)
+
+    monkeypatch.setattr(readers, "polite_get", fake_get)
+
+
+async def test_a_page_still_showing_last_week_is_not_this_week(monkeypatch):
+    """The 2026-08-31 failure. Vanerparken's page parsed perfectly and dated
+    itself week 35, so the Monday read stored it over the week-35 row it already
+    had, re-filed week 35's posts, and reported success. Week 36 had no
+    Vanerparken column until someone looked."""
+    _served(monkeypatch, "vanerparken")
+    with pytest.raises(readers.NotPublishedYet):
+        await readers.read_source(
+            _Source("vanerparken", "Restaurang Vänerparken"),
+            today=READ_ON + timedelta(days=7),
+            wanted_monday=THAT_MONDAY + timedelta(days=7),
+        )
+
+
+async def test_the_week_asked_for_is_read(monkeypatch):
+    """The ordinary case, and the one the check must not break."""
+    _served(monkeypatch, "vanerparken")
+    week = await readers.read_source(
+        _Source("vanerparken", "Restaurang Vänerparken"),
+        today=READ_ON,
+        wanted_monday=THAT_MONDAY,
+    )
+    assert week.monday == THAT_MONDAY
+
+
+async def test_a_kitchen_that_is_ahead_is_read_not_refused(monkeypatch):
+    """A restaurant that puts next week up on Friday is publishing, not failing.
+    Only an EARLIER week means "has not published yet"."""
+    _served(monkeypatch, "vanerparken")
+    week = await readers.read_source(
+        _Source("vanerparken", "Restaurang Vänerparken"),
+        today=READ_ON,
+        wanted_monday=THAT_MONDAY - timedelta(days=7),
+    )
+    assert week.monday == THAT_MONDAY
+
+
+# --- which kitchen the next read may skip (0054) ----------------------------
+
+
+def _stored(site, days):
+    """A `_Week` whose `dishes` are `{offset: [line, ...]}` from `THAT_MONDAY`."""
+    return _Week(
+        _Source(site, site),
+        [
+            _Dish(THAT_MONDAY + timedelta(days=offset), line)
+            for offset, lines in days.items()
+            for line in lines
+        ],
+    )
+
+
+def _complete(week):
+    from episteme.correspondents.matsedel.store import week_is_complete
+
+    return week_is_complete(
+        THAT_MONDAY, (week.source.config or {}).get("site"), week.dishes
+    )
+
+
+def test_a_kitchen_with_all_five_weekdays_is_skipped():
+    assert _complete(_stored("kalasboden", {n: [f"dish {n}"] for n in range(5)}))
+
+
+def test_a_kitchen_missing_friday_is_read_again():
+    """Published Monday to Thursday and adding Friday on Wednesday is the case
+    a once-a-week read cannot see at all."""
+    assert not _complete(_stored("kalasboden", {n: [f"dish {n}"] for n in range(4)}))
+
+
+def test_a_week_of_placeholders_is_not_a_week():
+    """Kalasboden's week 36: five stored rows over five days, every one of them
+    `Meny for denna dag saknas.`, and nothing a reader can eat. Counting rows
+    rather than asking `tag_of` is how that week stayed empty."""
+    assert not _complete(_stored("kalasboden", {n: [PLACEHOLDER] for n in range(5)}))
+
+
+def test_a_day_of_nothing_but_labels_still_counts():
+    """A label is something the restaurant wrote for that day, so the day was
+    published. What it is worth is the card's problem, not the scheduler's."""
+    assert _complete(
+        _stored("italia", {n: ["Från Buffé:"] for n in range(5)})
+    )

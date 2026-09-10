@@ -62,6 +62,9 @@ ICONS = {
     "glance": "content-view",
     "tune": "settings--adjust",
     "admin": "settings",
+    # The header nav collapses behind this below 40rem (0053). Its open state
+    # shows `remove` instead, which is the same glyph the chips use to close.
+    "menu": "menu",
     "remove": "close",
     # The <summary> disclosure caret. A replacement for the native ::marker
     # rather than a decoration: a marker cannot be transformed, so rotating it
@@ -110,6 +113,7 @@ ICONS = {
     "triage": "filter",
     "write": "pen",
     "qa": "task--approved",
+    "summarize": "text--short-paragraph",
     "narrate": "microphone",
     "score": "meter",
     "ingest-all": "download",

@@ -228,19 +228,29 @@ async def _correspondent_labels(session, posts: list[Post]) -> dict[str, str]:
 
 
 def _visible_now():
-    """When a post is in the feed, as clauses (0046).
+    """When a post is in the feed, as clauses (0046, 0050).
 
-    Both halves of one policy, written together because they are one policy: a
-    post is in the stream between `publish_at` and `expires_at`, and NULL means
-    "no bound on that side". No job moves a post across either boundary; the
-    clock alone decides, so there is nothing that can fail to fire.
+    The time bounds are two halves of one policy, written together because they
+    are one policy: a post is in the stream between `publish_at` and
+    `expires_at`, and NULL means "no bound on that side". No job moves a post
+    across either boundary; the clock alone decides, so there is nothing that can
+    fail to fire.
 
     Expiry is FEED-only. The post keeps its own URL, and a correspondent's page
     keeps the week, which is what standing content is for.
+
+    The third clause is what makes "every card carries a summary that stands on
+    its own" true rather than aspirational (0050). A summary is written by a
+    stage that runs after the post is published, so between `write` and
+    `summarize` an article exists with no card text. It waits here instead of
+    appearing as a bare headline. This is not a filter compensating for bad data:
+    it is where "finished enough to show" is said, next to the other two
+    conditions that say the same kind of thing.
     """
     return (
         or_(Post.publish_at.is_(None), Post.publish_at <= func.now()),
         or_(Post.expires_at.is_(None), Post.expires_at > func.now()),
+        Post.summary.is_not(None),
     )
 
 

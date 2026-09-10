@@ -14,11 +14,15 @@ A post's skeleton: `article`, `aggregate` or `filed`. The spec reserves `micro` 
 
 ### Article
 
-The long-form written kind, what the writer produces. Title, summary and typed sections are filled. Previously called `feature` until 2026-08-28 (0045).
+The long-form written kind, what the writer produces. Title and typed sections are filled; the [summary](#summary) is not the writer's, it is written afterwards from the finished body (0050). Previously called `feature` until 2026-08-28 (0045).
 
 ### Aggregate
 
-An identity-only row for a cluster card. It stores no content beyond its href; the card renders from its story's items at read time and links straight to the primary item.
+A cluster card. It stores no body: the card renders its story's items at read time and links straight to the primary item. It does store a [summary](#summary), and that paragraph is the whole thing Episteme says about the story, since the card opens nothing (0050).
+
+### Summary
+
+The text on a feed card, and for an [aggregate](#aggregate) card the only thing the reader gets. Three to five sentences that stand alone: what happened, the numbers that carry it, what it changes. Not a hook and never a tease, which is what it was until 2026-08-30 (0050). The [`summarize`](#stage) stage is its only author for kinds that declare `summarized`, and it writes from the FINISHED post rather than a draft of it, so a card cannot describe something the post does not say. A [filed](#filed) post's summary is its correspondent's own words and no stage rewrites it. A post is not in the feed until it has one.
 
 ### Section
 
@@ -74,7 +78,7 @@ The two HTTP transport modes (0006). Both obey the same throttle; only the finge
 
 ### Stage
 
-One named step: `embed`, `cluster`, `triage`, `write`, `qa`, `score`, `narrate`. Each picks up whatever rows are unprocessed, so stages run independently.
+One named step: `embed`, `cluster`, `triage`, `write`, `qa`, `summarize`, `narrate`, `score`. Each picks up whatever rows are unprocessed, so stages run independently.
 
 ### Triage
 

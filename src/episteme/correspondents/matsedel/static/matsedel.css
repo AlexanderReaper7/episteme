@@ -16,12 +16,10 @@
    stack below names a real fallback, so the page is still deliberate offline. */
 @import url("https://fonts.googleapis.com/css2?family=Cardo:wght@700&family=Manrope:wght@700&family=Open+Sans:wght@700&family=Spectral:wght@700&display=swap");
 
-/* Core gives a correspondent page the feed's measure, which is right for prose
-   and wrong for four kitchens side by side: at 58rem the fourth column wraps onto
-   a row of its own. Both classes are on the same element, so two of them beat
-   core's one, and this applies to the PAGE only - the Glance block carries
-   `correspondent--matsedel` without `correspondent-page`. */
-.correspondent-page.correspondent--matsedel { max-width: 96rem; }
+/* The 96rem override that used to be here is gone. It existed to escape core's
+   58rem measure, which wrapped the fourth kitchen onto a row of its own; core
+   gives a correspondent page the window now (`--content-width`), so the same
+   line would be a ceiling instead of an escape. */
 
 .correspondent--matsedel {
   /* The kitchen bar parks directly under the site header, so it reads core's

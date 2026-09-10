@@ -387,10 +387,13 @@ async def test_an_unreachable_queue_never_fails_the_click(monkeypatch):
     await scoring.defer_rescore()  # must not raise
 
 
-def test_the_feed_visibility_window_is_one_policy_with_two_bounds():
+def test_the_feed_shows_a_post_only_inside_its_window_and_only_with_a_summary():
     """`publish_at` and `expires_at` are the same mechanism from both ends, and
     the boundary conditions are not symmetric: a post due exactly now IS in the
-    feed (<=), one expiring exactly now is NOT (>). NULL means no bound."""
+    feed (<=), one expiring exactly now is NOT (>). NULL means no bound.
+
+    The third clause is the card contract (0050): a post reaches the feed once it
+    has a summary, never as a bare headline waiting for the summarize stage."""
     from sqlalchemy.dialects import postgresql
 
     from episteme.web.app import _visible_now
@@ -402,4 +405,5 @@ def test_the_feed_visibility_window_is_one_policy_with_two_bounds():
     assert sql == [
         "posts.publish_at IS NULL OR posts.publish_at <= now()",
         "posts.expires_at IS NULL OR posts.expires_at > now()",
+        "posts.summary IS NOT NULL",
     ]

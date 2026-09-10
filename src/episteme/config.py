@@ -188,19 +188,34 @@ class Settings(BaseSettings):
 
     # --- Pipeline ---
     pipeline_cron: str = "0 3 * * *"  # nightly; idle-aware gating comes in Phase 5
-    # Matsedel reads each kitchen once a week (0046). Monday, because that is when
-    # the new week is up. Crons are evaluated in the WORKER's zone, which is UTC,
-    # so 02:00 here is 04:00 in Vanersborg - comfortably before the 06:00 local
-    # hour Monday's own post publishes at. A plugin's schedule is in core's
-    # settings because procrastinate needs it at import time and a `correspondents`
-    # row is read at run time; the hours a post publishes and expires at, which
-    # nothing needs early, are on the row.
-    matsedel_cron: str = "0 2 * * 1"
+    # Matsedel reads every weekday, and skips a kitchen whose week is already
+    # whole, so a normal week still costs one read of each site (0054). It ran
+    # Monday 04:00 local until 2026-09-05, which was before any kitchen had
+    # published and had no second chance until the following Monday.
+    # Crons are evaluated in the WORKER's zone, which is UTC, so 06:00 here is
+    # 08:00 in Vanersborg. That is two hours after Monday's own post publishes at
+    # 06:00 local, which is the deliberate trade: the alternative is reading
+    # before the kitchens are awake and being a day late every time. A kitchen
+    # that publishes after 08:00 is picked up by the next morning's read.
+    # A plugin's schedule is in core's settings because procrastinate needs it at
+    # import time and a `correspondents` row is read at run time; the hours a post
+    # publishes and expires at, which nothing needs early, are on the row.
+    matsedel_cron: str = "0 6 * * 1-5"
     embed_batch_size: int = 16
     cluster_similarity_threshold: float = 0.82  # cosine similarity to join a story
     cluster_window_days: int = 5
     max_sources_per_story: int = 12
-    summarize_above_chars: int = 2500
+    # Runaway guard on the source text handed to the writer, per item and per
+    # story. NOT a condensing threshold: the fast-model condense pass that used to
+    # sit here is gone (0050). Measured on the 183 written stories, source text is
+    # 4.2k chars at the median and 26k at the maximum, so nothing real reaches
+    # these - they exist so one pathological 128k-char feed item cannot eat the
+    # 65k-token window.
+    max_source_chars_per_item: int = 40000
+    max_source_chars_per_story: int = 80000
+    # How much of a cluster the aggregate summarizer reads. Its output is 3-5
+    # sentences either way, and the `fast` model is doing the reading.
+    max_summary_source_chars: int = 24000
     # Writer works the ranked candidate queue (best quality_score first) until this
     # wall-clock budget is spent — the nightly window decides how many get written.
     # max_writes_per_run is now a hard safety cap, not the primary limit.

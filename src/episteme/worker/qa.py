@@ -2,7 +2,7 @@
 
 Each unscored post is handed to the main model as the trusted source material plus
 its canonical body as indexed JSON. The model then works a bounded tool loop —
-replace/insert/delete one section, set title/summary — and closes with a
+replace/insert/delete one section, set the title — and closes with a
 grammar-constrained `QAReview` verdict. All of it shares one provenance chain.
 
 **A screenshot is taken only for posts that contain a `chart` or `diagram`**
@@ -210,7 +210,9 @@ class _Editor:
         return json.dumps(
             {
                 "title": self.post.title,
-                "summary": self.post.summary,
+                # No `summary`: an article under review has none yet (0050). It is
+                # written from the body this review produces, so showing the field
+                # would show `null` and invite an editor to fill it.
                 "sections": [
                     {"index": i, "section": section} for i, section in enumerate(self.body)
                 ],
@@ -291,6 +293,13 @@ async def _flush(session: AsyncSession, editor: _Editor) -> None:
 
     editor.post.sections = editor.body + editor.tail
     editor.post.reading_time_minutes = _reading_time(editor.post.sections)
+    # The card summary is written from this body (0050), so an edit here makes it
+    # stale. Clearing `summarized_at` rather than `summary` is what keeps a
+    # published post from ever having no card: the previous summary stands until
+    # the summarize stage replaces it. This is the ONE staleness signal that is
+    # not visible from a column, which is why it lives at the single choke point
+    # every body edit already passes through.
+    editor.post.summarized_at = None
     await session.commit()
     editor.dirty = False
 
@@ -321,15 +330,16 @@ async def _rerender(ctx: QAContext, args: dict) -> ToolReply:
     )
 
 
-async def _set_meta(ctx: QAContext, args: dict) -> ToolReply:
+async def _set_title(ctx: QAContext, args: dict) -> ToolReply:
+    """The title only. QA cannot touch `summary` (0050): the card summary is
+    written by the `summarize` stage from the body this review leaves behind, so
+    an editor rewriting it here would be rewriting an input to a stage that has
+    not run - and overwriting it a few minutes later."""
     editor = ctx.editor
-    title, summary = args.get("title"), args.get("summary")
-    if not title and not summary:
-        return ToolReply("Rejected - set_meta needs a title, a summary, or both.")
-    if title:
-        editor.post.title = str(title)[:300]
-    if summary:
-        editor.post.summary = str(summary)[:1000]
+    title = args.get("title")
+    if not title:
+        return ToolReply("Rejected - set_title needs a title.")
+    editor.post.title = str(title)[:300]
     editor.dirty = True
     return editor.state_reply("Updated.")
 
@@ -433,8 +443,8 @@ def _tools(*, rerender: bool) -> list[dict]:
         ),
         fn(
             "delete_section",
-            "Delete the body section at this index — for boilerplate, a verbatim "
-            "restatement of the summary, or a duplicated passage.",
+            "Delete the body section at this index — for boilerplate, a duplicated "
+            "passage, or a section that only restates one before it.",
             {
                 "type": "object",
                 "properties": {
@@ -444,15 +454,14 @@ def _tools(*, rerender: bool) -> list[dict]:
             },
         ),
         fn(
-            "set_meta",
-            "Rewrite the post's title and/or summary. Supply only the one(s) that "
-            "need to change.",
+            "set_title",
+            "Rewrite the post's title.",
             {
                 "type": "object",
                 "properties": {
                     "title": {"type": "string", "description": "Replacement title"},
-                    "summary": {"type": "string", "description": "Replacement one-paragraph hook"},
                 },
+                "required": ["title"],
             },
         ),
         fn(
@@ -498,8 +507,8 @@ for _schema in _tools(rerender=True):
                 if _name == "finish_review"
                 else _rerender
                 if _name == "rerender"
-                else _set_meta
-                if _name == "set_meta"
+                else _set_title
+                if _name == "set_title"
                 else partial(_edit_section, kind=_name)
             ),
             context=QAContext,
@@ -510,7 +519,7 @@ for _schema in _tools(rerender=True):
 #: Every review offers these. `finish_review` is not among them because it is
 #: terminal and therefore goes LAST, after whatever else the harness adds, so the
 #: closing affordance is the last thing the model reads.
-QA_EDIT_TOOLS = ["replace_section", "insert_section", "delete_section", "set_meta"]
+QA_EDIT_TOOLS = ["replace_section", "insert_section", "delete_section", "set_title"]
 
 _NUDGE = (
     "Do not describe the edits you would make — call the tools to make them, then "

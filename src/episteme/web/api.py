@@ -78,6 +78,7 @@ DEFERRABLE_TASKS: dict[str, tuple[str, frozenset[str]]] = {
     "triage": ("episteme.pipeline_stage", frozenset({"limit", "story_id"})),
     "write": ("episteme.pipeline_stage", frozenset({"limit", "story_id"})),
     "qa": ("episteme.pipeline_stage", frozenset({"limit", "post_id"})),
+    "summarize": ("episteme.pipeline_stage", frozenset({"limit", "post_id"})),
     "narrate": ("episteme.pipeline_stage", frozenset({"limit", "post_id"})),
     "score": ("episteme.pipeline_stage", frozenset({"limit", "post_id"})),
     # A correspondent's own schedule (0046). Weekly by cron; this is the lever

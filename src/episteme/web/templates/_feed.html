@@ -9,13 +9,24 @@
    the card and the canonical URL cannot disagree. #}
 {% for post in posts %}
 {% set destination = post.href or "/post/" ~ post.id %}
+{# Off-site, so there is nothing of ours to prefetch. `preload="none"` binds the
+   extension's listener to an event name that never fires, which is the only way
+   it can be told to leave a link alone.
+
+   NOT `hx-boost="false"`, which reads like the fix and is the opposite of one:
+   the extension branches on boost, sending a boosted link through `htmx.ajax`
+   (where `selfRequestsOnly` rejects a cross-origin URL - the `htmx:invalidPath`
+   in the console is that guard working) and an UNBOOSTED one through a raw
+   XMLHttpRequest, which no guard sees. Turning boost off here would start
+   firing a GET at the source on every hover, outside `polite_get` (0005). #}
+{% set offsite = destination.startswith("http") %}
 {% if post.kind == "aggregate" %}
   {% set story = post.story %}
   {% set primary = story.items | first %}
   {% if primary %}
   {% set banner = story | story_banner %}
   <article class="card card--aggregate">
-    <a class="card-link" href="{{ destination }}"
+    <a class="card-link" href="{{ destination }}"{% if offsite %} preload="none"{% endif %}
        aria-label="{{ primary.title or primary.url }}"></a>
     {% if banner %}
     {# Hotlinked (never cached, per spec §6) - drop the banner if the image is gone. #}
@@ -35,8 +46,13 @@
         <a class="card-provenance" href="/post/{{ post.id }}/provenance">{{ ico.icon("provenance") }} provenance</a>
       </div>
       <h2 class="card-title">{{ primary.title or primary.url }}</h2>
-      {% set snippet = primary.extracted_text or (primary.raw_content | striptags if primary.raw_content else None) %}
-      {% if snippet %}<p class="card-snippet">{{ snippet | truncate(240) }}</p>{% endif %}
+      {# The card's own text, written by the `summarize` stage from the whole
+         cluster (0050) - never the item's raw feed blurb, which was a mid-word
+         slice of whatever the outlet put in its RSS body. This card links
+         straight out, so this paragraph is everything the reader gets from
+         Episteme about the story, and the expand control is the only place the
+         clamped tail of it can be read at all. #}
+      {% include "_card_summary.html" %}
       {% if story.topics %}
       <div class="topic-chips">
         {% for topic in story.topics %}<span class="chip">{{ topic }}</span>{% endfor %}
@@ -62,7 +78,7 @@
   {% set primary = story.items | first %}
   {% set banner = story | story_banner %}
   <article class="card card--filed">
-    <a class="card-link" href="{{ destination }}" aria-label="{{ post.title }}"></a>
+    <a class="card-link" href="{{ destination }}"{% if offsite %} preload="none"{% endif %} aria-label="{{ post.title }}"></a>
     {% if banner %}
     <div class="card-banner">
       <img src="{{ banner }}" alt="" loading="lazy"
@@ -88,7 +104,10 @@
         <a class="card-provenance" href="/post/{{ post.id }}/provenance">{{ ico.icon("provenance") }} provenance</a>
       </div>
       <h2 class="card-title">{{ post.title }}</h2>
-      {% if post.summary %}<p class="card-snippet">{{ post.summary | truncate(300) }}</p>{% endif %}
+      {# A correspondent's own words: `filed` does not declare `summarized`, so no
+         stage rewrites this one (models.POST_KINDS). Nothing guarantees its
+         length either, which is the case the expand control has to cover. #}
+      {% include "_card_summary.html" %}
       {% if post.topics %}
       <div class="topic-chips">
         {% for topic in post.topics %}<span class="chip">{{ topic }}</span>{% endfor %}
@@ -105,7 +124,7 @@
      article's story items just to find its banner - see web.app._feed_page. #}
   {% set banner = post.banner_url %}
   <article class="card card--article">
-    <a class="card-link" href="{{ destination }}" aria-label="{{ post.title }}"></a>
+    <a class="card-link" href="{{ destination }}"{% if offsite %} preload="none"{% endif %} aria-label="{{ post.title }}"></a>
     {% if banner %}
     <div class="card-banner">
       <img src="{{ banner }}" alt="" loading="lazy"
@@ -121,7 +140,11 @@
         <a class="card-provenance" href="/post/{{ post.id }}/provenance">{{ ico.icon("provenance") }} provenance</a>
       </div>
       <h2 class="card-title">{{ post.title }}</h2>
-      {% if post.summary %}<p class="card-snippet">{{ post.summary | truncate(300) }}</p>{% endif %}
+      {# Never truncated here: the summary is written to stand alone and sized to
+         fit (0050), and `.card-snippet` clamps at however many lines this card
+         has room for as a backstop (0052). A `truncate()` filter cut it mid-word
+         before, which guaranteed the one thing the card exists to avoid. #}
+      {% include "_card_summary.html" %}
       {% if post.topics %}
       <div class="topic-chips">
         {% for topic in post.topics %}<span class="chip">{{ topic }}</span>{% endfor %}

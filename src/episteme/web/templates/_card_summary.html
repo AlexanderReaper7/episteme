@@ -1,0 +1,29 @@
+{# The card's text and the control that unclamps it. Included by all three card
+   kinds in _feed.html, so the expand affordance cannot exist on one kind and not
+   another - which is the whole reason this is a file and not three copies.
+
+   Two independent classes, and keeping them separate is what makes the control
+   reachable twice:
+
+     .is-clamped   the summary is TALLER than the lines the card shows, which is
+                   itself a measurement (app.js:fitSnippet, 0052) rather than a
+                   constant. A measurement, not a display state, so it stays true
+                   while the reader has the card open - otherwise expanding would
+                   hide the button that collapses it again.
+     .is-expanded  the reader asked for the rest. Removes the clamp and the fade.
+
+   The button is a <button type="button">, never an anchor: every anchor on the
+   page is boosted, and a boosted `href="#"` fires a request that swaps
+   #main-content out from under the feed. It sits above the stretched
+   `.card-link` on position + z-index, the same lift `.card-provenance` takes, or
+   the click would navigate to the post instead of opening the summary. #}
+{% if post.summary %}
+<div class="card-summary">
+  <p class="card-snippet" id="card-summary-{{ post.id }}">{{ post.summary }}</p>
+  <button class="card-expand" type="button" data-card-expand
+          aria-expanded="false" aria-controls="card-summary-{{ post.id }}">
+    {{ ico.icon("disclosure", "card-expand-caret") }}
+    <span data-card-expand-label>Show more</span>
+  </button>
+</div>
+{% endif %}

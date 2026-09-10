@@ -6,6 +6,7 @@ main-model work — one model load each), while individual stages stay manually
 deferrable for testing.
 """
 
+import json
 import logging
 import math
 import re
@@ -23,14 +24,19 @@ from ..db import SessionLocal
 from ..llm import LLMError, gateway
 from ..llm.agent import run_writer_loop
 from ..llm.observe import llm_context
-from ..llm.prompts import SUMMARIZE_SYSTEM, TRIAGE_SYSTEM
-from ..llm.schemas import SourceSummary, TriageResult
+from ..llm.prompts import (
+    AGGREGATE_SUMMARY_SYSTEM,
+    ARTICLE_SUMMARY_SYSTEM,
+    TRIAGE_SYSTEM,
+)
+from ..llm.schemas import CardSummary, TriageResult
 from ..models import (
     PRIMARY_ITEM_ORDER,
     LlmCall,
     PipelineRun,
     Post,
     PostAudio,
+    PostSummary,
     SourceItem,
     Story,
     primary_item_key,
@@ -281,18 +287,27 @@ async def _story_items(session: AsyncSession, story: Story) -> list[SourceItem]:
     )
 
 
-async def _condensed_source(item: SourceItem) -> str:
-    text = _plain_text(item)
-    if len(text) > settings.summarize_above_chars:
-        with llm_context(stage="condense"):
-            summary = await gateway.complete_json(
-                "fast",
-                SUMMARIZE_SYSTEM,
-                f"Title: {item.title}\n\n{text[: settings.summarize_above_chars * 4]}",
-                SourceSummary,
-            )
-        return summary.summary
-    return text[: settings.summarize_above_chars]
+def _writer_sources(items: list[SourceItem]) -> list[str]:
+    """The story's source text as the writer sees it: whole, not condensed (0050).
+
+    A `condense` pass used to run every item over 2500 chars through the fast
+    model first, so the writer's entire view of a 6000-char release was 3-5
+    sentences. Measured over the 183 written stories, that bought about 2.4k
+    tokens at p90 against a 65k window and a writer prompt already near 19k, and
+    paid for them with the most trustworthy text in the system - the writer's own
+    fetch tools then spend a polite HTTP round trip re-reading what the database
+    already held. The caps below are a runaway guard, not a budget: no story in
+    the corpus comes close to either.
+    """
+    out: list[str] = []
+    budget = settings.max_source_chars_per_story
+    for item in items:
+        text = _plain_text(item)[: settings.max_source_chars_per_item][:budget]
+        budget -= len(text)
+        out.append(f"[{item.source.name}] {item.title}\nURL: {item.url}\n{text}")
+        if budget <= 0:
+            break
+    return out
 
 
 def media_candidates(items: list[SourceItem]) -> dict[str, dict]:
@@ -427,12 +442,12 @@ def _reading_time(sections: list[dict]) -> int:
 
 
 def _writer_seed(
-    condensed: list[str], candidates: dict[str, dict], reader: str = ""
+    sources: list[str], candidates: dict[str, dict], reader: str = ""
 ) -> str:
     seed = (
         "Source items for this story (trusted feed). Research to deepen the story — "
         "fetch these URLs to recover links they contain, search for primary sources — "
-        "then you will write the post:\n\n" + "\n\n---\n\n".join(condensed)
+        "then you will write the post:\n\n" + "\n\n---\n\n".join(sources)
     )
     if reader:
         # Who this is being written for — pitch and framing, never subject matter
@@ -718,13 +733,13 @@ async def write_posts(
 
     reader = profile.describe(profile_state, labels=await topics.slug_labels(session))
 
-    # Pass 1 (fast, batched): condense long sources once per story. Each story
-    # gets a generation-attempt uuid here; every call of the attempt (condense
-    # now, the write loop in pass 2) carries it, so the post stamp is exact.
+    # Pass 1: gather each story's sources whole. Each story gets a
+    # generation-attempt uuid here; every call of the attempt carries it, so the
+    # post stamp is exact.
     prepared: dict[int, tuple[list[SourceItem], str, int, str]] = {}
     held_for_pause = 0
     for story in stories:
-        # Don't start main-model work on a pause: condense output is cheap to
+        # Don't start main-model work on a pause: gathering sources is cheap to
         # redo next run, the write pass is minutes of GPU per story. `continue`
         # rather than `break` so the rule is about the story, not its position:
         # a reader-requested one later in the queue is still written.
@@ -733,23 +748,17 @@ async def write_posts(
             continue
         attempt = uuid.uuid4().hex
         items = await _story_items(session, story)
-        with llm_context(story_id=story.id, attempt_id=attempt):
-            condensed = [
-                f"[{item.source.name}] {item.title}\nURL: {item.url}\n"
-                f"{await _condensed_source(item)}"
-                for item in items
-            ]
         source_chars = sum(len(_plain_text(item)) for item in items)
         prepared[story.id] = (
             items,
-            _writer_seed(condensed, media_candidates(items), reader),
+            _writer_seed(_writer_sources(items), media_candidates(items), reader),
             source_chars,
             attempt,
         )
 
     if held_for_pause:
         log.info(
-            "write stage paused: %d stories held, %d reader-requested condensed anyway",
+            "write stage paused: %d stories held, %d reader-requested prepared anyway",
             held_for_pause,
             len(prepared),
         )
@@ -845,7 +854,8 @@ async def write_posts(
             story_id=story.id,
             kind="article",
             title=outcome.draft.title,
-            summary=outcome.draft.summary,
+            # No summary: the `summarize` stage writes it from the finished body,
+            # after QA has edited that body (0050).
             difficulty=outcome.draft.difficulty,
             # Same closed-set enforcement as triage: the writer's topics are its
             # own editorial call, but they enter the vocabulary through code, and
@@ -872,7 +882,111 @@ async def write_posts(
     return written
 
 
-# --- Stage 6: score --------------------------------------------------------------
+# --- Stage 6: summarize ----------------------------------------------------------
+
+
+#: Body sections the card summarizer is not shown. The citation tails are built
+#: from the database rather than written (0007), and a quiz asks about the post
+#: instead of stating what is in it - a summarizer handed one starts writing
+#: questions of its own.
+_UNSUMMARIZED_SECTIONS = ("sources", "further_reading", "quiz")
+
+
+def _summary_input(post: Post, items: list[SourceItem]) -> tuple[str, str]:
+    """(system prompt, user message) for one post's card summary.
+
+    The kind decides what the summary is written FROM, and the two are different
+    jobs: an article is summarized from the body the reader would open, an
+    aggregate from the coverage behind a card that opens nothing.
+    """
+    if post.kind == "article":
+        body = [
+            section
+            for section in (post.sections or [])
+            if section.get("type") not in _UNSUMMARIZED_SECTIONS
+        ]
+        return ARTICLE_SUMMARY_SYSTEM, (
+            f"Title: {post.title}\n\nBody:\n{json.dumps(body, ensure_ascii=False)}"
+        )
+    budget = settings.max_summary_source_chars
+    parts: list[str] = []
+    for item in items:
+        text = _plain_text(item)[:budget]
+        budget -= len(text)
+        parts.append(f"[{item.source.name}] {item.title}\n{text}")
+        if budget <= 0:
+            break
+    return AGGREGATE_SUMMARY_SYSTEM, "\n\n---\n\n".join(parts)
+
+
+async def summarize_posts(
+    session: AsyncSession, limit: int | None = None, post_id: int | None = None
+) -> int:
+    """Write the feed card's text for every post whose summary is missing or stale.
+
+    Runs after `qa` so an article is summarized from the body QA leaves behind,
+    not the one the writer handed over. It is the ONLY author of `posts.summary`
+    for the kinds that declare `summarized` (0050): the writer is no longer asked
+    for one and QA has no tool to edit it, so a card cannot disagree with the post
+    it stands for.
+
+    A replaced summary is not lost - it moves to `post_summaries` first - and the
+    post is never left without one, because staleness is signalled by clearing
+    `summarized_at` rather than the text. The card keeps saying the previous true
+    thing until this stage has a better one.
+    """
+    if post_id is not None:
+        post_ids = [post_id]
+    else:
+        query = pending.summarize_pending().order_by(Post.id.desc())
+        if limit is not None:
+            query = query.limit(limit)
+        post_ids = list((await session.execute(query)).scalars())
+
+    summarized = 0
+    for pid in post_ids:
+        if await pause_requested(session):
+            log.info("summarize stage pausing after %d posts", summarized)
+            break
+        post = await session.get(Post, pid)
+        if post is None:
+            continue
+        items: list[SourceItem] = []
+        if post.kind != "article":
+            story = await session.get(Story, post.story_id)
+            if story is None:
+                continue
+            items = list(await _story_items(session, story))
+            if not items:
+                log.warning("Post %d has no items to summarize", pid)
+                continue
+        system, user = _summary_input(post, items)
+        try:
+            with llm_context(stage="summarize", story_id=post.story_id, post_id=pid):
+                result = await gateway.complete_json("fast", system, user, CardSummary)
+        except LLMError as exc:
+            log.warning("Summarize failed for post %d (%s)", pid, exc)
+            continue
+        text = result.summary.strip()
+        if not text:
+            log.warning("Summarize returned nothing for post %d", pid)
+            continue
+        if post.summary:
+            session.add(
+                PostSummary(
+                    post_id=pid,
+                    summary=post.summary,
+                    summarized_at=post.summarized_at,
+                )
+            )
+        post.summary = text
+        post.summarized_at = datetime.now(UTC)
+        await session.commit()
+        summarized += 1
+    return summarized
+
+
+# --- Stage 7: score --------------------------------------------------------------
 
 
 async def score_posts(
@@ -1111,6 +1225,13 @@ async def run_pipeline() -> None:
                 ("triage", triage_stories),
                 ("write", write_posts),
                 ("qa", qa_posts),  # stays on `main`, so no model swap after write
+                # Back on `fast`, and deliberately after qa rather than beside
+                # triage: an article's card is written from the body QA leaves
+                # behind. An aggregate card minted at triage therefore waits out
+                # the write stage, which costs it nothing - the feed will not show
+                # a post that has no summary yet, so the card simply arrives when
+                # it is finished instead of arriving empty (0050).
+                ("summarize", summarize_posts),
                 ("narrate", narrate_posts),  # external Fish API; self-skips if tts_enabled off
                 # Last, and no model at all: it ranks whatever the run produced,
                 # including QA's final quality scores.
@@ -1158,6 +1279,7 @@ STAGE_RUNNERS = {
     "triage": triage_stories,
     "write": write_posts,
     "qa": qa_posts,
+    "summarize": summarize_posts,
     "narrate": narrate_posts,
     "score": score_posts,
 }
@@ -1167,6 +1289,7 @@ STAGE_PARAMS: dict[str, frozenset[str]] = {
     "triage": frozenset({"limit", "story_id"}),
     "write": frozenset({"limit", "story_id"}),
     "qa": frozenset({"limit", "post_id"}),
+    "summarize": frozenset({"limit", "post_id"}),
     "narrate": frozenset({"limit", "post_id"}),
     "score": frozenset({"limit", "post_id"}),
 }

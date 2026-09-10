@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
-from datetime import date
+from datetime import date, timedelta
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,7 +17,7 @@ from sqlalchemy.orm import selectinload
 
 from ...models import Source
 from .models import MatsedelDish, MatsedelWeek
-from .readers import WeekMenu
+from .readers import SERVED_DAYS, WeekMenu
 from .tags import HIDDEN, tag_of
 
 log = logging.getLogger("episteme.correspondents.matsedel")
@@ -109,6 +109,37 @@ async def store_week(session: AsyncSession, source: Source, menu: WeekMenu) -> M
         f", kept {len(kept)} day(s) the read had no menu for" if kept else "",
     )
     return week
+
+
+def week_is_complete(monday: date, site: str | None, dishes: Sequence[MatsedelDish]) -> bool:
+    """Has this kitchen published every weekday of the week starting `monday`?
+
+    The question the daily read is skipped on: a kitchen with a full week costs
+    nothing to leave alone, and one without is the reason to come back tomorrow.
+
+    A day counts when it has a line `tags.tag_of` does not call `HIDDEN`, which is
+    the same test `store_week` and every page already use. Counting ROWS instead
+    is what does not work: Kalasboden's `Meny for denna dag saknas.` is five
+    stored rows over five days and nothing a reader can eat, and treating that as
+    a full week is exactly how week 36 stayed empty (2026-08-31).
+
+    All five weekdays, so a kitchen that publishes Monday to Thursday and adds
+    Friday on Wednesday is re-read until Friday appears. A kitchen that is simply
+    closed on Fridays is therefore re-read every day of the week, which is four
+    extra page loads and the price of not needing a per-restaurant table of which
+    days each one serves.
+    """
+    served = {d.serve_date for d in dishes if tag_of(site, d.text) != HIDDEN}
+    return all(monday + timedelta(days=offset) in served for offset in range(SERVED_DAYS))
+
+
+async def kitchens_with_a_full_week(session: AsyncSession, monday: date) -> set[int]:
+    """The `sources.id` of every kitchen whose week of `monday` is already whole."""
+    return {
+        week.source_id
+        for week in await week_of(session, monday)
+        if week_is_complete(monday, (week.source.config or {}).get("site"), week.dishes)
+    }
 
 
 async def week_of(session: AsyncSession, monday: date) -> list[MatsedelWeek]:

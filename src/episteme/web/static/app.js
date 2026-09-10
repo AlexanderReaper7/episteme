@@ -1042,6 +1042,178 @@
     });
   }
 
+  /* ========================= the header menu ============================ */
+
+  // Below 40rem the header nav is a panel behind a burger (0053). The state is
+  // one class on the nav, which the media query is the only reader of - above
+  // 40rem the links are laid out inline and the class means nothing, so nothing
+  // has to be undone when the window grows.
+  function setSiteMenu(open) {
+    var nav = document.getElementById("site-nav");
+    var button = document.querySelector("[data-site-menu]");
+    if (!nav || !button) return;
+    nav.classList.toggle("is-open", open);
+    button.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+
+  // One handler for opening and for every way of closing. A click inside the
+  // panel closes it because that click IS the navigation - and a boosted link
+  // swaps #main-content without touching the header, so nothing else would.
+  // Closing on `htmx:load` instead would be wrong for the same reason it looks
+  // right: a polling fragment anywhere on the page fires it too.
+  document.addEventListener("click", function (e) {
+    if (!e.target.closest) return;
+    var nav = document.getElementById("site-nav");
+    if (!nav) return;
+    if (e.target.closest("[data-site-menu]")) {
+      setSiteMenu(!nav.classList.contains("is-open"));
+      return;
+    }
+    if (nav.classList.contains("is-open")) setSiteMenu(false);
+  });
+
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "Escape") return;
+    var nav = document.getElementById("site-nav");
+    if (!nav || !nav.classList.contains("is-open")) return;
+    setSiteMenu(false);
+    // Dismissing with the keyboard has to leave the focus somewhere the reader
+    // can see, and the button is where they opened it from.
+    var button = document.querySelector("[data-site-menu]");
+    if (button) button.focus();
+  });
+
+  /* ===================== clamped card summaries ========================= */
+
+  // The gap left under a card that fills the window, so the next one's top edge
+  // shows and the feed still reads as a stream rather than a slideshow.
+  var CARD_VIEWPORT_GAP = 48;
+  // No card shows less than this, however cramped. Below three lines a summary
+  // stops being a paragraph and the reader is choosing from titles alone.
+  var MIN_SNIPPET_LINES = 3;
+
+  function outerHeight(el) {
+    var cs = getComputedStyle(el);
+    return (
+      el.getBoundingClientRect().height +
+      parseFloat(cs.marginTop) +
+      parseFloat(cs.marginBottom)
+    );
+  }
+
+  // How many lines of THIS card's summary there is room for. The clamp used to
+  // be the constant 9, measured once at 2560px against the layout of the day,
+  // which is a number that is right for one window and wrong for every other:
+  // the same card on a phone, with the picture stacked on top of it, wants four.
+  //
+  // The budget is the viewport, minus the header the card scrolls under. A card
+  // taller than the window cannot be read without scrolling past its own rating
+  // controls, and its summary cannot be judged against the ones around it. What
+  // is left after everything else in the body - meta, title, chips, rating row,
+  // padding, and the picture above it when the layout is stacked - is the
+  // summary's, and `floor` turns it into whole lines so the cut lands between
+  // them instead of through one.
+  //
+  // Measured from the DOM rather than derived from the CSS: the two layouts
+  // (beside, stacked) and every card kind put different things in the body, and
+  // an arithmetic copy of that here would be wrong the first time a card grew a
+  // row. `.card-summary` is what the space arrives in - it is the flex item that
+  // absorbs the card's slack - so its own height is not part of the question.
+  function fitSnippet(snippet) {
+    var summary = snippet.parentElement;
+    if (!summary || !summary.classList.contains("card-summary")) return;
+    var body = summary.parentElement;
+    if (!body || !body.classList.contains("card-body")) return;
+    var card = body.parentElement;
+    var lineHeight = parseFloat(getComputedStyle(snippet).lineHeight);
+    var cs = getComputedStyle(body);
+    var taken = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+    for (var i = 0; i < body.children.length; i++) {
+      if (body.children[i] !== summary) taken += outerHeight(body.children[i]);
+    }
+    for (var j = 0; j < summary.children.length; j++) {
+      var part = summary.children[j];
+      if (part === snippet) continue;
+      // The expand button is `display: none` until the text is known to
+      // overflow, so on a card that does not overflow yet it measures zero and
+      // the space it would need is missing from the sum. One line is what it
+      // takes; reserving it always costs an unclamped card nothing, because it
+      // has spare room by definition.
+      taken += Math.max(outerHeight(part), lineHeight);
+    }
+    // Stacked layouts put the picture inside the card's height rather than
+    // beside it, and it is not in the body - so ask the card, not the body.
+    var banner = card ? card.querySelector(".card-banner") : null;
+    if (banner && banner.getBoundingClientRect().bottom <= body.getBoundingClientRect().top + 1) {
+      taken += outerHeight(banner);
+    }
+    var header = document.querySelector(".site-header");
+    var budget =
+      window.innerHeight -
+      (header ? header.getBoundingClientRect().height : 0) -
+      CARD_VIEWPORT_GAP;
+    var lines = Math.floor((budget - taken) / lineHeight);
+    snippet.style.setProperty(
+      "--card-snippet-lines",
+      String(Math.max(MIN_SNIPPET_LINES, lines))
+    );
+  }
+
+  // A feed card's summary shows as much as the card has room for and fades out
+  // when there is more (0050). No CSS selector can ask "did this overflow", and
+  // a mask applied unconditionally greys the last line of every summary that
+  // fit - which is most of them, since summaries are written to fit. So the
+  // question is asked here, where the answer exists: scrollHeight is the
+  // unclamped height, clientHeight the clamped box.
+  //
+  // Re-measured on every htmx:load rather than once: the feed's infinite scroll
+  // swaps in new cards, and a font that loads late changes every answer. The
+  // class is removed before measuring so a card that stops overflowing (a
+  // narrower window, a bigger viewport) loses its fade.
+  function markClampedText(root) {
+    pickAll(root, ".card-snippet").forEach(function (el) {
+      // An expanded snippet has no clamp, so scrollHeight and clientHeight agree
+      // and the measurement would answer "it fits" - taking away the button that
+      // closes it. Nothing to measure while it is open; leave the answer alone.
+      if (el.classList.contains("is-expanded")) return;
+      el.classList.remove("is-clamped");
+      fitSnippet(el);
+      if (el.scrollHeight > el.clientHeight + 1) el.classList.add("is-clamped");
+    });
+  }
+
+  // Open one card's summary in place. Delegated for the same reason as the glance
+  // retry above: the feed's infinite scroll swaps in cards that did not exist when
+  // any listener was bound.
+  document.addEventListener("click", function (e) {
+    var button = e.target.closest ? e.target.closest("[data-card-expand]") : null;
+    if (!button) return;
+    var snippet = document.getElementById(button.getAttribute("aria-controls"));
+    if (!snippet) return;
+    var open = !snippet.classList.contains("is-expanded");
+    snippet.classList.toggle("is-expanded", open);
+    button.setAttribute("aria-expanded", open ? "true" : "false");
+    var label = button.querySelector("[data-card-expand-label]");
+    if (label) label.textContent = open ? "Show less" : "Show more";
+    // Collapsing can leave the card's own top above the viewport - the reader
+    // pressed a button that was on screen and would otherwise land mid-feed with
+    // no idea which card moved. Only when it actually scrolled off.
+    if (!open) {
+      var card = button.closest(".card");
+      if (card && card.getBoundingClientRect().top < 0) {
+        card.scrollIntoView({ block: "start", behavior: "smooth" });
+      }
+    }
+  });
+
+  // The measurement above is wrong until the webfont it measured against is the
+  // one actually painted. `document.fonts.ready` resolves once, after that, and
+  // re-running for the whole document then is cheaper than guessing a delay.
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(function () { markClampedText(document); });
+  }
+  window.addEventListener("resize", function () { markClampedText(document); });
+
   /* ===================== per-load initialization ======================== */
 
   function onLoad(root) {
@@ -1054,6 +1226,7 @@
     hydrateRich(root);
     initChat(root);
     initBenchForm(root);
+    markClampedText(root);
     // Queried from the document, not `root`: the pane may have been removed by a
     // swap somewhere else entirely, and that stream still needs closing.
     syncLogStream();

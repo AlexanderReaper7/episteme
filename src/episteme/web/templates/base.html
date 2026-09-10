@@ -55,7 +55,18 @@
   {% include "_icon_sprite.html" %}
   <header class="site-header">
     <h1><a href="/">Episteme</a></h1>
-    <nav class="site-nav">
+    {# Below 40rem the three links do not fit beside the wordmark and wrap onto a
+       second row, so they collapse behind this button (0053). It is a <button>
+       and not a <details>, and not an anchor: a closed <details> hides its own
+       content, which is exactly what the wide layout must not do, and every
+       anchor on this page is boosted. The nav stays ONE list in the markup - the
+       menu is a second layout of it, never a second copy. #}
+    <button class="site-menu-toggle" type="button" data-site-menu
+            aria-expanded="false" aria-controls="site-nav" aria-label="Menu">
+      {{ ico.icon("menu", "site-menu-glyph site-menu-glyph--closed") }}
+      {{ ico.icon("remove", "site-menu-glyph site-menu-glyph--open") }}
+    </button>
+    <nav class="site-nav" id="site-nav">
       <a href="/glance">{{ ico.icon("glance") }} Glance</a>
       <a href="/tune">{{ ico.icon("tune") }} Tune</a>
       {# Full load: the admin shell lives in an inherited `content` block that can't be

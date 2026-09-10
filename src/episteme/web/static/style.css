@@ -31,12 +31,19 @@
   --card-article-border: #2b3a5e;      /* generated-article card accent border */
   --filed: #b48ead;                    /* filed by a correspondent: neither generated nor aggregated */
   --role-system: #565f89;              /* provenance system-message rail */
-  /* Feed column width. The feed cards are short (title + snippet + image), so
-     they can run wider than the long-form article body (`.article`, ~46rem)
-     without hurting readability. Tune this one knob to make the stream feel
-     roomier or tighter - on a 4K screen at browser zoom it is the difference
-     between a narrow ribbon and a column with presence. */
-  --feed-width: 58rem;
+  /* The width of every page's content. `100%` means the window decides, which
+     is a deliberate reversal: this was 58rem, a centered reading measure, and on
+     a 2560px viewport that left 64% of the screen empty on either side. The
+     screen is the constraint now, not a typographic maximum.
+
+     It is `--content-width` and not `--feed-width` because it is no longer the
+     feed's alone - the article page (was 46rem), the admin shell (was 90rem),
+     Glance, Tune, correspondent pages and error pages all read it. A surface
+     that wants to be narrower than the window says so itself.
+
+     The horizontal gutter is `main`'s padding, so nothing here touches the
+     screen edge. */
+  --content-width: 100%;
   /* Icon size, as a multiple of the surrounding text. Icons inherit their
      font-size from whatever control they sit in, so browser zoom and OS scaling
      carry them along for free - but 1em reads noticeably SMALLER than the words
@@ -234,29 +241,65 @@ body {
 
 .site-header h1 a:hover { color: var(--accent); }
 
+/* The app's only horizontal gutter, now that no page centers itself inside a
+   measure. 1rem was right when content stopped at 58rem and the padding was
+   never what you saw; against the window it is the whole margin. */
 main {
-  padding: 1.5rem 1rem 4rem;
+  padding: 1.5rem 2rem 4rem;
 }
 
-/* One vertical column, one post at a time (spec §8). Centered so the reading
-   measure stays comfortable even on a 4K screen. */
+/* 2rem was the whole margin against a 2560px window (0051), and on a 390px one
+   it is 16% of the screen spent on nothing. The gutter is a share of a big
+   window and a nuisance on a small one, so it shrinks with it. */
+@media (max-width: 40rem) {
+  main {
+    padding: 1rem 0.75rem 3rem;
+  }
+}
+
+/* One vertical column, one post at a time (spec §8), and it takes the window. */
 .feed {
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
   width: 100%;
-  max-width: var(--feed-width);
+  max-width: var(--content-width);
   margin: 0 auto;
 }
 
+/* Two thirds text, one third picture. The fraction is the layout: a literal
+   width was a thumbnail at 4K and a wall on a laptop, and the `vw` clamp that
+   replaced it still described the WINDOW rather than the card. `2fr 1fr` is the
+   card's own third at every width, and `container-type: inline-size` makes that
+   third measurable from inside, which is what `cqi` below reads.
+
+   A card with no banner takes one column, not two thirds of itself with an empty
+   third beside it - hence `:has()` rather than an `auto` track that collapses.
+   It also re-runs when the `onerror` handler REMOVES a dead banner, so the body
+   reclaims the width instead of sitting next to a hole.
+
+   Explicit placement rather than DOM order: the banner comes FIRST in the markup
+   (it did when it was on top, and `_items.html` shares this class), so the grid
+   is what puts it on the right. `.card-link` is `position: absolute` and so is
+   out of grid flow entirely. */
 .card {
   position: relative; /* anchor for the stretched .card-link */
+  /* Collapsing an expanded summary scrolls the card back into view, and the
+     header is sticky - without this the card's top lands underneath it. */
+  scroll-margin-top: calc(var(--header-height) + 0.75rem);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  container-type: inline-size;
   background: var(--card-bg);
   border: 1px solid var(--border);
   border-radius: 14px;
   overflow: hidden;
   transition: background 0.15s ease, border-color 0.15s ease,
     transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.card:has(.card-banner) {
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
 }
 
 .card:hover {
@@ -295,8 +338,24 @@ main {
 }
 
 .card-banner {
+  grid-column: 2;
+  grid-row: 1;
   display: block;
-  aspect-ratio: 16 / 9;
+  /* The column decides the width now (a third of the card), so the only thing
+     said here is how tall that third wants to be. `cqi` is 1% of the CARD's
+     inline size, so 18.75cqi is 16:9 at a third of it: the picture keeps one
+     shape from a phone to a 4K window instead of being cropped harder the wider
+     the screen gets. It is a MINIMUM, not a height - a summary that runs longer
+     than the picture is tall makes the card taller and the image stretches with
+     it, cropping through `object-fit: cover`.
+
+     Neither `vw` nor a percentage would do. `vw` measures the window, which is
+     only the card's width by accident, and a percentage height inside a grid
+     track resolves against nothing definite. */
+  align-self: stretch;
+  min-height: 18.75cqi;
+  margin: 0.9rem 0.9rem 0.9rem 0;
+  border-radius: 10px;
   overflow: hidden;
   background: var(--banner-bg);
 }
@@ -308,8 +367,57 @@ main {
   display: block;
 }
 
+/* A column, so the leftover height has somewhere to go. The picture is what
+   decides how tall a card is most of the time, and the text beside it is
+   shorter; without this the body sits at the top with the gap under it and the
+   card reads as half empty. The summary takes the slack (below), which puts the
+   rating row on the card's bottom edge, level with the bottom of the image. */
 .card-body {
+  grid-column: 1;
+  grid-row: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
   padding: 0.9rem 1.1rem 1.1rem;
+}
+
+/* The block that absorbs the card's spare height, which is also what makes the
+   space measurable: `app.js:fitSnippet` reads it to decide how many lines of the
+   summary the card can show. `min-height: 0` because a flex item's default
+   `min-height: auto` refuses to shrink below its content, which is exactly what
+   a clamp has to do. */
+.card-summary {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* Taller than it is wide: the third-of-the-card picture has no width left to be
+   a third of, so it goes on top and takes the whole card. This is the phone, and
+   it is also a portrait monitor or a narrow window on a wide one - the question
+   the layout asks is the proportions of the SPACE, not the class of device, so
+   no breakpoint in pixels can answer it.
+
+   `aspect-ratio` rather than the `cqi` minimum above: across the full width, a
+   16:9 banner is already as tall as the card can afford, and stretching it with
+   the text would push the summary off the screen. */
+@media (orientation: portrait) {
+  .card:has(.card-banner) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .card-banner {
+    grid-column: 1;
+    grid-row: 1;
+    align-self: start;
+    aspect-ratio: 16 / 9;
+    min-height: 0;
+    margin: 0.9rem 0.9rem 0;
+  }
+
+  .card-body {
+    grid-column: 1;
+    grid-row: 2;
+  }
 }
 
 .card-meta {
@@ -456,7 +564,7 @@ main {
    at the bottom of the same page, so nothing about the ranking is hidden. */
 .tune-page {
   margin: 0 auto;
-  max-width: var(--feed-width);
+  max-width: var(--content-width);
   padding: 1.5rem 1rem 4rem;
 }
 
@@ -828,10 +936,102 @@ main {
 
 .card:hover .card-title { color: var(--accent); }
 
+/* The card's body text, not a caption under the title (0050). It is the whole
+   post for an aggregate card, so it reads at near-body contrast rather than at
+   --muted, which is where it sat while it was a truncated RSS blurb.
+
+   The clamp is a backstop, not the design. MEASURED in the browser at 2560px,
+   against the thumbnail layout above rather than the full-width banner it
+   replaced: the text column holds ~93 characters a line, and the summaries the
+   fast model actually writes run 743-815, so nine lines (~840) shows them whole.
+   Both earlier guesses were wrong for the same reason - they were arithmetic on
+   a width, not a measurement of one - and an aggregate card has nowhere to click
+   through to for the part a clamp hides. When one does run over, it
+   fades out instead of ending mid-word - `line-clamp` breaks at the line, and
+   the mask makes the cut look deliberate. -webkit- prefixes included because
+   the unprefixed `line-clamp` is still not what most engines ship. */
 .card-snippet {
   margin: 0;
   font-size: 0.95rem;
+  line-height: 1.55;
+  color: color-mix(in srgb, var(--text) 82%, var(--muted));
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  /* How many lines fit, not how many lines are allowed. `app.js:fitSnippet` sets
+     the variable per card from the room that card actually has; the 9 is what a
+     reader with no JS gets, and the number the measurement usually lands on at
+     2560px anyway. */
+  -webkit-line-clamp: var(--card-snippet-lines, 9);
+  line-clamp: var(--card-snippet-lines, 9);
+  overflow: hidden;
+}
+
+/* The fade is applied ONLY to a snippet that actually overflows, which no CSS
+   selector can ask about - a mask on every snippet greys out the last line of a
+   summary that fit perfectly, which is most of them. `app.js:markClampedText`
+   compares scrollHeight against clientHeight and sets this class, on load and
+   after every htmx swap. No class, no fade: the fallback is a clamp with no
+   fade, never a fade with no overflow. */
+.card-snippet.is-clamped {
+  -webkit-mask-image: linear-gradient(to bottom, #000 72%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 72%, transparent 100%);
+}
+
+/* Opened by the reader. `line-clamp: none` and no mask: the whole summary, in
+   the feed, without going to the post. Note that `.is-clamped` is still on the
+   element - it records that the text overflows, not that it is hidden - so the
+   button stays visible to close it again. */
+.card-snippet.is-expanded {
+  -webkit-line-clamp: none;
+  line-clamp: none;
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+
+/* Hidden by default, not shown by default. The class that reveals it is set by a
+   measurement JS can only make after paint, so the other way round flashes a
+   "Show more" onto every card in the feed and then takes it off most of them. */
+.card-expand {
+  display: none;
+  position: relative;
+  z-index: 2;
+  align-items: center;
+  gap: 0.25rem;
+  margin-top: 0.45rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
   color: var(--muted);
+  cursor: pointer;
+}
+
+.card-snippet.is-clamped ~ .card-expand { display: inline-flex; }
+
+.card-expand:hover { color: var(--accent); }
+
+.card-expand:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+/* Points down when there is more below, up once there is not. The glyph is
+   `chevron--right`, so both states are rotations of one icon rather than two
+   glyphs in the sprite. */
+.card-expand-caret {
+  transform: rotate(90deg);
+  transition: transform 0.15s ease;
+}
+
+.card-expand[aria-expanded="true"] .card-expand-caret {
+  transform: rotate(-90deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card-expand-caret { transition: none; }
 }
 
 /* Generated-article cards: visually distinct from the raw stream. */
@@ -883,9 +1083,10 @@ main {
 
 .note code { word-break: break-all; }
 
-/* Article page */
+/* Article page. 46rem was the reading measure for continuous prose, and it is
+   gone by decision, not by oversight: the app uses the window everywhere. */
 .article-page {
-  max-width: 46rem;
+  max-width: var(--content-width);
   margin: 0 auto;
   padding: 1rem 0 4rem;
 }
@@ -894,11 +1095,6 @@ main {
   margin: 0.5rem 0;
   font-size: 2rem;
   line-height: 1.25;
-}
-
-.article-summary {
-  font-size: 1.1rem;
-  color: var(--muted);
 }
 
 .post-audio {
@@ -1250,6 +1446,90 @@ main {
 
 .site-nav a:hover { color: var(--accent); }
 
+/* The burger. It does not exist above 40rem - `display: none` and not
+   `visibility`, so it takes no space in the header's baseline row. */
+.site-menu-toggle {
+  display: none;
+  align-items: center;
+  padding: 0.35rem;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 1rem;
+}
+
+.site-menu-toggle:hover { color: var(--accent); }
+
+.site-menu-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Two glyphs in one button, one of them always hidden: the burger closed, the
+   same close glyph the chips use when it is open. A single glyph swapped in JS
+   would put the icon's identity in the script instead of the sprite. */
+.site-menu-glyph--open { display: none; }
+
+.site-menu-toggle[aria-expanded="true"] .site-menu-glyph--closed { display: none; }
+
+.site-menu-toggle[aria-expanded="true"] .site-menu-glyph--open { display: inline-block; }
+
+/* Below this the three links wrap onto a row of their own under the wordmark, so
+   they fold into the button instead (0053). A width query and not `orientation`,
+   which is what the CARD asks: a nav needs a number of characters beside the
+   wordmark, and a landscape phone has the width for them.
+
+   Measured 2026-08-31: the inline row needs 463px (284 of nav, 99 of wordmark,
+   16 of gap, 64 of padding), so 40rem folds it while it still fits rather than
+   at the pixel where it breaks. Between the two the links are technically on one
+   line and 40px from the wordmark, at 0.85rem uppercase - a tap target the size
+   of the word it is on. It is also the width the page gutter narrows at, so the
+   two agree instead of staggering.
+
+   The panel is `position: absolute` against the header, which is `sticky` and so
+   is already a containing block. It is NOT `position: fixed`: the header scrolls
+   with the page until it sticks, and a fixed panel would leave it behind. */
+@media (max-width: 40rem) {
+  .site-menu-toggle {
+    display: inline-flex;
+    margin-left: auto;
+  }
+
+  .site-nav {
+    display: none;
+    position: absolute;
+    top: 100%;
+    right: 0;
+    left: 0;
+    flex-direction: column;
+    align-items: stretch;
+    margin-left: 0;
+    padding: 0.35rem 0.75rem 0.6rem;
+    border-bottom: 1px solid var(--border);
+    /* Opaque, and NOT the app's frost (--frost-bg + --frost-blur). Verified in
+       the browser 2026-08-31: with the panel's own background removed, the card
+       image behind it comes through completely unblurred even though
+       `backdrop-filter: blur(10px)` computes on the element. The header is
+       already a backdrop root and the panel hangs outside its box, so there is
+       nothing there for a nested filter to sample. A menu over a bright photo
+       has to be readable, so this is a surface rather than glass. */
+    background: var(--card-bg);
+    box-shadow: 0 12px 30px color-mix(in srgb, var(--bg) 65%, transparent);
+  }
+
+  .site-nav.is-open { display: flex; }
+
+  /* A row per link, and a touch target the size of one. `align-items: baseline`
+     from the icon rule above would leave the icon hanging off a 2.5rem row. */
+  .site-nav a {
+    align-items: center;
+    margin-left: 0;
+    padding: 0.65rem 0.25rem;
+  }
+}
+
 /* Admin shell: a left navigation pane beside the page content.
    The nav column is sized in vw, not fixed rem. Browser zoom shrinks the viewport
    measured in CSS pixels while rem stays put, so a fixed 13rem column that was a
@@ -1261,7 +1541,7 @@ main {
   display: grid;
   grid-template-columns: clamp(8.5rem, 15vw, 12rem) minmax(0, 1fr);
   gap: 1.25rem;
-  max-width: 90rem;
+  max-width: var(--content-width);
   margin: 0 auto;
 }
 
@@ -2822,7 +3102,7 @@ main {
    rail - it is what makes "where is MY code in this" a glance instead of a
    scan. */
 .error-page {
-  max-width: var(--feed-width);
+  max-width: var(--content-width);
   margin: 2rem auto;
   padding: 0 1rem;
 }
@@ -2944,7 +3224,7 @@ main {
    them tracks the theme instead of restating it. */
 .correspondent-page {
   margin: 0 auto;
-  max-width: var(--feed-width);
+  max-width: var(--content-width);
   padding: 1.5rem 1rem 4rem;
 }
 
@@ -2959,7 +3239,7 @@ main {
    the count follows the window instead of being declared here. */
 .glance {
   margin: 0 auto;
-  max-width: var(--feed-width);
+  max-width: var(--content-width);
   padding: 1.5rem 1rem 4rem;
 }
 

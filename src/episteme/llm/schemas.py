@@ -88,10 +88,42 @@ class TopicMatches(BaseModel):
     matches: list[TopicMatch]
 
 
-class SourceSummary(BaseModel):
+class CardSummary(BaseModel):
+    """The `summarize` stage's whole output: the text of one feed card (0050).
+
+    **`max_length` is a runaway guard, never a length control.** llama.cpp turns
+    it into a grammar rule, so the string stops at exactly that many characters
+    with the model mid-word and pydantic accepting it - a silent guillotine, not
+    a retry. Measured 2026-08-30: at `max_length=800`, two of the first three
+    summaries came back 800 and 799 characters long, both ending mid-sentence.
+    The length the card wants is asked for in the PROMPT, as a sentence count.
+    A character budget was tried first and did nothing: told to "aim for 400-500
+    characters and never exceed 600", the model returned 743, 750 and 815. The
+    card clamps at nine lines, which is sized to what the model actually writes
+    rather than to what it was asked for. Measured over all 688 summaries once
+    the backfill had run: median 695 characters, p90 1009, max 1188, and nine
+    lines holds about 930 - so roughly one card in six is clamped and carries an
+    expand control, and five in six show the whole thing.
+
+    `_reads_as_finished` is what makes the failure loud if it happens anyway. A
+    guillotined string ends mid-word; a written one ends on punctuation. Failing
+    validation sends it back through `complete_json`'s repair retry instead of
+    storing half a sentence on a card.
+    """
+
     summary: str = Field(
-        description="3-5 sentences preserving key facts, numbers, and named entities"
+        description="3-4 sentences that stand alone: what happened, the numbers "
+        "that matter, and why it is worth knowing",
+        max_length=1200,
     )
+
+    @model_validator(mode="after")
+    def _reads_as_finished(self) -> "CardSummary":
+        if not self.summary.strip().endswith((".", "!", "?", '"', "'", ")", "…")):
+            raise ValueError(
+                "summary ends mid-sentence - write a shorter one that finishes"
+            )
+        return self
 
 
 class ProseSection(BaseModel):
@@ -375,8 +407,11 @@ def section_param_schema() -> tuple[dict, dict]:
 
 
 class PostDraft(BaseModel):
+    # No `summary`, deliberately (0050): the card summary is written by the
+    # `summarize` stage from the FINISHED body, after QA has edited it. Asking
+    # the writer for one produced a hook that described a post it had not written
+    # yet, and that a later stage would overwrite regardless.
     title: str = Field(max_length=300)
-    summary: str = Field(description="One-paragraph hook", max_length=1000)
     difficulty: Literal["introductory", "intermediate", "technical"]
     topics: list[str] = Field(min_length=1, max_length=4)
     sections: list[Section] = Field(min_length=1, max_length=12)

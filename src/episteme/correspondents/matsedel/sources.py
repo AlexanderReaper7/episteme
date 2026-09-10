@@ -53,9 +53,9 @@ RESTAURANTS = (
 class MatsedelAdapter:
     """The adapter for a correspondent's own sources: it fetches nothing.
 
-    Matsedel reads its sites through `readers.read_source`, on a weekly schedule
-    of its own, and files finished posts. There is no listing for ingestion to
-    poll and nothing here for the pipeline to embed, cluster, triage or write.
+    Matsedel reads its sites through `readers.read_source`, on a schedule of its
+    own, and files finished posts. There is no listing for ingestion to poll and
+    nothing here for the pipeline to embed, cluster, triage or write.
     """
 
     type_name = TYPE_NAME

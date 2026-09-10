@@ -95,8 +95,7 @@ Writing rules for the post you will produce:
      without one the whole figure fails to render.
    - "timeline": for stories with genuine chronology (mission history, discovery arcs).
    - "glossary": a few terms, when jargon would otherwise gatekeep the story.
-   Do not restate the summary verbatim as a section, and do not emit funding/DOI
-   boilerplate as prose.
+   Do not emit funding/DOI boilerplate as prose.
 5. Do NOT include a sources/references or "further reading" section in the body —
    those are built automatically. Instead, the draft's `further_reading_urls` field
    is where you recommend follow-up reading: list the exact "Fetched:" URLs of pages
@@ -148,8 +147,10 @@ Assess:
   question must test what the post EXPLAINS rather than trivia. The reader sees the
   choices in a random order that changes on every read, so never refer to a choice by
   position ("option B") and never accept one that refers to another that way;
-- editorial quality: the summary restated verbatim as a body section, funding/DOI
-  boilerplate as prose, repetitive sections, a title the body doesn't deliver on;
+- editorial quality: funding/DOI boilerplate as prose, repetitive sections, a title
+  the body doesn't deliver on, a body that buries its own finding — the feed card is
+  written from this body after you finish, so what the body opens with is what the
+  reader sees before deciding whether to read at all;
 - overall learning value and interest for one curious, educated reader.
 
 Fix what is wrong with the editing tools, one section at a time:
@@ -157,7 +158,7 @@ Fix what is wrong with the editing tools, one section at a time:
   Anything you do not touch is left exactly as written, so make surgical fixes rather
   than rewriting the post. Every mutation returns the renumbered body — always work
   from the latest listing, since an insert or delete shifts the indices after it.
-- set_meta rewrites the title and/or summary.
+- set_title rewrites the post's title.
 - rerender, when offered, re-renders the post with your edits and returns a fresh
   screenshot; use it to confirm a chart or diagram fix really draws before finishing.
 - finish_review closes the review. Call it when the post is sound or as fixed as you
@@ -251,8 +252,55 @@ Echo each proposed tag exactly as given, once, and choose only from the tags off
 alongside it.
 """
 
-SUMMARIZE_SYSTEM = """\
-Summarize the article in 3-5 sentences. Preserve key facts, numbers, names, and
-institutions exactly as stated. Do not add interpretation or outside knowledge.
-Include any references to original papers (DOI, arXiv, journal names) mentioned.
+#: The `summarize` stage, one prompt per post kind (0050). Both write the SAME
+#: object - the text of one feed card - from different material: a finished post
+#: for the first, the raw coverage for the second. Two prompts rather than one
+#: with a mode flag, because the failure each has to prevent is different: an
+#: article summary drifts into describing the post, an aggregate summary drifts
+#: into saying the headline again in longer words.
+ARTICLE_SUMMARY_SYSTEM = """\
+You write the feed card for a post that is already written. You are given its title
+and its full body.
+
+The card is all many readers will read, and it is what they decide on. Write 3-4
+sentences that stand completely on their own: what was found or built, the numbers
+and names that carry the point, and what it changes. A reader who never opens the
+post should come away knowing the substance, not knowing that substance exists.
+
+Three or four sentences, and stop there. The card shows about nine lines, so a
+fifth sentence is one the reader sees the beginning of. Choosing the facts that
+matter is the work; listing every number in the post is what it looks like when
+that work is skipped.
+
+- Never tease. "Researchers have made a surprising discovery about deep-sea vents"
+  tells the reader nothing. Say what the discovery is.
+- Never refer to the post itself: no "this article explains", no "read on", no
+  closing line about what the future may hold.
+- Only what the body says. No outside knowledge and no interpretation the body does
+  not make.
+- Keep numbers, units, names and institutions exactly as the body states them, and
+  keep its hedges: preliminary stays preliminary, "according to" stays attributed.
+- Plain declarative prose, one paragraph, no markdown and no headings.
+"""
+
+AGGREGATE_SUMMARY_SYSTEM = """\
+You write the feed card for a story the feed did not write up. You are given every
+source item clustered under it, which is one or more outlets covering the same thing.
+
+There is no post behind this card: it links straight out to the outlet, so what you
+write is the entire thing the reader gets. Write 3-4 sentences that stand completely
+on their own: what happened, the numbers and names that carry it, and what it changes.
+
+Three or four sentences, and stop there. The card shows about nine lines, so a
+fifth sentence is one the reader sees the beginning of.
+
+- Never tease, and never write the headline again in longer words. Say what the
+  outlets actually report.
+- Only what the source items say. No outside knowledge, and nothing inferred to fill
+  a gap they left. When they are thin, write the shorter honest summary: two solid
+  sentences beat five padded ones.
+- Where the outlets disagree on a fact, say so and attribute it.
+- Keep numbers, units, names and institutions exactly as stated, and keep their
+  hedges: preliminary stays preliminary.
+- Plain declarative prose, one paragraph, no markdown and no headings.
 """

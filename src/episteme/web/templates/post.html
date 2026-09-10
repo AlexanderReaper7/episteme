@@ -15,7 +15,9 @@
       <time>{{ post.generated_at | dt }}</time>
     </div>
     <h1>{{ post.title }}</h1>
-    <p class="article-summary">{{ post.summary }}</p>
+    {# No standfirst (0050). `post.summary` is now the card's text - 3-5 sentences
+       that say what the piece found - so a reader who clicked the card would read
+       it, then read the article saying it again. The card is where it belongs. #}
     <div class="topic-chips">
       {% for topic in post.topics %}<span class="chip">{{ topic }}</span>{% endfor %}
     </div>

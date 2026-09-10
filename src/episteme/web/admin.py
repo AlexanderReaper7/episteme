@@ -177,6 +177,11 @@ STAGES: tuple[dict, ...] = (
          note="A vision pass over the rendered page. The model reviews the article as "
               "a reader sees it, applies corrections through a tool harness, and "
               "scores what is left."),
+    _job("summarize", "summarize", takes="posts with a missing or stale summary",
+         makes="feed card text",
+         note="The fast model writes each card's summary - from the finished body for "
+              "an article, from the whole cluster for an aggregate. A post is not in "
+              "the feed until this has run for it."),
     _job("narrate", "narrate", takes="posts with no audio", makes="narration",
          note="Sends each finished article to the TTS provider and stores the audio. "
               "The nightly batch is off unless tts_enabled, so this button is normally "
@@ -189,7 +194,7 @@ STAGES: tuple[dict, ...] = (
 
 # The rest of the deferrable surface. Every one of these was reachable only by
 # curl before, including `narrate` - a real pipeline stage that had no button at
-# all while six of its seven siblings did.
+# all while six of its siblings did.
 MAINTENANCE_OPS: tuple[dict, ...] = (
     _job("ingest_source", "ingest-one", label="ingest one source",
          help="Poll a single source now, ignoring its fetch interval."),

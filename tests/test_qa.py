@@ -123,12 +123,15 @@ async def test_every_mutation_returns_the_renumbered_body():
     assert listing["sections"][3]["index"] == 3
 
 
-async def test_set_meta_changes_only_what_is_supplied():
+async def test_set_title_rewrites_the_title_and_never_the_summary():
+    """QA has no summary tool at all (0050) - the card summary is written from the
+    body this review leaves behind, by a stage that runs after it."""
     editor = _editor()
-    await _call(editor, "set_meta", {"summary": "sharper hook"})
-    assert editor.post.title == "T"
-    assert editor.post.summary == "sharper hook"
-    assert (await _call(editor, "set_meta", {})).content.startswith("Rejected")
+    editor.post.summary = "the card as it stands"
+    await _call(editor, "set_title", {"title": "Sharper"})
+    assert editor.post.title == "Sharper"
+    assert editor.post.summary == "the card as it stands"
+    assert (await _call(editor, "set_title", {})).content.startswith("Rejected")
 
 
 async def test_flush_splices_the_citation_tail_back_on():
@@ -313,7 +316,7 @@ def test_qa_has_no_network_tools():
     """QA's grounding set is fixed at write time; a reviewer that can fetch reopens
     the injection surface for no reviewing benefit (decided 2026-08-02)."""
     editing = {"replace_section", "insert_section", "delete_section",
-               "set_meta", "finish_review"}
+               "set_title", "finish_review"}
     assert set(_names(_editor())) == editing
     assert set(_names(_editor(visual=True))) == editing | {"rerender"}
 
