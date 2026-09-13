@@ -39,11 +39,11 @@ services:
       TTS_ENABLED: ${TTS_ENABLED:-false}
       TTS_DEFAULT_VOICE: ${TTS_DEFAULT_VOICE:-}
       TTS_OPUS_BITRATE: ${TTS_OPUS_BITRATE:-64000}
-      # Host control agent (hostagent/llama_agent.py, run on the host outside
-      # compose — it is what starts llama.cpp, so it cannot share this lifecycle).
-      # Empty disables the backend panel and the resource governor entirely.
-      LLM_HOST_AGENT_URL: ${LLM_HOST_AGENT_URL:-}
-      RESOURCE_GOVERNOR_ENABLED: ${RESOURCE_GOVERNOR_ENABLED:-false}
+      # llama-warden (C:\selfhosting\llama-warden, run on the host outside
+      # compose: it is what starts llama.cpp, so it cannot share this lifecycle).
+      # Empty disables the backend panel, and leaves nothing able to pause the
+      # pipeline for a game. The thresholds are the warden's, not ours (0057).
+      LLM_WARDEN_URL: ${LLM_WARDEN_URL:-}
       # Notifications (ntfy, 0056). Empty NTFY_BASE_URL is the off switch: the
       # digest and the lunch push return before building a message. The topics
       # are separate so lunch can be muted without muting the digest, and

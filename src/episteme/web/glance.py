@@ -13,7 +13,7 @@ render it: an in-process plugin answers its own route like any other view.
 
 A row with no plugin is legal (0046: that is what an external correspondent is),
 and it produces a block that fails to load rather than a page that crashes or a
-correspondent that silently vanishes. That is the same discipline `llm/host.py`
+correspondent that silently vanishes. That is the same discipline `llm/warden.py`
 writes down for the status panel: absent and broken must look different.
 """
 

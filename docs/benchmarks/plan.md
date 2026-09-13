@@ -2,6 +2,7 @@
 
 - Date: 2026-08-15, revised 2026-08-15 after measuring the prefill claim
 - Status: **built and live-verified 2026-08-15** for the worker-side scenarios (`quick`), including live progress, cancellation and the charts. The host-agent path (`sweep`, preset editing) is built and unit-tested but not yet watched running; the agent was down during verification, which is itself how the "no sensor, no opinion" degradation got exercised. See [CLAUDE-TODO.md](../../CLAUDE-TODO.md).
+- Renamed by [0057](../decisions/0057-the-gpu-decision-leaves-episteme.md), 2026-09-13: the "host agent" throughout this document is now **llama-warden**, its own project at `C:\selfhosting\llama-warden`. The split changed one thing here, the contamination threshold, noted in its own section below. Everything else reads the same with the new name.
 - Supersedes: the loose PowerShell in this directory and `C:\selfhosting\llama-cpp\bench-server.ps1`
 - Decisions this produced: [0039](../decisions/0039-benchmarking-sits-outside-the-gateway.md), [0040](../decisions/0040-prefill-is-measured-from-the-stream.md), [0041](../decisions/0041-the-host-agent-applies-a-configuration-it-is-handed.md)
 
@@ -15,7 +16,7 @@ Three findings from the 2026-08-15 session, each of which the current mechanism 
 
 2. **A synthetic 4k prompt overstates prefill by 3-4x.** Qwopus3.6-35B-A3B does 192.5 tok/s of prefill on a 4k prompt and 54.4 tok/s on a real 18.7k writer call. Generation likewise falls from 35.4 to 16.0 tok/s. **Only replayed real prompts predict real wall time**, which is why fixtures come from `llm_calls` and not from a lorem generator.
 
-3. **Warframe launched mid-run and quietly corrupted a benchmark.** Cumulative prefill slid 37.7 to 32.6 to 28.6 tok/s across a single prompt. The host agent already reports `games_running` from Windows' Game Bar registry and the governor already brakes on contention, so the fix is to reuse both rather than to remember not to play games. **A run that observed foreign GPU load is not a failed run, it is a run whose numbers must be labelled.**
+3. **Warframe launched mid-run and quietly corrupted a benchmark.** Cumulative prefill slid 37.7 to 32.6 to 28.6 tok/s across a single prompt. llama-warden already reports `games_running` from Windows' Game Bar registry and already brakes on contention, so the fix is to reuse both rather than to remember not to play games. **A run that observed foreign GPU load is not a failed run, it is a run whose numbers must be labelled.**
 
 Reference numbers as of 2026-08-15, llama.cpp build 9882 (48719618e), ctx 65536, MTP on, so the first stored run has something to disagree with:
 
@@ -60,7 +61,7 @@ Every figure in that table is a **cumulative average**, which finding 4 says is 
        |                                                          worker/bench.py
        |                                                                    |
        |    bench/client.py  --stream-->  llama-server :5001  (measure)     |
-       |    llm/host.py      --HTTP---->  host agent :5003     (sense, and  |
+       |    llm/warden.py    --HTTP---->  llama-warden :5003   (sense, and  |
        |                                                        for `sweep`,|
        |                                                        apply a     |
        |                                                        preset and  |
@@ -224,7 +225,7 @@ Verified 2026-08-15: the final SSE chunk of a streamed request carries the same 
 
 ### Other parameters sampled during a run
 
-Polled from the host agent's `/resources`, stored on the sample and in `env`/`env_end`:
+Polled from llama-warden's `/resources`, stored on the sample and in `env`/`env_end`:
 
 - `vram_free_mb` (does a long context grow the KV/state buffers mid-run?)
 - `foreign_gpu_percent` and `games_running` (did the measurement get contaminated, and when?)
@@ -242,9 +243,9 @@ Dropping the connection is the only abort llama-server offers, and it only helps
 
 ## Contamination, handled rather than remembered
 
-Before starting, read `/resources`. If `games_running` is non-empty or `foreign_gpu_percent` is at or above the governor's existing threshold (`resource_gpu_busy_percent`, 25 %), **refuse and say what is running**. After finishing, read it again and stamp `env_end`. If the two disagree, the run is stored with `contaminated = true`, stays visible in history with a label, and is never used as a comparison baseline.
+Before starting, read `/resources`. If `games_running` is non-empty or `foreign_gpu_percent` is at or above **the warden's** threshold, **refuse and say what is running**. That threshold is read off `/verdict` at the run boundary rather than configured here (0057): two numbers meaning "the GPU is busy" in two projects would drift. Note the asymmetry on games, which is deliberate: the warden decides on load alone, because a minimised game holds VRAM without using the card, while a benchmark taken beside a running game is meaningless whatever the load says. After finishing, read it again and stamp `env_end`. If the two disagree, the run is stored with `contaminated = true`, stays visible in history with a label, and is never used as a comparison baseline.
 
-The governor and the benchmark also have to agree about who owns the GPU: a benchmark holds the interactive lease (`worker/control.py`) so nothing unloads the model underneath it, refreshed on a timer because `chat_lease_seconds` is 180 and a longctx run is 7 to 24 minutes.
+The warden and the benchmark also have to agree about who owns the GPU: a benchmark holds the interactive lease (`worker/control.py`) so nothing unloads the model underneath it, refreshed on a timer because `chat_lease_seconds` is 180 and a longctx run is 7 to 24 minutes.
 
 ## The page
 

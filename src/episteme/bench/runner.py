@@ -14,7 +14,7 @@ preference:
   to 28.6 tok/s inside one prompt. The measurement was not wrong, it was
   unlabelled, which is worse.
 * **Hold the interactive lease for the whole run.** A benchmark is somebody
-  deliberately using the GPU, so the governor's pause must not evict the model
+  deliberately using the GPU, so a warden pause must not evict the model
   underneath it. The lease expires in `chat_lease_seconds` (180) and a run is
   minutes to hours, so it is refreshed on a timer rather than taken once.
 * **A failing model loses only its own numbers.** Errors land on the sample, not
@@ -34,7 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
 from ..db import SessionLocal
-from ..llm.host import HostAgentError, host_agent
+from ..llm.warden import WardenError, warden
 from ..models import BenchmarkFixture, BenchmarkRun, BenchmarkSample
 from ..worker.control import BENCH_HOLDER, hold_interactive, release_interactive
 from .client import BenchClient, BenchError, Cancelled
@@ -68,7 +68,7 @@ class Item:
 
 @dataclass
 class Variant:
-    """One point of a `sweep`: a named configuration the host agent applies before
+    """One point of a `sweep`: a named configuration the warden applies before
     the samples under it are measured."""
 
     label: str
@@ -146,14 +146,27 @@ def plan_items(
     return items
 
 
-def gate(resources: dict | None) -> str | None:
+# The threshold this falls back to when the warden answered `/resources` but not
+# `/verdict`. It is the warden's own default, written here as a last resort rather
+# than a second opinion: the number that governs is whatever `busy_percent` is
+# passed in, and `_busy_percent` reads it from the warden every time (0057).
+DEFAULT_BUSY_PERCENT = 25.0
+
+
+def gate(resources: dict | None, busy_percent: float = DEFAULT_BUSY_PERCENT) -> str | None:
     """Why this run must not start, or None if the card is ours.
 
-    The threshold is the governor's own `resource_gpu_busy_percent`, reused
-    rather than re-tuned: two numbers meaning "the GPU is busy" would drift, and
-    the governor's has already been tested against real contention (0024).
+    `busy_percent` is the WARDEN's threshold, read from its verdict rather than
+    configured here: two numbers meaning "the GPU is busy" would drift, and the
+    warden's has been tested against real contention (0024, 0057).
 
-    A missing host agent is not an obstruction. It is optional infrastructure and
+    Stricter than the warden about games, deliberately. The warden treats a
+    running game as context and decides on load alone, because a minimised
+    launcher is not a reason to stop writing articles. A benchmark is a
+    measurement, and one taken next to a game is not wrong so much as
+    meaningless.
+
+    A missing warden is not an obstruction. It is optional infrastructure and
     everything degrades to "no opinion" without it, so the run proceeds unsensed
     and `env` records that it was unsensed.
     """
@@ -163,14 +176,14 @@ def gate(resources: dict | None) -> str | None:
     if games:
         return f"a game is running: {', '.join(games)}"
     foreign = resources.get("foreign_gpu_percent")
-    if foreign is not None and foreign >= settings.resource_gpu_busy_percent:
-        return (
-            f"foreign GPU load {foreign:.0f}% >= {settings.resource_gpu_busy_percent:.0f}%"
-        )
+    if foreign is not None and foreign >= busy_percent:
+        return f"foreign GPU load {foreign:.0f}% >= {busy_percent:.0f}%"
     return None
 
 
-def contaminated(env: dict | None, env_end: dict | None) -> bool:
+def contaminated(
+    env: dict | None, env_end: dict | None, busy_percent: float = DEFAULT_BUSY_PERCENT
+) -> bool:
     """Did foreign load appear while we were measuring?
 
     Asymmetric with `gate` on purpose. Starting requires a quiet card; finishing
@@ -184,7 +197,7 @@ def contaminated(env: dict | None, env_end: dict | None) -> bool:
         return True
     before = env.get("foreign_gpu_percent") or 0
     after = env_end.get("foreign_gpu_percent") or 0
-    return after >= settings.resource_gpu_busy_percent > before
+    return after >= busy_percent > before
 
 
 # --- execution ---------------------------------------------------------------------
@@ -237,9 +250,34 @@ async def _resources() -> dict | None:
     """`/resources` costs ~3.5s (0023, measured), so this is called at run
     boundaries only, never inside the loop that is being timed."""
     try:
-        return await host_agent.resources()
-    except HostAgentError:
+        return await warden.resources()
+    except WardenError:
         return None
+
+
+async def _busy_percent() -> float:
+    """The warden's own "the GPU is busy" number. Cheap - `/verdict` is the watch
+    thread's cached state, not a new sweep."""
+    try:
+        verdict = await warden.verdict()
+    except WardenError:
+        verdict = None
+    return ((verdict or {}).get("policy") or {}).get(
+        "gpu_busy_percent", DEFAULT_BUSY_PERCENT
+    )
+
+
+async def _environment() -> tuple[dict | None, float]:
+    """A sweep and the threshold to judge it by, read together.
+
+    Together because a warden that could not answer `/resources` will not answer
+    `/verdict` either: asking anyway pays a second connect timeout at a run
+    boundary, and the answer would be `DEFAULT_BUSY_PERCENT` regardless. No
+    sensor, no opinion, and no second wait to arrive at one."""
+    env = await _resources()
+    if env is None:
+        return None, DEFAULT_BUSY_PERCENT
+    return env, await _busy_percent()
 
 
 async def _set_progress(run_id: int, payload: dict) -> None:
@@ -297,8 +335,8 @@ async def run_benchmark(run_id: int) -> dict:
         scenario, models, params = run.scenario, list(run.models), dict(run.params)
         executor = run.executor
 
-    env = await _resources()
-    if (reason := gate(env)) is not None:
+    env, busy_percent = await _environment()
+    if (reason := gate(env, busy_percent)) is not None:
         async with SessionLocal() as session:
             await session.execute(
                 update(BenchmarkRun)
@@ -378,7 +416,7 @@ async def run_benchmark(run_id: int) -> dict:
             await _restore_preset(preset_backup)
         await client.aclose()
 
-    env_end = await _resources()
+    env_end, busy_percent = await _environment()
     async with SessionLocal() as session:
         await session.execute(
             update(BenchmarkRun)
@@ -387,7 +425,7 @@ async def run_benchmark(run_id: int) -> dict:
                 status=status,
                 error=error,
                 env_end=env_end,
-                contaminated=contaminated(env, env_end),
+                contaminated=contaminated(env, env_end, busy_percent),
                 finished_at=datetime.now(UTC),
                 progress={},
             )
@@ -482,10 +520,10 @@ async def _apply_variant(params: dict, label: str, backup: str | None) -> str | 
     if variant is None:
         raise BenchError(f"Sweep variant {label!r} vanished from the run parameters")
     try:
-        result = await host_agent.apply_preset(variant.sections)
+        result = await warden.apply_preset(variant.sections)
         backup = backup or result.get("backup")
-        await host_agent.restart(extra_args=variant.extra_args)
-    except HostAgentError as exc:
+        await warden.restart(extra_args=variant.extra_args)
+    except WardenError as exc:
         raise BenchError(f"applying variant {label!r} failed: {exc}") from exc
     # llama-server rebinds its port before it can serve, and the router lazily
     # loads on first request, so there is nothing better to wait on than the
@@ -495,9 +533,9 @@ async def _apply_variant(params: dict, label: str, backup: str | None) -> str | 
 
 async def _restore_preset(backup: str) -> None:
     try:
-        await host_agent.restore_preset(backup)
-        await host_agent.restart()
-    except HostAgentError as exc:
+        await warden.restore_preset(backup)
+        await warden.restart()
+    except WardenError as exc:
         # Loud, because the host is now running a configuration nobody chose and
         # the next nightly pipeline run would inherit it.
         log.error("FAILED to restore models-preset.ini from %s: %s", backup, exc)

@@ -15,7 +15,7 @@ from fastapi.responses import HTMLResponse, Response
 
 from ..config import settings
 from ..db import SessionLocal
-from ..llm.host import host_agent
+from ..llm.warden import warden
 from ..llm.observe import concat_transcript
 from ..models import FAILURE_STATUSES, AppState, Source
 from ..recommend import topics
@@ -68,11 +68,11 @@ async def admin_home(request: Request):
             "jobs_summary": await api_jobs_summary(),
             "sources_stats": await api_sources_stats(),
             # Both llama.cpp cards' context, built from what /api/status already
-            # fetched rather than probing the host agent and every endpoint a
+            # fetched rather than probing the warden and every endpoint a
             # second time. It carries the digest the poll URL needs, so the pair
             # is self-timing from the first paint.
             **await backend_context(
-                status["llm"]["host_agent"], status["pipeline"], status["llm"]
+                status["llm"]["warden"], status["pipeline"], status["llm"]
             ),
         },
     )
@@ -649,7 +649,7 @@ async def queue_context(
     """Everything _admin_queue.html renders. One builder for both the full page
     and the polled partial, so the two cannot present the same queue differently.
 
-    `failed` deliberately spans every class: a failing governor is a real failure,
+    `failed` deliberately spans every class: a failing scheduler is a real failure,
     and a failure view that filtered by class would be the one place it hides.
     """
     if view not in QUEUE_VIEWS:
@@ -733,7 +733,7 @@ async def backend_context(
     live panel exists to remove.
 
     All three reads are accepted pre-fetched, because the dashboard has already
-    paid for every one of them inside `/api/status` and asking the host agent and
+    paid for every one of them inside `/api/status` and asking the warden and
     every endpoint twice for one page load is round trips spent on nothing."""
     from ..worker.control import pause_state
     from .api import api_llm_backend, llm_endpoint_view
@@ -754,7 +754,7 @@ async def backend_context(
         "failed": failed,
         "oob_llm": oob_llm,
         # Over exactly what the two cards render, per state_hash's rule — NOT over
-        # `pipeline` whole, whose `contended_at` the governor rewrites on its own
+        # `pipeline` whole, whose `contended_at` a re-announcement rewrites on its own
         # schedule and which nothing here displays. `endpoints` carries each
         # server's health and its loaded models, so a router swapping main for
         # fast moves the digest and the card follows it.
@@ -792,19 +792,29 @@ async def backend_partial(
 
 @router.get("/partials/backend-resources", response_class=HTMLResponse)
 async def backend_resources_partial(request: Request):
+    """A fresh ~3.5s sweep, which is why this is its own fragment and not part of
+    the page load (0023).
+
+    `busy_percent` is the number the panel colours against, and it is the
+    WARDEN's: it comes back on `/verdict` beside the sweep rather than out of our
+    settings, so the threshold the panel draws is the one that actually decides
+    (0057). A warden that answered `/resources` but not `/verdict` leaves it
+    None, and the template then reports the load without claiming to know where
+    the line is."""
+    verdict = await warden.verdict()
     return templates.TemplateResponse(
         request,
         "admin/_backend_resources.html",
         {
-            "resources": await host_agent.resources(),
-            "busy_percent": settings.resource_gpu_busy_percent,
+            "resources": await warden.resources(),
+            "busy_percent": ((verdict or {}).get("policy") or {}).get("gpu_busy_percent"),
         },
     )
 
 
 @router.get("/partials/backend-log", response_class=HTMLResponse)
 async def backend_log_partial(request: Request, which: str = "router"):
-    log = await host_agent.logs(which)
+    log = await warden.logs(which)
     return templates.TemplateResponse(
         request,
         "admin/_backend_log.html",
@@ -825,7 +835,7 @@ async def backend_log_partial(request: Request, which: str = "router"):
             # an EventSource against a permanently-503 route would reconnect
             # forever. Unreachable is different from unconfigured: the stream
             # rides out an agent restart, which is exactly when the log matters.
-            "agent_enabled": host_agent.enabled,
+            "agent_enabled": warden.enabled,
         },
     )
 

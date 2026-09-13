@@ -138,7 +138,7 @@ async def _held_turn(events: AsyncIterator[dict]) -> AsyncIterator[dict]:
     """Wrap a turn in the interactive lease.
 
     Claimed before the first token and refreshed for the whole turn, so the
-    governor and a pause-triggered unload leave the models alone while somebody
+    warden and a pause-triggered unload leave the models alone while somebody
     is watching them work (0037). Released at the end rather than left to expire:
     an idle rail should not hold VRAM hostage for `chat_lease_seconds` after the
     answer has already been read. Released under its own holder name, so ending a

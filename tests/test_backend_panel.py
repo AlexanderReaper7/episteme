@@ -231,10 +231,45 @@ def test_the_digest_moves_when_the_router_swaps_which_model_is_loaded():
     assert _context()["backend_hash"] != _context(UP, RUNNING, swapped)["backend_hash"]
 
 
+def _resources_card(busy_percent):
+    return templates.env.get_template("admin/_backend_resources.html").render(
+        resources={
+            "foreign_gpu_percent": 40.0,
+            "our_gpu_percent": 0.0,
+            "vram_used_mb": 900,
+            "vram_total_mb": 10240,
+            "vram_free_mb": 9340,
+            "games_running": [],
+        },
+        busy_percent=busy_percent,
+    )
+
+
+def test_the_panel_draws_the_line_the_warden_gave_it():
+    """The threshold comes back on `/verdict` and is not a setting here any more
+    (0057). 40% foreign load is loud against the warden's 25 and quiet against a
+    warden that was told 50, and the panel must agree with whichever one is
+    actually deciding rather than with a number of its own."""
+    assert "bad" in _resources_card(25.0)
+    assert "yields at 25.0%" in _resources_card(25.0)
+    assert "bad" not in _resources_card(50.0)
+
+
+def test_a_warden_that_did_not_say_where_the_line_is_gets_no_line_drawn():
+    """`/resources` answered and `/verdict` did not. Colouring against a fallback
+    would state a threshold nobody set, and `40.0 >= None` is a TypeError, which
+    is a 500 on the panel that exists to show the GPU is fine."""
+    card = _resources_card(None)
+    assert "40.0%" in card
+    assert "yields at" not in card
+    assert "bad" not in card
+
+
 def test_the_digest_ignores_pause_fields_the_panel_does_not_render():
-    """`contended_at` is rewritten by the resource governor on its own schedule
-    and appears nowhere in this panel. Hashing `pipeline` whole would re-render
-    the block - and destroy a text selection in it - on the governor's clock."""
+    """`contended_at` is re-stamped by every one of llama-warden's repeat
+    announcements and appears nowhere in this panel. Hashing `pipeline` whole
+    would re-render the block, and destroy a text selection in it, on the
+    warden's clock rather than on a change anybody can see."""
     later = {**RUNNING, "contended_at": "2026-08-16T09:05:00+00:00"}
     assert _context()["backend_hash"] == _context(UP, later)["backend_hash"]
 

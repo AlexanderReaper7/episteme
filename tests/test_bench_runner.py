@@ -60,6 +60,47 @@ def _updates(recorded: list[tuple[str, dict]], table: str) -> list[dict]:
     return [params for sql, params in recorded if "UPDATE" in sql and table in sql]
 
 
+# --- what a run boundary asks the warden -------------------------------------------
+
+
+async def test_an_absent_warden_is_not_asked_twice_at_a_run_boundary(monkeypatch):
+    """A run boundary needs two things from llama-warden, the sweep and the
+    threshold to read it by, and when the warden is down BOTH are a connect
+    timeout. Asking for the second one anyway put 15s of dead wait on each end of
+    every run, for an answer that is `DEFAULT_BUSY_PERCENT` either way. `gate`
+    has no opinion without a sweep, so there is nothing the number could change.
+    """
+    from episteme.llm.warden import warden
+
+    async def _explode():
+        raise AssertionError("the warden was asked for a verdict it cannot give")
+
+    monkeypatch.setattr(runner, "_resources", _no_resources)
+    monkeypatch.setattr(warden, "verdict", _explode)
+
+    assert await runner._environment() == (None, runner.DEFAULT_BUSY_PERCENT)
+
+
+async def test_the_threshold_that_judges_a_sweep_is_the_wardens(monkeypatch):
+    """When there IS a card to judge, the number comes off `/verdict` and not off
+    a constant here. One threshold, owned where it is measured (0057)."""
+
+    async def _busy():
+        return {"games_running": [], "foreign_gpu_percent": 9.0}
+
+    async def _verdict():
+        return {"policy": {"gpu_busy_percent": 5.0}}
+
+    from episteme.llm.warden import warden
+
+    monkeypatch.setattr(runner, "_resources", _busy)
+    monkeypatch.setattr(warden, "verdict", _verdict)
+
+    env, busy_percent = await runner._environment()
+    assert busy_percent == 5.0
+    assert "foreign GPU load" in runner.gate(env, busy_percent)
+
+
 # --- every exit path stamps the run ------------------------------------------------
 
 

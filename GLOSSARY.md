@@ -110,9 +110,13 @@ The llama-server on port 5001, holding at most one decode model.
 
 The llama-server on port 5002, a separate process from the router and always resident.
 
-### Host agent
+### llama-warden
 
-The process on the host that starts, stops and senses llama-server. It is a sensor and an actuator, never a decision maker (0023).
+The process on the host that starts, stops and senses llama-server, and decides when the GPU is contended. Its own project at `C:\selfhosting\llama-warden`, not a part of Episteme (0057). Formerly the *host agent*, which was a sensor and an actuator and never a decision maker (0023); that is the half the split reversed.
+
+### Announcement
+
+The warden's verdict, POSTed to `/api/pipeline/announce` on every transition and repeated every 300 s until it lands: `{"action": "pause"|"resume", "reason", "since", "warden"}`. **The warden decides that we stop; `worker/contention.py` decides what stopping means.** Nothing expires, so a pause survives a warden that dies (0057).
 
 ### Harness
 

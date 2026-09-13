@@ -1,7 +1,7 @@
 # 0023. The host control agent is a sensor and an actuator, never a decision-maker
 
 - Date: 2026-08-01
-- Status: accepted
+- Status: superseded by [0057](0057-the-gpu-decision-leaves-episteme.md), 2026-09-13. The agent left this repository and became llama-warden, taking the decision with it. The rule below is reversed: the process that measures is now the process that decides. Kept because the property it bought, a dead sensor leaving no opinion behind, is exactly what the split gives up, and 0057 is answerable to it.
 - Rule: `/resources` reports measurements. `worker/governor.py` owns every threshold. An agent that dies leaves no opinion behind.
 - Amended by [0041](0041-the-host-agent-applies-a-configuration-it-is-handed.md), 2026-08-15: the agent also edits `models-preset.ini` and restarts with explicit arguments. The rule above is unchanged, because the caller chooses every value; 0041 is where that line is drawn.
 - Amended by [0042](0042-the-agent-owns-one-console-hidden-behind-a-tray-icon.md), 2026-08-15: it is no longer headless. It owns a console window and a tray icon, and both llama-server windows are gone. Still no policy.

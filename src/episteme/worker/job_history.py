@@ -9,7 +9,7 @@ and 42 failed ingest jobs had been sitting unreachable behind a page that only
 ever showed the newest 50.
 
 The window is per CLASS, not per age, because age alone cannot express the thing
-that matters — a governor tick from last Tuesday is worthless and a pipeline run
+that matters — a stall sweep from last Tuesday is worthless and a pipeline run
 from last month is not. `models.job_class` is the single classifier, shared with
 the admin queue's fold so the page cannot show a class the prune has already
 dropped (or hide one it keeps).
@@ -40,7 +40,7 @@ from .app import app
 
 log = logging.getLogger("episteme.worker")
 
-# FAILURE_STATUSES share one window regardless of class: a failed governor tick is
+# FAILURE_STATUSES share one window regardless of class: a failed scheduler tick is
 # worth keeping for as long as a failed write, because both are evidence and
 # neither is routine. LIVE_STATUSES are never pruned at any age — `todo` has not
 # run and `doing`/`aborting` is running right now.

@@ -8,8 +8,7 @@ one.
 
 import pytest
 
-from episteme.bench.runner import contaminated, gate, plan_items
-from episteme.config import settings
+from episteme.bench.runner import DEFAULT_BUSY_PERCENT, contaminated, gate, plan_items
 from episteme.models import BenchmarkFixture
 from episteme.web.bench import build_params
 
@@ -77,12 +76,19 @@ def test_scenarios_that_predict_wall_time_require_a_real_fixture():
     assert plan_items("quick", ["m"], {}, None)
 
 
-def test_gate_refuses_a_contended_card_and_shrugs_at_a_missing_agent():
+def test_gate_refuses_a_contended_card_and_shrugs_at_a_missing_warden():
+    """The threshold is a PARAMETER, not a setting read in here: it belongs to
+    llama-warden, which reports it on `/verdict`, and `DEFAULT_BUSY_PERCENT` is
+    what a missing warden falls back to (0057). Two numbers meaning "the GPU is
+    busy" in two repositories would drift, and the drifting one would be ours."""
     assert gate(None) is None  # optional infrastructure: no sensor, no opinion
     assert gate({"games_running": [], "foreign_gpu_percent": 2.0}) is None
     assert "Warframe" in gate({"games_running": ["Warframe"], "foreign_gpu_percent": 0})
-    busy = {"games_running": [], "foreign_gpu_percent": settings.resource_gpu_busy_percent + 1}
+    busy = {"games_running": [], "foreign_gpu_percent": DEFAULT_BUSY_PERCENT + 1}
     assert "foreign GPU load" in gate(busy)
+    # A warden reporting a stricter threshold is obeyed, not second-guessed.
+    assert gate({"games_running": [], "foreign_gpu_percent": 5.0}) is None
+    assert "foreign GPU load" in gate({"games_running": [], "foreign_gpu_percent": 5.0}, 4.0)
 
 
 def test_contamination_asks_only_whether_something_changed():

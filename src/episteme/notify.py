@@ -13,8 +13,8 @@ header form of that is either mojibake or a 400 from the server. The JSON body i
 UTF-8 by definition, so the whole payload goes in one object posted to the base
 URL, with the topic as a field rather than a path.
 
-`ntfy_base_url` empty is the off switch, the same way `llm_host_agent_url` is for
-the host agent: nothing is sent, nothing raises, and `enabled` is what callers
+`ntfy_base_url` empty is the off switch, the same way `llm_warden_url` is for
+the warden: nothing is sent, nothing raises, and `enabled` is what callers
 check when they want to skip building a message at all.
 """
 

@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     # Failures outlive successes in every class: they are the rows you go looking
     # for, and 42 of them sat unnoticed here behind a page that only ever showed
     # the most recent 50 jobs.
-    job_history_maintenance_days: int = 2  # governor, stalled-recovery, schedulers
+    job_history_maintenance_days: int = 2  # stalled-recovery, schedulers
     job_history_ingest_days: int = 7  # ingest_all, ingest_source
     job_history_work_days: int = 90  # pipeline stages, topics, backup
     job_history_failed_days: int = 90  # any class, any non-succeeded outcome
@@ -106,26 +106,30 @@ class Settings(BaseSettings):
     llm_log_enabled: bool = True
     llm_log_retention_days: int = 30
 
-    # --- Host control agent (hostagent/llama_agent.py; llm/host.py is the client) ---
+    # --- llama-warden (C:\selfhosting\llama-warden; llm/warden.py is the client) ---
     # Episteme is in Docker, llama.cpp is on the Windows host: a container cannot
     # start a host process or read its console. This URL is that crossing — a
     # loopback service on the host exposing lifecycle, logs and GPU measurements.
-    # EMPTY DISABLES THE WHOLE FEATURE: every route, panel and the governor become
-    # no-ops and Episteme behaves exactly as it did before the agent existed. The
-    # agent is optional infrastructure, never a dependency.
-    llm_host_agent_url: str = ""  # e.g. http://host.docker.internal:5003
+    # EMPTY DISABLES THE WHOLE FEATURE: every route and panel becomes a no-op and
+    # Episteme behaves exactly as it did before the warden existed. It is optional
+    # infrastructure, never a dependency (0057).
+    #
+    # Nothing here decides when to yield the GPU. The warden measures and decides;
+    # what reaches us is an announcement on POST /api/pipeline/announce, applied by
+    # worker/contention.py. The thresholds live in the warden's own warden.toml.
+    llm_warden_url: str = ""  # e.g. http://host.docker.internal:5003
     # Three timeouts, because reads and actions want opposite things (see
-    # llm/host.py). Reads are on the dashboard's critical path — /status rides
+    # llm/warden.py). Reads are on the dashboard's critical path — /status rides
     # the page load, /logs is polled once a second behind the log stream — so a
-    # hung agent must give up in seconds rather than take the admin page down
+    # hung warden must give up in seconds rather than take the admin page down
     # with it.
-    llm_host_agent_read_timeout_seconds: float = 15.0
+    llm_warden_read_timeout_seconds: float = 15.0
     # Actions block until the host has finished: the agent holds /start until
     # both ports answer (launcher 120s + port wait 60s worst case), so a ceiling
     # sized like a read would report a successful start as a failure.
-    llm_host_agent_timeout_seconds: float = 240.0
+    llm_warden_timeout_seconds: float = 240.0
     # /restart is a stop and a start inside one request, so ~the sum of both.
-    llm_host_agent_restart_timeout_seconds: float = 360.0
+    llm_warden_restart_timeout_seconds: float = 360.0
     llm_log_tail_lines: int = 300
     # How often the log stream asks the agent for the bytes written since its
     # last offset. This is the browser-invisible leg: the pane is pushed over
@@ -158,33 +162,11 @@ class Settings(BaseSettings):
     # server measured, since truncation is character-proportional and every model
     # tokenizes differently.
     bench_ladder_rungs: list[int] = [2048, 4096, 8192, 16384, 32768]
-    # A benchmark holds the interactive lease so the governor cannot unload the
+    # A benchmark holds the interactive lease so a warden pause cannot unload the
     # model underneath it. Longer than a chat turn's (a run is minutes to hours)
     # but still a TTL, refreshed by a background task: a worker that dies must
     # not strand the GPU until someone notices.
     bench_lease_seconds: float = 300.0
-
-    # --- Resource governor (worker/governor.py; architecture §7 "Scheduling") ---
-    # Yields the GPU to whatever else is using it. The rule the user set: other
-    # work takes priority, but only where Episteme would *noticeably* degrade it —
-    # so this measures resource contention, NOT whether someone is at the keyboard.
-    # Requires llm_host_agent_url; inert without it.
-    resource_governor_enabled: bool = False
-    resource_governor_cron: str = "*/2 * * * *"
-    # Foreign GPU utilization (everything except our own llama-server processes)
-    # at which we yield. Per-process attribution makes this valid even while we
-    # are generating, which is what lets it work as a pause signal and not just a
-    # start gate.
-    resource_gpu_busy_percent: float = 25.0
-    # Headroom needed to load a decode model. Only consulted when our own models
-    # are UNLOADED: VRAM cannot be attributed per process (measured — the Windows
-    # counter reported 22GB for dwm on a 10GB card), so while we hold models the
-    # number says nothing about contention and is ignored rather than guessed at.
-    resource_min_free_vram_mb: int = 6000
-    # How long the GPU must stay quiet before a resource pause lifts. Asymmetric
-    # on purpose: yield immediately, return slowly, so a lull between two loading
-    # screens doesn't restart a 20GB model load on top of a running game.
-    resource_resume_quiet_seconds: int = 300
 
     # --- Pipeline ---
     pipeline_cron: str = "0 3 * * *"  # nightly; idle-aware gating comes in Phase 5
@@ -399,7 +381,7 @@ class Settings(BaseSettings):
 
     # --- Notifications (ntfy; 0056) ---
     # Empty base URL is the off switch for every push: nothing is built, nothing
-    # is sent, and no job fails for it. The same shape as llm_host_agent_url.
+    # is sent, and no job fails for it. The same shape as llm_warden_url.
     ntfy_base_url: str = ""  # e.g. https://ntfy.example.ts.net
     ntfy_token: str = ""  # tk_... ; sent as Authorization: Bearer
     # Two topics, defaulting to the same one. Splitting them is how the phone

@@ -30,11 +30,11 @@
     <span class="muted mono log-status" data-log-status></span>
   </div>
   {% if not agent_enabled %}
-  <p class="muted" style="font-size: 0.82rem;">Log unavailable - no control agent is configured.</p>
+  <p class="muted" style="font-size: 0.82rem;">Log unavailable - no warden is configured.</p>
   {% else %}
   {% if not log %}
   <p class="muted" style="font-size: 0.82rem;" data-log-note>
-    Control agent unreachable - the pane fills as soon as it answers.
+    llama-warden unreachable - the pane fills as soon as it answers.
   </p>
   {% elif not log.exists %}
   {# Expected before the first start after the launcher gained --log-file. #}
@@ -43,7 +43,7 @@
   </p>
   {% endif %}
   {# Present even when the snapshot came back empty: the stream keeps trying, so
-     a log that appears (or an agent that comes back) fills this without a
+     a log that appears (or a warden that comes back) fills this without a
      reload - which the old poll gave us and must not be lost. #}
   <div class="log-pane"><pre class="mono" data-log-stream="/api/llm/logs/stream?which={{ which }}{% if since is not none %}&amp;since={{ since }}{% endif %}"
        data-log-lines="{{ log.lines | length if log else 0 }}">{% if log %}{{ log.lines | join('\n') }}{% endif %}</pre></div>

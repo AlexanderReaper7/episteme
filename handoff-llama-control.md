@@ -6,6 +6,15 @@ why the shape is what it is. **CLAUDE.md is now the authority on what exists** โ
 read it for the as-built description, the three defects found live, and the cost
 budget. This section records only where the build *diverged* from the plan below.
 
+**Superseded in part on 2026-09-13 (0057).** The agent left this repository and
+became llama-warden at `C:\selfhosting\llama-warden`, taking the decision with
+it, so `hostagent/llama_agent.py` in ยง1 below is now `src/warden/` over there.
+Point 3, "pull, not push", is **reversed**: the warden pushes its verdict to
+`/api/pipeline/announce` and Episteme no longer polls or holds a threshold. The
+entries below are left as they were written, because the argument point 3 makes
+for pull is the thing 0057 had to answer, and a rewritten record cannot be
+argued with.
+
 **Audience:** the next agent picking this up. Read [CLAUDE.md](CLAUDE.md) and
 [episteme-architecture.md](episteme-architecture.md) first; this document assumes them.
 

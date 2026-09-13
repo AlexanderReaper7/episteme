@@ -11,7 +11,7 @@
    `hx-target="this"`: .admin-main sets an inherited hx-target, see _backend_log.html.
 
    5s, because llama-server's start is not instantaneous and its end is not
-   announced - the agent can be killed from the host, a driver reset can take the
+   announced - the warden can be killed from the host, a driver reset can take the
    router down, and until this polled the panel went on claiming "up since 09:12"
    until somebody reloaded. Cheap: /status costs ~1ms and skips its PowerShell
    subprocess entirely when nothing is listening, which is the case it is most
@@ -25,13 +25,13 @@
      hx-trigger="every 5s"
      hx-target="this" hx-swap="outerHTML"
      hx-sync="closest #backend:drop">
-  {# The agent is optional infrastructure: it being down must degrade this panel,
+  {# The warden is optional infrastructure: it being down must degrade this panel,
      not the dashboard. Inference is unaffected either way - llama.cpp does not
-     need the agent to serve requests, only to be started and watched. #}
+     need the warden to serve requests, only to be started and watched. #}
   {% if not backend.status %}
-  <p class="muted">Control agent unreachable at <code class="mono">{{ backend.url }}</code>.
+  <p class="muted">llama-warden unreachable at <code class="mono">{{ backend.url }}</code>.
      Inference is unaffected; lifecycle and logs are unavailable until it is running:
-     <code class="mono">uv run hostagent/llama_agent.py</code></p>
+     <code class="mono">uv run python -m warden</code> in C:\selfhosting\llama-warden</p>
   {% else %}
   <ul class="endpoint-list">
     {% for name, srv in backend.status.servers.items() %}
@@ -56,7 +56,7 @@
   {% if pipeline and pipeline.paused %}
   <p class="muted" style="font-size: 0.82rem;">
     <span class="bad">pipeline paused</span>
-    {%- if pipeline.reason == 'resource' %} - GPU busy (resource governor)
+    {%- if pipeline.reason == 'resource' %} - GPU busy (llama-warden)
     {%- else %} - manual{% endif %}
     {%- if pipeline.since %} · since {{ pipeline.since | dt }}{% endif %}
     · resume it on <a href="/admin/jobs">jobs</a>
@@ -64,7 +64,7 @@
   {% endif %}
 
   {# Every button here blocks on the host for as long as the host takes: the
-     agent holds /start until both ports answer, and /restart is a stop and a
+     warden holds /start until both ports answer, and /restart is a stop and a
      start in sequence. So each carries a busy glyph that CSS swaps in while the
      request is in flight (.backend-controls in style.css) - `hx-disabled-elt`
      alone greys nothing, and a dead-looking button is indistinguishable from one

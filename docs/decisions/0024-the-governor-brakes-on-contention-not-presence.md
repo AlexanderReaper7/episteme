@@ -1,7 +1,7 @@
 # 0024. The resource governor brakes on contention, not on presence, and a pause has an author
 
 - Date: 2026-08-01
-- Status: accepted
+- Status: half superseded by [0057](0057-the-gpu-decision-leaves-episteme.md), 2026-09-13. The policy (contention not presence, yield fast and resume slow, every threshold) left with llama-warden and is its 0001. What stayed here is the pause's AUTHOR: `RESOURCE` is still the only reason the warden may clear, and the four defects below are still the regressions `tests/test_contention.py` guards.
 - Rule: `RESOURCE` is the only pause reason the governor may clear. Yield immediately, resume slowly.
 
 ## Context

@@ -115,7 +115,7 @@ def test_schedulers_share_the_maintenance_window():
 
 
 def test_failures_outlive_the_successes_of_their_own_class():
-    """A failed governor tick is evidence; a succeeded one is noise. The failure
+    """A failed scheduler tick is evidence; a succeeded one is noise. The failure
     sweep runs across every class against its own window precisely so a failure
     is not deleted after two days by the class it happens to belong to."""
     cutoffs = prune_cutoffs(

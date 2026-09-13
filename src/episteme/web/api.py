@@ -14,14 +14,14 @@ from typing import Annotated
 from urllib.parse import urlsplit
 
 from croniter import croniter
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Body, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from sqlalchemy import and_, func, or_, select, text, update
 
 from ..config import settings
 from ..db import SessionLocal
 from ..llm import gateway
-from ..llm.host import HostAgentError, host_agent
+from ..llm.warden import WardenError, warden
 from ..models import (
     JOB_CLASS_INGEST,
     JOB_CLASS_MAINTENANCE,
@@ -301,14 +301,14 @@ async def api_status():
             # Lifecycle/process facts, not inference facts — and cheap: the agent
             # skips its subprocess entirely when nothing is listening. `/resources`
             # is deliberately NOT here; it costs ~3.5s and has its own route.
-            "host_agent": {
-                "enabled": host_agent.enabled,
-                "url": settings.llm_host_agent_url,
-                "status": await host_agent.status(),
+            "warden": {
+                "enabled": warden.enabled,
+                "url": settings.llm_warden_url,
+                "status": await warden.status(),
             },
         },
         # `reason` is what lets the UI distinguish "you paused this" from "the
-        # governor paused this because the GPU was busy".
+        # warden paused this because the GPU was busy".
         "pipeline": pause,
         "stories": story_counts,
         "source_items": {"total": item_total, "unembedded": unembedded},
@@ -621,7 +621,7 @@ async def api_defer(
 
 async def _pipeline_job_running() -> bool:
     """Session wrapper over the shared predicate in `worker.control` — the
-    governor asks the same question and must get the same answer."""
+    announcement applier asks the same question and must get the same answer."""
     from ..worker.control import pipeline_job_running
 
     async with SessionLocal() as session:
@@ -630,7 +630,7 @@ async def _pipeline_job_running() -> bool:
 
 @router.post("/pipeline/pause")
 async def api_pipeline_pause():
-    """Pause LLM pipeline work (for a resource governor or manually). A running
+    """Pause LLM pipeline work by hand. A running
     worker stops at the next unit boundary — one story/post/batch — and unloads
     the decode models itself; if nothing is running, models are unloaded now.
     The flag persists until /pipeline/resume, so scheduled runs stay no-ops."""
@@ -667,6 +667,33 @@ async def api_pipeline_resume(run: bool = Query(True)):
     return {"paused": False, "job_id": job_id}
 
 
+@router.post("/pipeline/announce")
+async def api_pipeline_announce(announcement: Annotated[dict, Body(...)]):
+    """llama-warden's verdict, pushed here on every transition (0057).
+
+    `{"action": "pause"|"resume", "reason": str, "since": str, "warden": str}`.
+    Only `action` is required — the rest is the warden explaining itself, and a
+    consumer that refused the message over a missing field would be paused, or
+    running, for the wrong reason.
+
+    Open, like every other route here: single-user, tailnet only, no auth. The
+    warden reaches it over loopback from the host.
+
+    **Idempotent**, which is a contract and not an implementation detail: the
+    warden re-sends its verdict every 300 s until it changes, so applying `pause`
+    to an already-paused pipeline must not re-stamp when the pause began. See
+    `worker/contention.py` for what each branch does and why."""
+    from ..worker.contention import apply_announcement
+
+    action = (announcement.get("action") or "").strip().lower()
+    reason = announcement.get("reason") or "no reason given"
+    try:
+        async with SessionLocal() as session:
+            return await apply_announcement(session, action, reason)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
 @router.post("/llm/unload")
 async def api_llm_unload(force: bool = Query(False)):
     """Unload all decode models immediately (frees VRAM). Standalone lever —
@@ -690,18 +717,18 @@ async def api_llm_unload(force: bool = Query(False)):
 
 # --- llama.cpp backend lifecycle (via the host control agent) ----------------------
 #
-# Every route here is a thin pass-through to hostagent/llama_agent.py, except the
+# Every route here is a thin pass-through to llama-warden's own service, except the
 # stop, which is composed from parts that already exist. All of them 503 rather
 # than 500 when the agent is absent: an optional component being absent is a
 # service state, not a server error.
 
 
 async def _agent_call(coro):
-    """Turn HostAgentError into a 503. One helper so every lifecycle route
+    """Turn WardenError into a 503. One helper so every lifecycle route
     reports an unreachable agent the same way."""
     try:
         return await coro
-    except HostAgentError as exc:
+    except WardenError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
@@ -711,9 +738,9 @@ async def api_llm_backend():
     and uptime. Complements /api/status's endpoint probes, which answer the
     different question of whether the HTTP API responds."""
     return {
-        "enabled": host_agent.enabled,
-        "url": settings.llm_host_agent_url,
-        "status": await host_agent.status(),
+        "enabled": warden.enabled,
+        "url": settings.llm_warden_url,
+        "status": await warden.status(),
     }
 
 
@@ -722,9 +749,9 @@ async def api_llm_resources():
     """GPU contention measurements from the host. Its own route because it costs
     ~3.5s (the per-process GPU counter has an irreducible sampling floor), so it
     must never sit on the critical path of a page load."""
-    resources = await host_agent.resources()
+    resources = await warden.resources()
     if resources is None:
-        raise HTTPException(status_code=503, detail="Host agent unavailable")
+        raise HTTPException(status_code=503, detail="llama-warden unavailable")
     return resources
 
 
@@ -737,9 +764,9 @@ async def api_llm_logs(
     """A snapshot. `since` (a previous `next_offset`) asks for only what was
     written after it — the same delta the stream below is built on, for scripts
     that would rather poll than hold a connection open."""
-    logs = await host_agent.logs(which, tail, since)
+    logs = await warden.logs(which, tail, since)
     if logs is None:
-        raise HTTPException(status_code=503, detail="Host agent unavailable")
+        raise HTTPException(status_code=503, detail="llama-warden unavailable")
     return logs
 
 
@@ -763,7 +790,7 @@ async def api_llm_logs_stream(
 
     **The browser is pushed to; only the container→host leg polls.** A `tail -f`
     held open across the Docker boundary would put a long-lived connection on
-    the optional, restartable host agent and give it a tailing loop in a
+    the optional, restartable warden and give it a tailing loop in a
     threadpool worker, to save a delta read that is a file seek. The offset
     protocol makes that leg stateless and idempotent instead, and it is the same
     one `GET /llm/logs?since=` exposes.
@@ -783,8 +810,8 @@ async def api_llm_logs_stream(
     which SSE dispatches onto the same handler as EventSource's own transport
     error — one of which carries `data` and one of which does not.
     """
-    if not host_agent.enabled:
-        raise HTTPException(status_code=503, detail="Host agent unavailable")
+    if not warden.enabled:
+        raise HTTPException(status_code=503, detail="llama-warden unavailable")
 
     interval = settings.llm_log_stream_interval_seconds
 
@@ -795,11 +822,11 @@ async def api_llm_logs_stream(
         replace = since is None
         silent = 0.0
         while not await request.is_disconnected():
-            payload = await host_agent.logs(which, since=offset)
+            payload = await warden.logs(which, since=offset)
             if payload is None:
                 yield _sse(
                     "unavailable",
-                    {"detail": f"Control agent unreachable at {settings.llm_host_agent_url}"},
+                    {"detail": f"Control agent unreachable at {settings.llm_warden_url}"},
                 )
                 silent = 0.0
             else:
@@ -845,12 +872,12 @@ async def api_llm_logs_stream(
 async def api_llm_backend_start():
     """Start llama.cpp. Idempotent at the agent — two rapid clicks cannot produce
     two routers."""
-    return await _agent_call(host_agent.start())
+    return await _agent_call(warden.start())
 
 
 @router.post("/llm/backend/restart")
 async def api_llm_backend_restart():
-    return await _agent_call(host_agent.restart())
+    return await _agent_call(warden.restart())
 
 
 @router.post("/llm/backend/stop")
@@ -872,17 +899,17 @@ async def api_llm_backend_stop(force: bool = Query(False)):
     **The pause is a side effect, so it is only taken once the stop can plausibly
     happen and it is undone if it doesn't.** The agent is optional and often
     absent; pausing first meant an unreachable agent 503'd *after* leaving the
-    pipeline paused as MANUAL — which the governor is forbidden to lift — with
+    pipeline paused as MANUAL — which the warden is forbidden to lift — with
     nothing stopped and no llama.cpp problem to explain it. So: pre-flight the
     agent before writing anything, and roll the flag back to exactly what it was
     if the kill itself fails. Only the timeout path deliberately keeps it.
     """
     from ..worker.control import pause_state, restore_pause, set_paused
 
-    if not host_agent.enabled:
-        raise HTTPException(status_code=503, detail="No host agent configured")
-    if await host_agent.status() is None:
-        raise HTTPException(status_code=503, detail="Host agent unavailable")
+    if not warden.enabled:
+        raise HTTPException(status_code=503, detail="No warden configured")
+    if await warden.status() is None:
+        raise HTTPException(status_code=503, detail="llama-warden unavailable")
 
     async with SessionLocal() as session:
         before = await pause_state(session)
@@ -909,7 +936,7 @@ async def api_llm_backend_stop(force: bool = Query(False)):
         waited += 2.0
 
     try:
-        result = await _agent_call(host_agent.stop())
+        result = await _agent_call(warden.stop())
     except HTTPException:
         await _rollback()
         raise

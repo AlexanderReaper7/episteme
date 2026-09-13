@@ -15,12 +15,15 @@
     <div class="mini-row">
       <dt class="mini-row-label">other GPU load</dt>
       <dd class="mini-row-value">
-        {# The number the governor actually decides on: total utilization minus
+        {# The number the warden actually decides on: total utilization minus
            our own llama-server processes. #}
-        <span class="{{ 'bad' if resources.foreign_gpu_percent >= busy_percent else 'ok' }}">
+        <span class="{{ 'bad' if busy_percent and resources.foreign_gpu_percent >= busy_percent else 'ok' }}">
           {{ resources.foreign_gpu_percent }}%
         </span>
-        <span class="muted">· ours {{ resources.our_gpu_percent }}% · yields at {{ busy_percent }}%</span>
+        {# The threshold is the warden's and arrives with its verdict (0057). A
+           warden that answered the sweep but not the verdict leaves it unset,
+           and then the load is reported without a line drawn under it. #}
+        <span class="muted">· ours {{ resources.our_gpu_percent }}%{% if busy_percent %} · yields at {{ busy_percent }}%{% endif %}</span>
       </dd>
     </div>
     <div class="mini-row">
@@ -34,7 +37,7 @@
     <div class="mini-row">
       <dt class="mini-row-label">games running</dt>
       {# From Windows' own Game Bar catalogue, so it needs no hand-maintained
-         list. Context for a human reading the panel - the governor decides on
+         list. Context for a human reading the panel - the warden decides on
          measured load, not on this. #}
       <dd class="mini-row-value">{{ resources.games_running | join(', ') }}</dd>
     </div>

@@ -1,4 +1,4 @@
-"""Client for the host-side control agent (`hostagent/llama_agent.py`).
+"""Client for llama-warden, the process that owns llama.cpp on the host.
 
 Deliberately a separate module from `gateway.py`. The gateway is the inference
 choke point; process lifecycle is a different concern, and folding it in would
@@ -11,7 +11,7 @@ Two failure conventions, split by what the caller can do about it:
   or the agent is unreachable. A status panel must render a missing agent, not
   raise — and "the agent is down" is a normal state, since it is optional
   infrastructure that Episteme is designed to run without.
-* **Actions** (`start`, `stop`, `restart`) raise `HostAgentError`. A start button
+* **Actions** (`start`, `stop`, `restart`) raise `WardenError`. A start button
   that silently does nothing is worse than one that says why it failed.
 
 The same split governs the timeouts, which is why there are three rather than
@@ -26,7 +26,7 @@ own rather than inheriting one sized for a single leg. A client timeout shorter
 than the work it is waiting on renders a *success* as a failure — with the
 processes running.
 
-`llm_host_agent_url` empty is the off switch for all of it.
+`llm_warden_url` empty is the off switch for all of it.
 """
 
 import logging
@@ -35,51 +35,51 @@ import httpx
 
 from ..config import settings
 
-log = logging.getLogger("episteme.llm.host")
+log = logging.getLogger("episteme.llm.warden")
 
 
-class HostAgentError(Exception):
+class WardenError(Exception):
     """The agent is off, unreachable, or refused the action."""
 
 
-class HostAgent:
+class Warden:
     def __init__(self) -> None:
         self._client: httpx.AsyncClient | None = None
         self._client_url: str | None = None
 
     @property
     def enabled(self) -> bool:
-        return bool(settings.llm_host_agent_url)
+        return bool(settings.llm_warden_url)
 
     def _http(self) -> httpx.AsyncClient:
         """One cached client, rebuilt if the configured URL changes (which it
         does between tests, and would on a config reload). Every call passes its
         own timeout, so the client-level one is only a backstop."""
-        url = settings.llm_host_agent_url.rstrip("/")
+        url = settings.llm_warden_url.rstrip("/")
         if self._client is None or self._client_url != url:
             self._client = httpx.AsyncClient(
-                base_url=url, timeout=settings.llm_host_agent_read_timeout_seconds
+                base_url=url, timeout=settings.llm_warden_read_timeout_seconds
             )
             self._client_url = url
         return self._client
 
     async def _request(self, method: str, path: str, *, timeout: float, **kwargs) -> dict:
         if not self.enabled:
-            raise HostAgentError("No host agent configured (set LLM_HOST_AGENT_URL)")
+            raise WardenError("No warden configured (set LLM_WARDEN_URL)")
         try:
             response = await self._http().request(method, path, timeout=timeout, **kwargs)
             response.raise_for_status()
             return response.json()
         except Exception as exc:  # transport, status, or an unparseable body
-            raise HostAgentError(f"{type(exc).__name__}: {exc}") from exc
+            raise WardenError(f"{type(exc).__name__}: {exc}") from exc
 
     async def _read(self, path: str, **kwargs) -> dict | None:
         try:
             return await self._request(
-                "GET", path, timeout=settings.llm_host_agent_read_timeout_seconds, **kwargs
+                "GET", path, timeout=settings.llm_warden_read_timeout_seconds, **kwargs
             )
-        except HostAgentError as exc:
-            log.debug("Host agent read %s failed: %s", path, exc)
+        except WardenError as exc:
+            log.debug("Warden read %s failed: %s", path, exc)
             return None
 
     async def _action(
@@ -88,7 +88,7 @@ class HostAgent:
         return await self._request(
             "POST",
             path,
-            timeout=timeout or settings.llm_host_agent_timeout_seconds,
+            timeout=timeout or settings.llm_warden_timeout_seconds,
             **({"json": json} if json is not None else {}),
         )
 
@@ -99,11 +99,25 @@ class HostAgent:
         return await self._read("/status")
 
     async def resources(self) -> dict | None:
-        """GPU contention measurements. ~3.5s on the target box (the per-process
-        GPU counter has an irreducible PDH sampling floor), so callers must not
-        put this on a synchronous page load — the admin panel fetches it as its
-        own htmx fragment and the governor polls it on a cron."""
+        """A FRESH measurement. ~3.5s on the target box (the per-process GPU
+        counter has an irreducible PDH sampling floor), so callers must not put
+        this on a synchronous page load — the admin panel fetches it as its own
+        htmx fragment, and a benchmark takes one at its run boundaries.
+
+        `verdict()` is the cheap read: it returns the warden's own last sweep
+        with no new one taken. Ask for this only when a fresh number is the
+        point."""
         return await self._read("/resources")
+
+    async def verdict(self) -> dict | None:
+        """What the warden last decided, and the policy it decided with.
+
+        Cheap: the warden measures on its own 30s thread and this is what that
+        thread cached, so nothing here pays the 3.5s probe. `policy` is how the
+        one "the GPU is busy" threshold reaches us without being copied into
+        Episteme's settings (0057) — two numbers meaning the same thing would
+        drift, which is the argument 0024 made and the split did not change."""
+        return await self._read("/verdict")
 
     async def logs(
         self, which: str = "router", tail: int | None = None, since: int | None = None
@@ -143,7 +157,7 @@ class HostAgent:
         to the operator as a failure."""
         return await self._action(
             "/restart",
-            timeout=settings.llm_host_agent_restart_timeout_seconds,
+            timeout=settings.llm_warden_restart_timeout_seconds,
             json={"extra_args": extra_args or []},
         )
 
@@ -171,4 +185,4 @@ class HostAgent:
         return await self._action("/preset/restore", json={"backup": backup})
 
 
-host_agent = HostAgent()
+warden = Warden()

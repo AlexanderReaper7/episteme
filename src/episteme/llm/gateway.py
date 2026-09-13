@@ -123,7 +123,7 @@ def holds_vram(model: dict) -> bool:
     plain single-model server reports nothing, which counts as holding nothing.
     Everything else counts as loaded, and that deliberately includes the
     transient `loading`: a model halfway into VRAM occupies it just as much as a
-    resident one, and reading it as free is what let the governor pause and
+    resident one, and reading it as free is what let a governor pause and
     unload the model it was in the middle of loading."""
     return ((model.get("status") or {}).get("value")) not in (None, "unloaded")
 

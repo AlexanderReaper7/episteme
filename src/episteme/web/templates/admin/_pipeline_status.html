@@ -16,11 +16,11 @@
   <p class="pipeline-state">
     <span class="bad">{{ ico.icon("pause") }} pipeline paused</span>
     {# Say WHO paused it. A pipeline that stopped on its own is indistinguishable
-       from a broken one unless the panel names the resource governor as the cause. #}
+       from a broken one unless the panel names llama-warden as the cause. #}
     {% if status.pipeline.reason == 'resource' %}
-    <span class="muted">by the resource governor, another program is using the GPU. It will resume on its own once the GPU is quiet.</span>
+    <span class="muted">by llama-warden, another program is using the GPU. It will resume when the warden says the GPU is quiet again.</span>
     {% else %}
-    <span class="muted">by hand. The governor will not lift this; only the resume button will.</span>
+    <span class="muted">by hand. llama-warden will not lift this; only the resume button will.</span>
     {% endif %}
     {% if status.pipeline.since %}<span class="muted">· since {{ status.pipeline.since | dt }} ({{ status.pipeline.since | ago }})</span>{% endif %}
   </p>

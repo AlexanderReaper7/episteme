@@ -34,7 +34,7 @@ from ..bench.fixtures import capture
 from ..bench.runner import SCENARIOS, create_run
 from ..config import settings
 from ..db import SessionLocal
-from ..llm.host import host_agent
+from ..llm.warden import warden
 from ..models import BenchmarkFixture, BenchmarkRun, BenchmarkSample
 from .templating import POLL_HEADERS, render, state_hash, templates, unchanged
 
@@ -156,7 +156,7 @@ async def _index_context() -> dict:
             "fixtures": await _fixtures(session),
             "models": await _available_models(),
             "scenarios": SCENARIOS,
-            "agent_enabled": host_agent.enabled,
+            "agent_enabled": warden.enabled,
             "defaults": {
                 "predict": settings.bench_predict_tokens,
                 "rungs": ", ".join(str(rung) for rung in settings.bench_ladder_rungs),
@@ -284,9 +284,9 @@ async def benchmarks_run(request: Request):
         params = build_params(dict(form))
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
-    if scenario == "sweep" and not host_agent.enabled:
+    if scenario == "sweep" and not warden.enabled:
         raise HTTPException(
-            422, "A sweep restarts llama-server, which needs the host agent (LLM_HOST_AGENT_URL)"
+            422, "A sweep restarts llama-server, which needs llama-warden (LLM_WARDEN_URL)"
         )
 
     async with SessionLocal() as session:

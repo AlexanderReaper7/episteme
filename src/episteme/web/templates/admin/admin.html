@@ -14,14 +14,14 @@
        partial is a plain section; the poll returns it marked hx-swap-oob. #}
     {% include "admin/_llm_endpoints.html" with context %}
 
-    {# Only rendered when a host agent is configured. With LLM_HOST_AGENT_URL
+    {# Only rendered when a warden is configured. With LLM_WARDEN_URL
        empty the dashboard is exactly what it was before this feature existed -
        the agent is optional infrastructure, not a dependency. #}
-    {% if status.llm.host_agent.enabled %}
+    {% if status.llm.warden.enabled %}
     <section class="admin-card admin-card-wide">
       <div class="admin-card-head">
         <h2>llama.cpp backend</h2>
-        <span class="muted mono">{{ status.llm.host_agent.url }}</span>
+        <span class="muted mono">{{ status.llm.warden.url }}</span>
       </div>
       {# `backend`, `pipeline` and `backend_hash` come from admin.backend_context,
          the same builder the action handlers and the status poll use - so the

@@ -562,11 +562,11 @@ def _user_first(stories: Sequence[Story]) -> list[Story]:
 def _pause_stops(story: Story) -> bool:
     """Whether a pause is a reason not to write THIS story.
 
-    A pause brakes work the machine chose to do: the governor saw GPU contention,
+    A pause brakes work the machine chose to do: the warden saw GPU contention,
     or you said stop. A story with `origin="user"` is neither. You approved a card
     and that approval deferred the write, so it is foreground work in the same
     sense a chat turn is. The pause it would otherwise wait behind is often one
-    the request itself provoked, since the governor reads the chat turn's own GPU
+    the request itself provoked, since the warden reads the chat turn's own GPU
     load as contention (observed 2026-08-12: the approval deferred job 43858,
     which succeeded in 0.068s having written nothing).
 
@@ -574,7 +574,7 @@ def _pause_stops(story: Story) -> bool:
     of `_rank_write_queue`'s exits, so "the reader's request does not wait" is one
     rule rather than a property of one code path.
 
-    This overrides a *deliberate* pause too, not only the governor's. Asking for
+    This overrides a *deliberate* pause too, not only the warden's. Asking for
     an article is the newer instruction, and a request that silently does nothing
     is the failure mode 0037 is trying to avoid; the writer says so either way,
     because `_write_article_from_url` reports the pause in the same breath.

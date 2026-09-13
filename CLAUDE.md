@@ -20,7 +20,7 @@ Phases 1 to 4 are built and live. "Live" and "tested" are different claims:
 | agentic writer, vision QA (2.5) | live |
 | rich content sections (3) | write path live-verified 2026-07-19 |
 | recommendation, feed ranking (4) | live since 2026-07-30 |
-| host control agent, resource governor | live-verified 2026-08-01 |
+| llama-warden, the pause it announces (0057) | split out of this repo 2026-09-13. Live-verified the same day with a game on the card: the warden paused us, repeated at 300s moving `contended_at` and not `since`, was killed mid-pause and left us correctly paused with a frozen clock, and a restarted warden re-announced into it without re-authoring the pause. The warden-driven RESUME is still unwatched |
 | assistant rail, reader-requested articles (5) | built 2026-08-11, NOT yet watched running |
 | benchmarks (`quick`) | live-verified 2026-08-15; `ladder`/`longctx`/`sweep` built, not watched |
 | correspondents, Glance, Matsedel (0046) | live-verified 2026-08-29: two scrapes, four kitchens, five filed posts; a re-read that carries no menu keeps what is stored |
@@ -34,7 +34,7 @@ Phases 1 to 4 are built and live. "Live" and "tested" are different claims:
 Operational facts with no other home:
 
 - `EMBEDDING_DIM` is **1024**: the 4B embedder's 2560 truncated and re-normalized by the gateway. `cluster_similarity_threshold` (0.82) is tuned against truncated vectors, so re-tune it if the dimension changes (0004). Models: `Octen-Embedding-4B.Q8_0` (default `embed` role), `Octen-Embedding-0.6B.f16` (faster).
-- llama-server comes from `C:\selfhosting\llama-cpp\launch-llama-v2.ps1 server`, started either by the user or by the host agent, which shells out to the same script with `-Detached` (0023). It brings up **two** processes: the router on 5001 (main and fast, swapped on demand) and a dedicated always-resident embed server on 5002. Containers reach both at `host.docker.internal`. Per-model flags, MTP, KV quant, `--embeddings`, `mmproj` live in `models-preset.ini` beside the launcher, in sections keyed by GGUF name minus extension. `launch-llama.ps1` is the superseded v1.
+- llama-server comes from `C:\selfhosting\llama-cpp\launch-llama-v2.ps1 server`, started either by the user or by llama-warden, which shells out to the same script with `-Detached` (0023, 0057). It brings up **two** processes: the router on 5001 (main and fast, swapped on demand) and a dedicated always-resident embed server on 5002. Containers reach both at `host.docker.internal`. Per-model flags, MTP, KV quant, `--embeddings`, `mmproj` live in `models-preset.ini` beside the launcher, in sections keyed by GGUF name minus extension. `launch-llama.ps1` is the superseded v1.
 - At most one decode model in VRAM, and embed is a **separate server** rather than a third model in the router, because `--models-max` counts models globally with no per-model exemption: capping it at 1, which is what keeps main and fast from ever sharing VRAM, would evict the embedder. The embed model is CPU-only (`--n-gpu-layers 0`). Both are enforced host-side, not in this repo. `LLM_EMBED_BASE_URL=""` serves embeds from the router again.
 - **Qwopus is a reasoner**: a 60-token cap returns EMPTY content with the whole budget spent on `reasoning_content`. Give vision calls room before concluding vision is broken (0009).
 - Postgres is published to the host at `127.0.0.1:5433` (5432 was taken) for pgAdmin. Credentials in `.env`.
@@ -99,9 +99,14 @@ GET    /api/jobs?status=failed&class=work&limit=20 # scheduler|maintenance|inges
 
 # Pause persists a flag; the worker stops at the next unit boundary and unloads
 # the decode models. Resume defers a pipeline run unless ?run=false. A pause
-# records its author; the governor may only clear its own (0024).
+# records its author; llama-warden may only clear its own (0024).
 POST   /api/pipeline/pause
 POST   /api/pipeline/resume
+# The warden's verdict, pushed on every transition and repeated every 300s until
+# it lands (0057). worker/contention.py decides what stopping MEANS; the warden
+# decided THAT we stop. 422 on an action that is neither word - a 500 would read
+# as "retry" and it would retry the same unusable word forever.
+POST   /api/pipeline/announce  # {"action":"pause"|"resume","reason":...}
 # 409 while an interactive chat turn holds the lease; ?force=true to insist. Every
 # AUTOMATIC unload goes through control.unload_unless_interactive instead (0037).
 POST   /api/llm/unload  # free VRAM now, no pause
@@ -121,23 +126,12 @@ POST   /chat/turn  # form field `text`, ?post_id= for "the article I am reading"
 POST   /chat/proposal/{id}/resolve?approve=true  # the ONLY path to a write handler
 GET    /api/posts/search?q=deep-sea+biology&limit=5  # semantic + literal, merged
 
-# llama.cpp lifecycle, logs and GPU sensing via the host agent (0023). It runs on
-# the HOST, not in compose; everything here 503s cleanly when it is absent. Set
-# LLM_HOST_AGENT_URL=http://host.docker.internal:5003 in .env. It has a tray icon
-# and one console window, born hidden, shown from the tray (0042). Its deps live
-# in llama_agent.py's PEP-723 header; console.py must NOT grow one of its own.
-#   pwsh hostagent/install-task.ps1   # scheduled task at logon (-Remove, -Force)
-#   uv run hostagent/llama_agent.py   # or a console; log: llama-cpp/logs/agent.log
-#   ./hostagent/run-agent.ps1 -Show   # watch startup; -Spawn is the task's path
-# The tray icon IS the host agent mark, and doubles as the status light: nodes are
-# the decode server, edges the embedder, grey is down (0042, graphics/logo/README).
-#   ./hostagent/open-agent.ps1        # start it, or show the running one; one door
-#   pwsh hostagent/install-shortcut.ps1  # a .lnk for that (-Desktop, -Remove)
-# Its window makes claims pytest cannot reach, so hostagent/tools/ holds the
-# instruments that check them live: capture the window, the taskbar button, the
-# open tray menu, read back what Textual actually painted. Read its README before
-# writing another one - it is also where the win32 traps are written down (DPI
-# virtualization, PrintWindow's blind spot, pystray's cached HMENU).
+# llama.cpp lifecycle, logs and GPU sensing via llama-warden (0023, 0057). It is
+# ITS OWN PROJECT at C:\selfhosting\llama-warden, runs on the HOST, not in
+# compose, and everything here 503s cleanly when it is absent. Set
+# LLM_WARDEN_URL=http://host.docker.internal:5003 in .env; llm/warden.py is the
+# client. Installing it, its tray icon, its console and its tools all live in
+# that repository's CLAUDE.md - do not reconstruct any of it here.
 GET    /api/llm/backend  # ports, PIDs, uptime
 POST   /api/llm/backend/start  # idempotent (locked)
 POST   /api/llm/backend/restart
@@ -147,8 +141,11 @@ POST   /api/llm/backend/stop  # ?force=true
 GET    /api/llm/logs?which=router&tail=200  # or which=embed
 GET    /api/llm/logs?which=router&since=40960  # delta (0034)
 GET    /api/llm/logs/stream?which=router  # what the pane uses (SSE; curl needs -N)
-GET    /api/llm/resources  # ~3.5s: per-process GPU, VRAM, games
-docker compose exec worker python -c "import asyncio; from episteme.worker.governor import govern_resources; print(asyncio.run(govern_resources())['reason'])"
+GET    /api/llm/resources  # ~3.5s FRESH sweep: per-process GPU, VRAM, games
+# What the warden last decided, and the policy it decided with. Cheap - its watch
+# thread already paid for the sweep. The bench gate reads its threshold from here
+# rather than keeping a second copy of the number (0057).
+curl -s http://127.0.0.1:5003/verdict
 
 # Benchmarks (0039, 0040, 0041; docs/benchmarks/plan.md). HTML routes, no /api.
 # A fixture is a REAL conversation replayed from llm_calls: a synthetic 4k prompt
@@ -157,7 +154,9 @@ POST   /admin/benchmarks/fixtures/capture  # name, stage, percentile (1.0 = larg
 POST   /admin/benchmarks/run  # scenario=quick|longctx|ladder|sweep, models, reps, predict
 POST   /admin/benchmarks/{id}/cancel  # a flag on the row, read between stream chunks
 GET    /admin/benchmarks/{id}/progress  # SSE; worker writes run.progress, web polls it
-# sweep restarts llama-server with different flags, so it 422s without the host agent.
+# sweep restarts llama-server with different flags, so it 422s without the warden.
+# The gate refuses a contended card and is STRICTER than the warden about games:
+# the warden decides on load alone, and a benchmark next to a game is meaningless.
 
 # Correspondents (0046, 0047). Matsedel is the only one: `/c/matsedel` is the
 # week, `/c/matsedel/stats` its history, `/glance` the dashboard of blocks. The
@@ -207,15 +206,14 @@ uv lock                                 # re-resolve after editing dependencies
 # sprite; it downloads the pinned @carbon/icons tarball itself (0029).
 uv run tools/build_icon_sprite.py
 
-# So are both logo SVGs: a port of the canvas prototype, which stays the authority
-# on the geometry. graphics/logo/README.md is the spec for what the marks MEAN.
+# So is the logo SVG: a port of the canvas prototype, which stays the authority on
+# the geometry. graphics/logo/README.md is the spec for what the mark MEANS. The
+# sibling mark left with llama-warden and the generator was split, not copied
+# (0057): this one renders `episteme` and contains no other mark's code.
 # The Episteme mark is generated into web/static/logo/, NOT into graphics/ - the
 # image copies src only. It is the tab icon (base.html) and nothing else: still
 # WIP, so the header is the wordmark alone.
 uv run graphics/logo/build_svg.py
-# The .ico is NOT converted from the SVG - it re-renders console.py's icon_image,
-# so the tray, the taskbar and the shortcut are one picture by construction.
-uv run tools/build_hostagent_ico.py
 ```
 
 ## Architecture (the parts that span multiple files)
@@ -236,7 +234,8 @@ Names to navigate by. The reasoning is in the numbered decision.
 - **A post stores its destination** (0047, built 2026-08-28): `posts.href` is where a card and `/post/{id}` both go, NULL means the post renders itself, and `ck_posts_body_iff_self_rendering` ties a body to rendering yourself. `models.POST_KINDS` records the decision per kind and `Post.kind` **refuses a value that is not in it**. The primary item is `models.PRIMARY_ITEM_ORDER`, one expression shared by `Story.items` and `pipeline._primary_item`.
 - **Correspondents** (0046, GLOSSARY.md). A correspondent files finished posts, skipping triage and the writer, and owns a page under `/c/<slug>/` for standing content that never enters the feed. Plugins ship in-tree and run in-process, because only in-process code can be held to `polite_get`; external services keep their own database and are never copied into ours. **Filing is built** (`correspondents/filing.py`, 2026-08-28): one story per period, found through its items' hashes rather than a `period_key` column, upserted on a re-file. `posts.publish_at` is when a post becomes visible and `posts.expires_at` when it stops being, both NULL for no bound; the feed filters on both and sorts on the first, so a week of posts can come from one read and each leaves when it stops being true. **Registration and the routes are built too**: a `correspondents` row is the configuration, `correspondents/registry.py` resolves the slug to the plugin the way `get_adapter` resolves `Source.type_name`, and **core owns the `/c/<slug>/` prefix** (`web/correspondents.py`) so a plugin cannot declare a path that shadows a core route. The enabled flag is a `Depends` on the mount, not a check each view remembers. **Glance is built** (`web/glance.py`): core lays out one block per enabled correspondent and fetches each from that correspondent's own `GET /c/<slug>/glance`, required at registration so a missing block is a startup failure rather than a correspondent that looks down. A plugin's page goes through `templating.correspondent_page`, which renders `correspondent.html` and INCLUDES the plugin's template: inheritance breaks the boosted-fragment path, and importing the helper from `web/correspondents.py` is a circular import. **The filed card is built**: it names its correspondent by walking post -> story -> primary item -> `sources.type_name`, which IS the slug, and `filing._require_correspondent_source` is what keeps that true. **Matsedel is the first plugin** (`correspondents/matsedel/`): four restaurants' lunch menus, five weekday posts filed from them. Its reader works on the page's visible LINES, never on each site's markup, because a stale CSS selector yields an empty menu and an empty menu looks like a kitchen that posted nothing (0046). **`read_source` is told which week it is reading for** and raises `NotPublishedYet` for a page still showing an older one (0054): a stale page parses perfectly, and believing it lost two of four kitchens for a week. That is also the retry condition - the scrape runs every weekday and `store.kitchens_with_a_full_week` skips a kitchen whose five weekdays each carry a line `tag_of` does not call HIDDEN, so an ordinary week costs one read of each site and nothing after. **What a line IS comes from `tags.tag_of` and nowhere else** (label, dish, hidden): a hand-written `site -> exact line -> tag` table, falling back to `readers.is_label` for anything untagged. Tags are applied on read, so `matsedel_dishes` keeps what the restaurant wrote and a tag added today fixes every stored week. Its `tasks.py` is deliberately not imported by its `__init__.py`. `ingest_all` skips every source whose `type_name` is a correspondent slug (`worker/tasks.py:not_a_correspondents_source`), so the four rows keep their own `enabled` switch.
 - **Notifications** (`notify.py`, 0056). One function, `publish`, and one rule: **a notification never fails the work it reports on**, so every error is caught and the return value says whether it landed. The **JSON publishing format**, not the header format, because HTTP headers are ASCII and a menu says `pepparsås`. The wording of the digest is a pure function (`worker/digest.py:compose`) over the run row and the cards it produced, and **what counts as new is `summarized_at`** (0050), which also keeps filed lunch posts out of it. The reader chose two events and declined alerts on pipeline and ingest failure, so do not add one; the digest reports a bad run once, in the morning. `notify.link` needs `public_base_url`, never `web_internal_url`.
-- **Benchmarks** (`src/episteme/bench/`, 0039): a peer of `llm/`, never a caller. `BenchError` is its whole error contract and streaming is the only path, because prefill curves and cancellation both need the stream. **Never store or plot llama-server's aggregate rates** (0040): `prompt_progress` counters are CUMULATIVE, so `series.py` differences them, and `report.py` aggregates totals-over-totals, never means-of-ratios. `bench_run(run_id)` takes one int: the row is the parameter record. The host agent applies preset edits it is handed and chooses nothing (0041).
+- **Benchmarks** (`src/episteme/bench/`, 0039): a peer of `llm/`, never a caller. `BenchError` is its whole error contract and streaming is the only path, because prefill curves and cancellation both need the stream. **Never store or plot llama-server's aggregate rates** (0040): `prompt_progress` counters are CUMULATIVE, so `series.py` differences them, and `report.py` aggregates totals-over-totals, never means-of-ratios. `bench_run(run_id)` takes one int: the row is the parameter record. llama-warden applies preset edits it is handed and chooses nothing (0041). **The "GPU is busy" threshold is the warden's**, read off `/verdict` at a run boundary and never copied into settings (0057).
+- **Who stops the pipeline for a game is not decided here** (0057). llama-warden measures the card, decides, and POSTs `{action, reason}` to `/api/pipeline/announce`; `worker/contention.py:apply_announcement` is the whole receiving end and decides only what stopping MEANS (pause, and hand VRAM back if nothing is mid-story). **Idempotency is a cross-process contract**, because the warden repeats its verdict every 300s until it lands: a repeat re-stamps `contended_at` and never `since` or `reason`. **Nothing expires** - a warden that dies while we are paused leaves us paused, and the only thing that makes that visible is `contended_at` having stopped advancing. `llm/warden.py` is the client; `verdict()` is the cheap read, `resources()` the ~3.5s sweep.
 - **Jobs**: procrastinate on Postgres, no broker. Worker and web are one image, two entrypoints; crons in settings. Stalls 0016, retention 0032.
 - **Schema is Alembic**, migrations inside the package so `COPY src ./src` ships them. **No `create_all` anywhere**, deliberately (0014). `bootstrap.py` adopts-or-upgrades, applies the procrastinate schema guarded (`schema --apply` is NOT idempotent), then seeds sources. Backup 0015.
 - **Politeness is a hard requirement** (spec §5, 0005, 0006). All source HTTP through `ingest/http.py:polite_get`, which new adapters MUST use. The browser is the other way a source gets hit without anyone writing a request: `<body preload="mouseover">` prefetches boosted links, so an off-site card link carries `preload="none"` (`_feed.html`). **Not `hx-boost="false"`**, which reads like the fix and starts the request it prevents - the extension sends a boosted link through `htmx.ajax`, where `selfRequestsOnly` blocks a cross-origin URL, and an unboosted one through a raw XHR that nothing guards. **Never `docker compose down -v` casually**: re-ingesting re-fetches every article from every source.

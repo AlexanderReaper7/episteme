@@ -11,7 +11,7 @@
   --border: #1e1f26;
   --border-hover: #2c2e3a;
   /* Status / semantic colors, reused across feed and admin. */
-  --ok: #17d98e;             /* green text; also the host agent's tray mark */
+  --ok: #17d98e;             /* green text; also llama-warden's tray mark */
   --bad: #c7082f;            /* saturated crimson red text (on black) */
   --bad-fg: color-mix(in srgb, var(--bad) 62%, #ffffff);  /* lightened crimson for red text on a dark red chip fill, where pure --bad is too dark-on-dark */
   --bad-muted: #b06a6a;      /* dimmer red for secondary error-message body */

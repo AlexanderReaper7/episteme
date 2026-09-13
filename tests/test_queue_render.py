@@ -632,17 +632,21 @@ def test_pause_states_what_it_does_to_work_in_flight():
     assert "Nothing in flight is lost" in html
 
 
-def test_a_governor_pause_says_it_will_lift_itself_and_a_manual_one_says_it_will_not():
-    """The governor may only clear its OWN pause. An operator who cannot tell the
-    two apart either waits forever for a manual pause to lift, or resumes a
-    resource pause straight back into a busy GPU."""
+def test_a_warden_pause_says_it_will_lift_itself_and_a_manual_one_says_it_will_not():
+    """llama-warden may only clear its OWN pause (0057). An operator who cannot
+    tell the two apart either waits forever for a manual pause to lift, or
+    resumes a resource pause straight back into a busy GPU. The panel also has to
+    NAME the warden: a pipeline that stopped by itself is indistinguishable from
+    a broken one until the page says what stopped it."""
     paused = {"pipeline": {"paused": True, "reason": "resource", "since": NOW}}
-    assert "resume on its own" in _jobs_page(status=paused)
+    html = _jobs_page(status=paused)
+    assert "llama-warden" in html
+    assert "will resume when the warden says the GPU is quiet again" in html
 
     manual = {"pipeline": {"paused": True, "reason": "manual", "since": NOW}}
     html = _jobs_page(status=manual)
     assert "will not lift this" in html
-    assert "resume on its own" not in html
+    assert "will resume when the warden" not in html
 
 
 def test_the_pipeline_state_is_stated_in_both_directions_and_stated_first():

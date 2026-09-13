@@ -686,7 +686,7 @@
   // htmx:load, which fires for every swap anywhere on the page: same element,
   // nothing to do; different or gone, close the old one first - an htmx swap
   // discards the node without telling us, and an orphaned EventSource would go
-  // on polling the host agent for a pane nobody can see.
+  // on polling llama-warden for a pane nobody can see.
   var LOG_MAX_LINES = 5000;
   var logStream = null;
   var logPane = null;

@@ -3,10 +3,10 @@
 `web/static/logo/episteme.svg` is itself generated (graphics/logo/build_svg.py,
 ported from the canvas prototype, which stays the authority on the geometry), so
 these PNGs are a rasterization of it and not a second drawing of the mark. That is
-the opposite call from `tools/build_hostagent_ico.py`, which re-renders
-`console.py`'s `icon_image` rather than converting the SVG, and for the opposite
-reason: the tray icon has to match what the Textual console paints, while a home
-screen icon has to match what the tab icon shows.
+the opposite call from the one llama-warden makes for its tray icon, which it
+re-renders from the console's own drawing code rather than converting an SVG: a
+tray icon has to match what the console paints, while a home screen icon has to
+match what the tab icon shows (0057).
 
 Chromium does the rasterizing, because Playwright is already a dependency and a
 real cairo/librsvg on Windows is not. The page is the mark centered on the true

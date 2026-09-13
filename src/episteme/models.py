@@ -624,6 +624,9 @@ JOB_PLUMBING_CLASSES = (JOB_CLASS_SCHEDULER, JOB_CLASS_MAINTENANCE)
 
 _MAINTENANCE_TASKS = frozenset(
     {
+        # No longer a task here (0057, the cron left with llama-warden), but 1885
+        # rows of it are still in the queue and have to keep folding away until
+        # the 2-day maintenance retention takes them.
         "episteme.govern_resources",
         "episteme.recover_stalled_jobs",
         "episteme.prune_job_history",
@@ -756,7 +759,7 @@ class PipelineRun(Base):
 
 class AppState(Base):
     """Key/value control flags (e.g. the pipeline pause switch) — persistent so a
-    future resource governor can flip them via the API and worker restarts keep
+    warden's announcement can flip them via the API and worker restarts keep
     honoring them."""
 
     __tablename__ = "app_state"

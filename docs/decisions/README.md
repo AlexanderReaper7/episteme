@@ -89,8 +89,9 @@ Nothing here is edited to reflect later changes. A decision that was replaced ge
 
 | # | decision | date |
 |---|---|---|
-| [0023](0023-the-host-agent-is-a-sensor-not-a-decision-maker.md) | The host control agent is a sensor and actuator, never a decision-maker | 2026-08-01 |
-| [0024](0024-the-governor-brakes-on-contention-not-presence.md) | The governor brakes on contention, not presence; a pause has an author | 2026-08-01 |
+| [0023](0023-the-host-agent-is-a-sensor-not-a-decision-maker.md) | The host control agent is a sensor and actuator, never a decision-maker (superseded by 0057) | 2026-08-01 |
+| [0024](0024-the-governor-brakes-on-contention-not-presence.md) | The governor brakes on contention, not presence; a pause has an author (policy half superseded by 0057) | 2026-08-01 |
+| [0057](0057-the-gpu-decision-leaves-episteme.md) | The decision to yield the GPU leaves Episteme; llama-warden announces, `worker/contention.py` applies | 2026-09-13 |
 | [0034](0034-logs-stream-as-byte-offset-deltas.md) | Logs stream as byte-offset deltas | 2026-08-03 |
 | [0042](0042-the-agent-owns-one-console-hidden-behind-a-tray-icon.md) | The host agent owns one console, born hidden, behind a tray icon | 2026-08-15 |
 

@@ -53,14 +53,6 @@ dev = [
     "pytest>=9",
     "pytest-asyncio>=1.4",
     "ruff>=0.15",
-    # The host agent's console (hostagent/console.py). It is NOT a runtime
-    # dependency of Episteme - it never enters the image, and the agent resolves
-    # it from its own PEP-723 header on the host. It is here so the tests can
-    # import the file at all, which is the difference between a text UI with
-    # behaviour under test and one verified by looking at it.
-    "textual>=8.2",
-    "pystray>=0.19",
-    "pillow>=12",
 ]
 
 [tool.setuptools.packages.find]

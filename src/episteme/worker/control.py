@@ -1,30 +1,32 @@
 """Pipeline pause/resume control.
 
 The pause flag lives in `app_state` so it survives worker restarts and can be
-flipped by anything that can reach the API — the intended caller is the resource
-governor (`worker/governor.py`), which pauses LLM work while a game or other
-GPU-heavy application needs the card. Pipeline loops call `pause_requested()`
-between work units (one story / post / embed batch), so pausing never abandons
-in-flight work: the current unit finishes, the run ends cleanly with status
-"paused", and because stages are data-driven (they select whatever rows are
-still unprocessed) the next deferred run resumes exactly where this one stopped.
+flipped by anything that can reach the API — the usual caller is llama-warden,
+which pauses LLM work while a game or other GPU-heavy application needs the card
+(`worker/contention.py` is what its announcement does here). Pipeline loops call
+`pause_requested()` between work units (one story / post / embed batch), so
+pausing never abandons in-flight work: the current unit finishes, the run ends
+cleanly with status "paused", and because stages are data-driven (they select
+whatever rows are still unprocessed) the next deferred run resumes exactly where
+this one stopped.
 
 **A pause records who set it.** Two very different actors pause the pipeline: a
-human, and an automatic governor. Without a reason, a governor that resumes when
-the GPU frees up would also lift a pause the reader set by hand yesterday and
-expects to still be holding. So the stored value carries `reason` — and
-`RESOURCE` is the only reason the governor is allowed to clear (see
-`governor.decide`). A value written before this field existed has no reason and
-reads as `MANUAL`, which is the safe direction: automation leaves it alone.
+human, and the warden. Without a reason, a warden resuming when the GPU frees up
+would also lift a pause the reader set by hand yesterday and expects to still be
+holding. So the stored value carries `reason` — and `RESOURCE` is the only reason
+the warden is allowed to clear (see `contention.apply_announcement`). A value
+written before this field existed has no reason and reads as `MANUAL`, which is
+the safe direction: automation leaves it alone.
 
 Two timestamps are stored, and they answer different questions. `since` is when
-the pause began — what the panel shows. `contended_at` is when contention was
-last *observed*, refreshed on every governor tick that still sees a busy GPU,
-and it is what the resume window is measured against: a window anchored to the
-pause start would expire while the game was still running, so the first
-momentary dip after it elapsed would resume — the exact "lull between two
-loading screens" the design exists to prevent. Both live here rather than in a
-worker process that any redeploy would forget.
+the pause began — what the panel shows, and what a repeated announcement must
+never move. `contended_at` is when we were last TOLD the GPU is still busy,
+re-stamped by every re-announcement. It used to be when we last measured it
+ourselves, and it anchored a resume window that this repository no longer
+computes; the warden owns that timing now (0057). What it is good for here is
+freshness: nothing expires, so a pause whose `contended_at` stopped advancing is
+a warden that died rather than a GPU that is still busy. Both live here rather
+than in a worker process that any redeploy would forget.
 """
 
 import json
@@ -93,10 +95,11 @@ async def set_paused(session: AsyncSession, paused: bool, reason: str = MANUAL) 
 async def mark_contended(session: AsyncSession) -> None:
     """Re-stamp `contended_at` on an existing pause without moving `since`.
 
-    Called by the governor on every tick that still sees a busy GPU, so the
-    resume window measures how long the GPU has been *quiet* rather than how
-    long we have been paused. A no-op when nothing is paused: there is no window
-    to hold open."""
+    Called on every repeated `pause` announcement. The warden re-sends its
+    verdict every 300s until it changes, so this is the difference between a
+    panel that says "paused at 18:04" and one that says "paused just now" every
+    time somebody looks — `since` is the fact, this is the heartbeat. A no-op
+    when nothing is paused: there is nothing whose freshness to record."""
     state = await session.get(AppState, PAUSE_KEY)
     if state is None or not (state.value or {}).get("paused"):
         return
@@ -150,7 +153,7 @@ async def hold_interactive(
     kind of deliberate GPU user now — a chat turn (minutes) and a benchmark run
     (hours) — and they overlap freely. With one shared expiry, whichever of them
     finished first handed the card back on the other's behalf: a chat turn ending
-    mid-benchmark released the lease, and the governor was then free to evict the
+    mid-benchmark released the lease, and an automatic unload was then free to evict the
     model in the middle of a measurement.
 
     Written as one upsert rather than read-modify-write because the holders live
@@ -254,8 +257,8 @@ async def pipeline_job_running(session: AsyncSession) -> bool:
     alone says "stop at the next boundary", and everything that wants to do
     something destructive afterwards — unload the models, kill llama-server —
     has to know whether that boundary has been reached. One definition, shared
-    by the API's graceful stop and the governor, so the two cannot disagree
-    about what "still working" means."""
+    by the API's graceful stop and the announcement applier, so the two cannot
+    disagree about what "still working" means."""
     query = text(
         "SELECT count(*) FROM procrastinate_jobs WHERE status = 'doing' "
         "AND task_name IN ('episteme.run_pipeline', 'episteme.pipeline_stage')"

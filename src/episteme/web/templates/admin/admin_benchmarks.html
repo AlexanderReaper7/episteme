@@ -9,7 +9,7 @@
   <div class="admin-card-head">
     <h2>New run</h2>
     <span class="muted admin-form-hint" style="margin:0">
-      A benchmark holds the interactive lease for its whole length, so the governor
+      A benchmark holds the interactive lease for its whole length, so a warden pause
       will not unload the model underneath it. It refuses to start on a contended
       card, and labels itself if a game appears while it measures.
     </span>
@@ -93,7 +93,7 @@
                 placeholder='[{"label": "fit-on", "sections": {"Qwen3-35B-A3B.Q4_K_M": {"ngl": null}}},
  {"label": "ngl-999", "sections": {"Qwen3-35B-A3B.Q4_K_M": {"ngl": 999}}}]'></textarea>
       {% if not agent_enabled %}
-      <p class="muted">The host agent is not configured (<code>LLM_HOST_AGENT_URL</code>), so a sweep cannot run.</p>
+      <p class="muted">llama-warden is not configured (<code>LLM_WARDEN_URL</code>), so a sweep cannot run.</p>
       {% endif %}
     </fieldset>
 

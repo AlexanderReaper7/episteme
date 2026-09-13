@@ -13,8 +13,8 @@
    page render `oob_llm` is absent and this is a plain section.
 
    KNOWN LIMIT: the poll it rides on belongs to the backend panel, which
-   admin.html renders only when a host agent is configured. With
-   LLM_HOST_AGENT_URL empty this card is a page-load snapshot again - no worse
+   admin.html renders only when a warden is configured. With
+   LLM_WARDEN_URL empty this card is a page-load snapshot again - no worse
    than it was, but not live either. Giving it a clock of its own is the fix, and
    costs the guarantee above: two probes that can disagree. #}
 <section id="llm-endpoints" class="admin-card"

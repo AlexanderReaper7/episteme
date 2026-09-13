@@ -87,20 +87,6 @@ class Config:
     center_y: float = 0.5
     faces: bool = True
     strands: bool = True
-    # Net: the hostagent mark's one substitution. See `_net`.
-    net: bool = False
-    net_color: str = "#17d98e"
-    # Over half the height, because that is where the room is: see ICON_CAMERA on
-    # why the solid cannot grow, and `console.py`'s NET_BAND, which is this number.
-    net_band: tuple[float, float] = (0.46, 0.98)  # where it may be drawn, of height
-    net_radius: float = 0.045
-    net_edge_w: float = 0.018
-    net_upper: int = 5
-    net_lower: int = 3
-    net_reach: float = 0.34  # an edge joins nodes closer than this in x
-    net_dip: float = 0.72  # upper rank's sag toward the lower, 0..1 of the gap
-    net_clearance: float = 2.4  # node radii the dip must leave between the ranks
-
     # Waves: the WIP stand-in for the weave. See `_waves`.
     waves: int = 0
     wave_color: str = "#ffffff"
@@ -571,66 +557,6 @@ def _waves(svg: Svg, scene: Scene, *, front: bool) -> None:
         )
 
 
-def _net(svg: Svg, scene: Scene) -> None:
-    """The hostagent mark's one substitution: the field, drawn as a network.
-
-    Not a distillation either - like `_waves` it is screen space and a gesture,
-    and it keeps the same claim: the upper rank SAGS toward the obelisk's lower
-    tip, so the solid is embedded in what it stands in and bends it. What changes
-    is only what the field is made of, which is the whole difference between the
-    two programs: Episteme stands in information, the host agent runs the network
-    that turns information into it. No new shape, one word.
-
-    Every node is placed against `net_band` with its own radius already
-    subtracted, and the sag is clamped against `net_clearance` rather than chosen,
-    so neither the frame nor the rank below can be collided with by construction.
-    Tuning coordinates until they happen to fit is how the first pass produced
-    four arrangements that all clipped.
-    """
-    k = scene.k
-    if not k.net:
-        return
-    color = _rgb(k.net_color)
-    stroke = f"rgb({color[0]},{color[1]},{color[2]})"
-    radius = k.net_radius * svg.h
-    low_x, high_x = radius, svg.w - radius
-    low_y, high_y = k.net_band[0] * svg.h + radius, k.net_band[1] * svg.h - radius
-    span = high_y - low_y
-    if span <= 0:
-        return
-
-    dip = max(0.0, min(k.net_dip, 1.0 - k.net_clearance * radius / span))
-    upper: list[tuple[float, float]] = []
-    for i in range(k.net_upper):
-        t = i / max(1, k.net_upper - 1)
-        sag = 1.0 - (2.0 * t - 1.0) ** 2  # level at the edges, deepest under the tip
-        upper.append((low_x + t * (high_x - low_x), low_y + sag * dip * span))
-    lower = [
-        (low_x + (i + 0.5) / k.net_lower * (high_x - low_x), high_y)
-        for i in range(k.net_lower)
-    ]
-
-    width = k.net_edge_w * svg.h
-
-    def edge(a: tuple[float, float], b: tuple[float, float], alpha: float) -> None:
-        svg.body.append(
-            f'<path d="M{_fmt(a[0])} {_fmt(a[1])} L{_fmt(b[0])} {_fmt(b[1])}" fill="none" '
-            f'stroke="{stroke}" stroke-opacity="{_fmt(alpha)}" '
-            f'stroke-width="{_fmt(width)}" stroke-linecap="round"/>'
-        )
-
-    for a in lower:
-        for b in upper:
-            if abs(a[0] - b[0]) < k.net_reach * svg.w:
-                edge(a, b, 0.73)
-    for a, b in zip(upper, upper[1:]):
-        edge(a, b, 0.59)
-    for p in upper + lower:
-        svg.body.append(
-            f'<circle cx="{_fmt(p[0])}" cy="{_fmt(p[1])}" r="{_fmt(radius)}" fill="{stroke}"/>'
-        )
-
-
 def render(k: Config, w: float, h: float, title: str, desc: str) -> str:
     scene = Scene(k, w, h)
     svg = Svg(k, w, h)
@@ -639,7 +565,7 @@ def render(k: Config, w: float, h: float, title: str, desc: str) -> str:
     for samples in lines:  # the whole weave, complete
         _emit(svg, samples, False)
     _waves(svg, scene, front=False)
-    _net(svg, scene)  # behind the solid, which is what makes it stand IN the net
+
     if k.faces:
         alb = _rgb(k.albedo)
         edge = None
@@ -661,24 +587,22 @@ ROOT = HERE.parents[1]
 # The Episteme mark is SHIPPED, so it lives where the app can serve it and nowhere
 # else. `graphics/` is not in the image (the Dockerfile copies `src` only), and a
 # second copy here that the generator also wrote would be a file that can only ever
-# be stale. The host agent's mark is the opposite case: it never reaches the web,
-# so it stays beside its prototypes.
+# be stale. It is the only mark this generator emits: the sibling that stood in a
+# network left with llama-warden in 2026-09 (0057), and that copy is free to drift.
 WEB_STATIC = ROOT / "src" / "episteme" / "web" / "static" / "logo"
 
-# One camera, written once, because the two marks are siblings: the same solid in
-# the same place, and only the field it stands in says which program you are
-# looking at. Two call sites carrying the same four numbers is two call sites that
-# eventually carry different ones.
+# The icon camera, written once. It was shared by two sibling marks until the
+# warden's left this repository, and it stays a named constant because the numbers
+# below are argued for rather than picked.
 #
 # `fov` is 30 rather than the prototype's 34 because these are ICONS: a 16 px tile
 # is read at a glance and wants less margin than a scene does. It does not go
 # further, and that is measured rather than taste. The solid's lower tip has to
 # land IN the field's sag - that contact is the whole claim - and the field is
 # already at the bottom of the frame, so the solid's height is bounded by the sag
-# above and the frame below. fov 26 (a 16% zoom) drives the tip through the net
+# above and the frame below. fov 26 (a 16% zoom) drives the tip through the field
 # and out the floor. The most that fits is about 4%, which is not worth a number
-# nobody can justify later. Room is bought by widening the FIELD instead, which is
-# what `net_band` does.
+# nobody can justify later. Room is bought by widening the FIELD instead.
 ICON_CAMERA = {"fov": 30.0, "cam_y": 0.9, "cam_dist": 4.6, "center_y": 0.46}
 
 
@@ -709,26 +633,7 @@ def episteme_icon() -> tuple[Path, str]:
     )
 
 
-def hostagent_icon() -> tuple[Path, str]:
-    """The LLM backend, WIP. Same solid, one substitution: the field it stands in
-    is a neural network. The upper rank still sags toward the lower tip, so the
-    mark keeps its claim and only says what the field is made of - which is the
-    whole difference between the two programs, with no new shape to learn."""
-    # `ICON_CAMERA` puts the lower tip at 95% of the height, well inside the net's
-    # band, so the solid's lower half sits INSIDE the network and hides part of it.
-    # Standing clear of the net would say the two are adjacent; the occlusion is
-    # the "embedded in the field" claim, made by overlap rather than asserted.
-    k = Config(**ICON_CAMERA, strands=False, waves=0, net=True)
-    return HERE / "hostagent-icon.svg", render(
-        k,
-        256,
-        256,
-        "Episteme host agent",
-        "The Episteme obelisk standing in a neural network that bends toward its lower tip: the local model behind the mark.",
-    )
-
-
-MARKS = {"episteme": episteme_icon, "hostagent": hostagent_icon}
+MARKS = {"episteme": episteme_icon}
 
 
 def main() -> None:
