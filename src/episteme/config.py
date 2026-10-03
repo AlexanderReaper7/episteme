@@ -97,6 +97,11 @@ class Settings(BaseSettings):
     llm_chat_base_url: str = ""  # "" -> llm_main_base_url -> llm_base_url
     llm_model_chat: str = ""  # "" -> llm_model_main
     llm_timeout_seconds: float = 600.0
+    # The file holding the key InferMux knows this process by (0058). Compose
+    # mounts a different one into web and worker, and InferMux reads the class
+    # from the key: the web's calls are the reader's, the worker's are batch.
+    # Empty sends no key.
+    llm_api_key_file: str = ""
     llm_max_json_retries: int = 2
     llm_disable_thinking: bool = True
     # Observability: persist every gateway call (prompts, responses, tokens, timing)
@@ -407,6 +412,14 @@ class Settings(BaseSettings):
     # 09:00 UTC is 11:00 local in summer: after the 06:00 scrape has had time to
     # pick up a kitchen that published late, before anyone decides where to eat.
     matsedel_notify_cron: str = "0 9 * * 1-5"
+
+    def llm_auth_headers(self) -> dict[str, str]:
+        """The Authorization header for every request to the LLM servers. Read
+        per client, so a missing file fails the first call, loudly."""
+        if not self.llm_api_key_file:
+            return {}
+        with open(self.llm_api_key_file) as f:
+            return {"Authorization": f"Bearer {f.read().strip()}"}
 
     @property
     def sqlalchemy_url(self) -> str:

@@ -65,7 +65,7 @@ class BenchClient:
         # No client-level timeout that could kill a legitimate 24-minute
         # generation: the per-request timeout below is explicit, and cancellation
         # is a first-class path rather than something a timeout stands in for.
-        self._client = httpx.AsyncClient(timeout=None)
+        self._client = httpx.AsyncClient(timeout=None, headers=settings.llm_auth_headers())
 
     async def aclose(self) -> None:
         await self._client.aclose()

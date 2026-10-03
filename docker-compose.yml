@@ -44,6 +44,9 @@ services:
       # Empty disables the backend panel, and leaves nothing able to pause the
       # pipeline for a game. The thresholds are the warden's, not ours (0057).
       LLM_WARDEN_URL: ${LLM_WARDEN_URL:-}
+      # The key InferMux knows each process by (0058). web and worker mount
+      # different keys here, and InferMux reads the class from the key.
+      LLM_API_KEY_FILE: /run/secrets/infermux-key
       # Notifications (ntfy, 0056). Empty NTFY_BASE_URL is the off switch: the
       # digest and the lunch push return before building a message. The topics
       # are separate so lunch can be muted without muting the digest, and
@@ -84,6 +87,10 @@ services:
       - ${AUDIO_DIR:-./media}:/media
     ports:
       - "127.0.0.1:8200:8200"
+    # Interactive: the reader is waiting on every call the web makes.
+    secrets:
+      - source: infermux-web
+        target: infermux-key
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -101,6 +108,10 @@ services:
   worker:
     build: .
     command: procrastinate --app=episteme.worker.app.app worker
+    # Batch, including the jobs the reader deferred from the web (0058).
+    secrets:
+      - source: infermux-worker
+        target: infermux-key
     # init reaps zombie processes left by crashed Chromium subprocesses
     # (Playwright in the QA stage); the python worker as PID 1 won't.
     init: true
@@ -129,3 +140,10 @@ services:
 
 volumes:
   pgdata:
+
+# sops-nix decrypts these on the NixOS host (nixcfg, modules/nixos/llm.nix).
+secrets:
+  infermux-web:
+    file: ${INFERMUX_KEY_WEB:-/run/secrets/episteme}
+  infermux-worker:
+    file: ${INFERMUX_KEY_WORKER:-/run/secrets/episteme-batch}

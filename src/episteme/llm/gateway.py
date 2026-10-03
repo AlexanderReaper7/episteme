@@ -242,7 +242,10 @@ class LLMGateway:
         client = self._clients.get(url)
         if client is None:
             client = httpx.AsyncClient(
-                base_url=url, timeout=settings.llm_timeout_seconds, transport=self._transport
+                base_url=url,
+                timeout=settings.llm_timeout_seconds,
+                transport=self._transport,
+                headers=settings.llm_auth_headers(),
             )
             self._clients[url] = client
         return client

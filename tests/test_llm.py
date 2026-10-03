@@ -427,3 +427,56 @@ async def test_chat_sends_grammar_safe_schema():
 
     result = await _gateway_with(handler).complete_json("main", "sys", "user", QAReview)
     assert result.verdict == "approve"
+
+
+# --- The key InferMux knows this process by (0058) ----------------------------
+
+_TRIAGE = '{"decision": "write", "quality_score": 7.5, "topics": ["astronomy"], "reason": "solid research"}'
+
+
+async def test_every_call_carries_the_key_from_the_file(tmp_path, monkeypatch):
+    from episteme.config import settings
+
+    key = tmp_path / "key"
+    key.write_text("sk-worker\n")
+    monkeypatch.setattr(settings, "llm_api_key_file", str(key))
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers.get("authorization"))
+        return httpx.Response(200, json=_completion(_TRIAGE))
+
+    await _gateway_with(handler).complete_json("fast", "sys", "user", TriageResult)
+    assert seen == ["Bearer sk-worker"]
+
+
+async def test_no_key_file_sends_no_key(monkeypatch):
+    from episteme.config import settings
+
+    monkeypatch.setattr(settings, "llm_api_key_file", "")
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers.get("authorization"))
+        return httpx.Response(200, json=_completion(_TRIAGE))
+
+    await _gateway_with(handler).complete_json("fast", "sys", "user", TriageResult)
+    assert seen == [None]
+
+
+def test_a_missing_key_file_fails_loudly(tmp_path, monkeypatch):
+    from episteme.config import settings
+
+    monkeypatch.setattr(settings, "llm_api_key_file", str(tmp_path / "absent"))
+    with pytest.raises(FileNotFoundError):
+        LLMGateway().client_for("main")
+
+
+def test_the_bench_client_carries_the_key_too(tmp_path, monkeypatch):
+    from episteme.bench.client import BenchClient
+    from episteme.config import settings
+
+    key = tmp_path / "key"
+    key.write_text("sk-worker\n")
+    monkeypatch.setattr(settings, "llm_api_key_file", str(key))
+    assert BenchClient()._client.headers["authorization"] == "Bearer sk-worker"
