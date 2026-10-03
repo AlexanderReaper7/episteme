@@ -77,12 +77,10 @@ class Settings(BaseSettings):
     # a model that must stay resident while the others swap.
     llm_main_base_url: str = ""
     llm_fast_base_url: str = ""
-    # Embeddings default to a dedicated always-resident llama-server (CPU-only
-    # model, spawned by launch-llama-v2.ps1 on :5002). The router's --models-max
-    # counts models globally with no per-model exemption, so capping it at 1 —
-    # required so the fast and main models never share VRAM — would otherwise
-    # evict the embedder. Set this to "" to serve embeds from llm_base_url again.
-    llm_embed_base_url: str = "http://host.docker.internal:5002/v1"
+    # Embeddings go through InferMux like everything else (0059): the CPU
+    # embedder is its own always-resident llama-server, which InferMux lists as
+    # a peer, so no chat model swap evicts it and a GPU pause does not refuse it.
+    llm_embed_base_url: str = ""
     llm_model_main: str = "Qwopus3.6-35B-A3B-Coder-MTP-Q4_K_M"
     llm_model_fast: str = "Qwythos-9B-Claude-Mythos-5-1M-MTP-Q4_K_M"
     # 4B (2560 dims, gateway truncates to EMBEDDING_DIM) preferred for quality;

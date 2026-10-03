@@ -93,6 +93,7 @@ Nothing here is edited to reflect later changes. A decision that was replaced ge
 | [0024](0024-the-governor-brakes-on-contention-not-presence.md) | The governor brakes on contention, not presence; a pause has an author (policy half superseded by 0057) | 2026-08-01 |
 | [0057](0057-the-gpu-decision-leaves-episteme.md) | The decision to yield the GPU leaves Episteme; llama-warden announces, `worker/contention.py` applies | 2026-09-13 |
 | [0058](0058-infermux-knows-the-web-from-the-worker.md) | InferMux knows the web from the worker by their keys; every worker job is batch | 2026-10-03 |
+| [0059](0059-embeds-go-through-infermux.md) | Embeds go through InferMux, where the CPU embedder is a peer | 2026-10-03 |
 | [0034](0034-logs-stream-as-byte-offset-deltas.md) | Logs stream as byte-offset deltas | 2026-08-03 |
 | [0042](0042-the-agent-owns-one-console-hidden-behind-a-tray-icon.md) | The host agent owns one console, born hidden, behind a tray icon | 2026-08-15 |
 
