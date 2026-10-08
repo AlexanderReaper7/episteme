@@ -1,11 +1,11 @@
 # TODO
 
-This is a list of things to maybe do, in no particular order. And serves as a place to keep notes and ideas.
+This is a list of things to maybe do, in no particular order, and a place to keep notes and ideas.
 
 >[!WARNING]
 >AI agents should not write here nor implement any of these TODOs without explicit approval from the human operator.
 >
->But they can be used to inform the design of the system but must be explicitly mentioned and asked for approval when they do influence decicions.
+>They can inform the design of the system, but must be mentioned explicitly, and approval asked for, when they influence decisions.
 
 ---
 
@@ -16,10 +16,10 @@ This is a list of things to maybe do, in no particular order. And serves as a pl
 - styling, branding.
 - local voice model for post narration.
 - pre TTS LLM pass for emotional tagging, pronunciation.
-- improve quizes and add more questions.
+- improve quizzes and add more questions.
 - benchmarking
 - docker test? testing db?
 - prefix caching for system prompts?
 - make sure icons are vendored.
 - admin topics nav is broken
-- time sensitive posts: todays lunch menu expires when it is no longer available, typically 1400. at that point said post becomes purly historical and has reduced value to the reader.
+- time sensitive posts: today's lunch menu expires when it is no longer available, typically 1400. at that point said post becomes purely historical and has reduced value to the reader.

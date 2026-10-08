@@ -6,7 +6,7 @@
 
 ## Context
 
-From TODO "improve quizes and add more questions", with two requirements added by the user mid-work: quizzes are mandatory, and choice order must be randomised.
+From TODO "improve quizzes and add more questions", with two requirements added by the user mid-work: quizzes are mandatory, and choice order must be randomised.
 
 No migration was needed. `sections` is JSONB, so the shape change needed no DDL, and the 16 pre-existing posts were rewritten in place with one SQL statement. The database is disposable before v1, the user's call: "do what is simplest".
 
