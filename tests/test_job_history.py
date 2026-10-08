@@ -94,9 +94,7 @@ def test_the_housekeeping_tasks_the_page_offers_are_classed_as_maintenance():
 
 
 def test_each_class_gets_its_own_cutoff():
-    cutoffs = prune_cutoffs(
-        NOW, maintenance_days=2, ingest_days=7, work_days=90, failed_days=90
-    )
+    cutoffs = prune_cutoffs(NOW, maintenance_days=2, ingest_days=7, work_days=90, failed_days=90)
     assert cutoffs[JOB_CLASS_MAINTENANCE] == NOW - timedelta(days=2)
     assert cutoffs[JOB_CLASS_SCHEDULER] == NOW - timedelta(days=2)
     assert cutoffs[JOB_CLASS_INGEST] == NOW - timedelta(days=7)
@@ -108,9 +106,7 @@ def test_schedulers_share_the_maintenance_window():
     """They are the same kind of noise and arrive at the same rate — one per tick
     of each cron. Giving them separate knobs would let the pair drift apart for
     no reason anyone could act on."""
-    cutoffs = prune_cutoffs(
-        NOW, maintenance_days=3, ingest_days=7, work_days=90, failed_days=90
-    )
+    cutoffs = prune_cutoffs(NOW, maintenance_days=3, ingest_days=7, work_days=90, failed_days=90)
     assert cutoffs[JOB_CLASS_SCHEDULER] == cutoffs[JOB_CLASS_MAINTENANCE]
 
 
@@ -118,9 +114,7 @@ def test_failures_outlive_the_successes_of_their_own_class():
     """A failed scheduler tick is evidence; a succeeded one is noise. The failure
     sweep runs across every class against its own window precisely so a failure
     is not deleted after two days by the class it happens to belong to."""
-    cutoffs = prune_cutoffs(
-        NOW, maintenance_days=2, ingest_days=7, work_days=90, failed_days=90
-    )
+    cutoffs = prune_cutoffs(NOW, maintenance_days=2, ingest_days=7, work_days=90, failed_days=90)
     assert cutoffs["failed"] < cutoffs[JOB_CLASS_MAINTENANCE]
     assert cutoffs["failed"] < cutoffs[JOB_CLASS_INGEST]
 
@@ -130,9 +124,7 @@ def test_a_non_positive_window_keeps_that_class_forever(days):
     """The opt-out for one tier, without disabling the prune. `None` is checked
     by the caller before it builds a DELETE, so a misread here would not slow the
     prune down — it would delete everything ever run."""
-    cutoffs = prune_cutoffs(
-        NOW, maintenance_days=days, ingest_days=7, work_days=90, failed_days=90
-    )
+    cutoffs = prune_cutoffs(NOW, maintenance_days=days, ingest_days=7, work_days=90, failed_days=90)
     assert cutoffs[JOB_CLASS_MAINTENANCE] is None
     assert cutoffs[JOB_CLASS_SCHEDULER] is None
     assert cutoffs[JOB_CLASS_INGEST] is not None
@@ -181,7 +173,7 @@ def test_no_directly_called_api_handler_defaults_to_a_query_object():
     checked = 0
     for name in dir(admin):
         handler = getattr(admin, name)
-        if not (callable(handler) and getattr(handler, "__module__", "") .endswith("web.api")):
+        if not (callable(handler) and getattr(handler, "__module__", "").endswith("web.api")):
             continue
         checked += 1
         for param in inspect.signature(handler).parameters.values():

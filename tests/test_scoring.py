@@ -67,9 +67,7 @@ def test_topic_weights_are_averaged_not_summed():
 
 def test_unknown_topic_contributes_nothing():
     profile = _profile(topic_weights={"astronomy": 3.0})
-    assert "topic" not in score_candidate(
-        Candidate(post_id=1, topic_slugs=["curling"]), profile
-    )[1]
+    assert "topic" not in score_candidate(Candidate(post_id=1, topic_slugs=["curling"]), profile)[1]
 
 
 def test_quality_is_centred_so_a_mediocre_post_is_neutral():
@@ -114,9 +112,7 @@ def test_mismatched_embedding_dimensions_score_zero_rather_than_raising():
 def test_components_explain_the_total():
     profile = _profile(liked_centroid=[1.0, 0.0], topic_weights={"astronomy": 2.0})
     total, components = score_candidate(
-        Candidate(
-            post_id=1, embedding=[1.0, 0.0], topic_slugs=["astronomy"], quality_score=8.0
-        ),
+        Candidate(post_id=1, embedding=[1.0, 0.0], topic_slugs=["astronomy"], quality_score=8.0),
         profile,
     )
     assert set(components) == {"liked", "topic", "quality"}
@@ -126,15 +122,18 @@ def test_components_explain_the_total():
 # --- Feed ordering ----------------------------------------------------------------
 
 
-def _post(affinity=None, hours_old=0.0, kind="article", post_id=1, now=None,
-          publish_at=None):
+def _post(affinity=None, hours_old=0.0, kind="article", post_id=1, now=None, publish_at=None):
     """`now` is overridable so two posts can be built at the SAME instant: the
     freshness term is a continuous function of `generated_at`, so two calls a few
     microseconds apart differ in the 12th digit and an exact-equality assertion
     between them fails at random."""
     at = (now or datetime.now(UTC)) - timedelta(hours=hours_old)
     return SimpleNamespace(
-        id=post_id, kind=kind, affinity_score=affinity, generated_at=at, story=None,
+        id=post_id,
+        kind=kind,
+        affinity_score=affinity,
+        generated_at=at,
+        story=None,
         publish_at=publish_at,
     )
 
@@ -205,9 +204,7 @@ def test_the_affinity_shift_is_bounded_and_symmetric():
     assert (best - neutral) == pytest.approx(1.0, abs=1e-6)  # one window, up
     assert (neutral - worst) == pytest.approx(1.0, abs=1e-6)  # one window, down
     # Expressed in hours: the extremes are exactly the window apart from neutral.
-    assert _rank_value(_post(affinity=1000.0, hours_old=window)) == pytest.approx(
-        neutral, abs=1e-6
-    )
+    assert _rank_value(_post(affinity=1000.0, hours_old=window)) == pytest.approx(neutral, abs=1e-6)
 
 
 def test_freshness_constant_is_tunable(monkeypatch):
@@ -224,16 +221,22 @@ def test_aggregate_cards_rank_by_their_story_recency():
     """A cluster keeps surfacing as new sources join it, which is the only reason
     aggregates use a different timestamp than articles."""
     story = SimpleNamespace(last_item_at=datetime.now(UTC), items=[])
-    stale_story = SimpleNamespace(
-        last_item_at=datetime.now(UTC) - timedelta(hours=48), items=[]
-    )
+    stale_story = SimpleNamespace(last_item_at=datetime.now(UTC) - timedelta(hours=48), items=[])
     minted = datetime.now(UTC) - timedelta(days=10)
     fresh = SimpleNamespace(
-        id=1, kind="aggregate", affinity_score=0.0, generated_at=minted, story=story,
+        id=1,
+        kind="aggregate",
+        affinity_score=0.0,
+        generated_at=minted,
+        story=story,
         publish_at=None,
     )
     stale = SimpleNamespace(
-        id=2, kind="aggregate", affinity_score=0.0, generated_at=minted, story=stale_story,
+        id=2,
+        kind="aggregate",
+        affinity_score=0.0,
+        generated_at=minted,
+        story=stale_story,
         publish_at=None,
     )
     assert _rank_value(fresh) > _rank_value(stale)
@@ -248,8 +251,9 @@ def test_publish_at_wins_over_every_other_timestamp():
     made_now = _post(affinity=0.0, post_id=2)
     assert _rank_value(due_now) == pytest.approx(_rank_value(made_now), abs=1e-6)
     # And a scheduled post that is already due outranks one scheduled earlier.
-    earlier = _post(affinity=0.0, post_id=3, now=made,
-                    publish_at=datetime.now(UTC) - timedelta(hours=48))
+    earlier = _post(
+        affinity=0.0, post_id=3, now=made, publish_at=datetime.now(UTC) - timedelta(hours=48)
+    )
     assert _rank_value(due_now) > _rank_value(earlier)
 
 

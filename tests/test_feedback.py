@@ -70,9 +70,7 @@ async def test_a_bad_value_fails_the_whole_batch_before_anything_is_written():
     """Every value is validated before any is resolved or written, so a batch is
     never half-applied. Passing None as the session proves it never got that far."""
     with pytest.raises(feedback.FeedbackError, match="finite"):
-        await feedback.record_topic_weights(
-            None, {"genetics": 1.0, "ecology": float("inf")}
-        )
+        await feedback.record_topic_weights(None, {"genetics": 1.0, "ecology": float("inf")})
 
 
 async def test_a_batch_of_one_bad_topic_name_is_refused():
@@ -126,8 +124,14 @@ class _FakeSession:
 async def test_signals_are_grouped_per_post_and_dimension():
     rows = [
         Feedback(id=1, post_id=10, kind="like", source_ids=[], topics_snapshot=[]),
-        Feedback(id=2, post_id=10, kind="more_topic", topic="astronomy",
-                 source_ids=[], topics_snapshot=[]),
+        Feedback(
+            id=2,
+            post_id=10,
+            kind="more_topic",
+            topic="astronomy",
+            source_ids=[],
+            topics_snapshot=[],
+        ),
         Feedback(id=3, post_id=11, kind="hide_source", source_ids=[7], topics_snapshot=[]),
     ]
     signals = await feedback.signals_for_posts(_FakeSession(rows), [10, 11])

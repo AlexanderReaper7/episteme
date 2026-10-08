@@ -59,8 +59,8 @@ def test_unhandled_exception_renders_a_page_with_the_traceback(client):
     assert "<!DOCTYPE html>" in body or "<html" in body
     assert "Internal Server Error" in body
     assert "KeyError" in body
-    assert "_the_bug" in body            # the frame list is this stack
-    assert "return value[" in body       # ...with source lines (Jinja escapes the quotes)
+    assert "_the_bug" in body  # the frame list is this stack
+    assert "return value[" in body  # ...with source lines (Jinja escapes the quotes)
     assert "Raw traceback" in body
     # The error page must not be the fallback: reaching the fallback means the
     # template failed, and the two are otherwise easy to confuse on sight.
@@ -102,7 +102,7 @@ def test_a_bare_status_does_not_print_its_own_phrase_twice(client):
         raise HTTPException(404)
 
     body = client.get("/bare").text
-    assert "Not Found" in body                 # the heading still says it
+    assert "Not Found" in body  # the heading still says it
     assert 'class="error-summary"' not in body  # ...and nothing repeats it
     # The line is present when the detail is not just the status phrase.
     assert 'class="error-summary"' in client.get("/gone").text
@@ -123,7 +123,7 @@ def test_boosted_navigation_gets_a_swappable_fragment(client):
     assert response.headers["HX-Error-Page"] == "true"
     assert response.headers["HX-Retarget"] == "#main-content"
     body = response.text
-    assert "<html" not in body and "<body" not in body   # no document chrome
+    assert "<html" not in body and "<body" not in body  # no document chrome
     assert "<title>Episteme • 500 Internal Server Error</title>" in body
     assert "_the_bug" in body
 

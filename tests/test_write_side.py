@@ -38,9 +38,7 @@ def test_digest_is_qualitative_not_numeric():
 
 
 def test_digest_separates_interests_from_aversions():
-    text = describe(
-        ProfileState(topic_weights={"marine-biology": 3.0, "ai-hype": -3.0})
-    )
+    text = describe(ProfileState(topic_weights={"marine-biology": 3.0, "ai-hype": -3.0}))
     assert "Interested in: marine biology" in text
     assert "Wants less of: ai hype" in text
 
@@ -274,9 +272,7 @@ def test_the_same_block_definition_serves_the_feed_and_the_write_queue():
     from episteme.recommend import blocks
 
     profile = ProfileState(blocked_keywords=["crypto"])
-    assert len(blocks.filters(profile, Post.story_id)) == len(
-        blocks.filters(profile, Story.id)
-    )
+    assert len(blocks.filters(profile, Post.story_id)) == len(blocks.filters(profile, Story.id))
 
 
 @pytest.mark.parametrize("column_count", [0, 2])

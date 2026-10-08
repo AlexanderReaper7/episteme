@@ -40,9 +40,7 @@ def escape_like(keyword: str) -> str:
     return keyword
 
 
-def filters(
-    profile: ProfileState, story_id_column, text_columns: tuple = ()
-) -> list:
+def filters(profile: ProfileState, story_id_column, text_columns: tuple = ()) -> list:
     """SQLAlchemy conditions excluding blocked content.
 
     `story_id_column` is whatever identifies the story in the caller's query
@@ -85,8 +83,7 @@ def filters(
         # aggregate and WHERE discards it. One blocked keyword would silently
         # empty the feed of every aggregate card in it.
         matches.extend(
-            func.coalesce(column, "").ilike(pattern, escape=_LIKE_ESCAPE)
-            for column in text_columns
+            func.coalesce(column, "").ilike(pattern, escape=_LIKE_ESCAPE) for column in text_columns
         )
         conditions.append(~or_(*matches))
     return conditions

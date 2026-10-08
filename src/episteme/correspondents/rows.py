@@ -27,10 +27,7 @@ log = logging.getLogger("episteme.correspondents.rows")
 
 async def ensure_rows(session: AsyncSession) -> int:
     """Get-or-create one row per registered plugin. Returns how many were added."""
-    known = {
-        row.slug: row
-        for row in (await session.execute(select(Correspondent))).scalars()
-    }
+    known = {row.slug: row for row in (await session.execute(select(Correspondent))).scalars()}
     added = 0
     for plugin in plugins():
         row = known.get(plugin.slug)
@@ -50,8 +47,6 @@ async def ensure_rows(session: AsyncSession) -> int:
 async def enabled_slugs(session: AsyncSession) -> set[str]:
     return set(
         (
-            await session.execute(
-                select(Correspondent.slug).where(Correspondent.enabled.is_(True))
-            )
+            await session.execute(select(Correspondent.slug).where(Correspondent.enabled.is_(True)))
         ).scalars()
     )

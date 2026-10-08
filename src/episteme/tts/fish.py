@@ -112,9 +112,7 @@ async def stream_tts(
     async with httpx.AsyncClient(
         base_url=base_url, headers={"Authorization": f"Bearer {api_key}"}
     ) as client:
-        async with aconnect_ws(
-            "/v1/tts/live", client=client, headers={"model": model}
-        ) as ws:
+        async with aconnect_ws("/v1/tts/live", client=client, headers={"model": model}) as ws:
             await ws.send_bytes(ormsgpack.packb({"event": "start", "request": request}))
             await ws.send_bytes(ormsgpack.packb({"event": "text", "text": text}))
             await ws.send_bytes(ormsgpack.packb({"event": "stop"}))

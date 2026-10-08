@@ -146,9 +146,7 @@ async def test_a_budget_refusal_is_not_an_error():
 async def test_a_refusal_reaches_the_loop_as_a_refused_reply():
     """And the loop turns it into a reply rather than letting it escape: an
     exception out of `_dispatch` would end the turn instead of bouncing it."""
-    harness = harness_offering(
-        "web_search", context=ChatContext(session=None, max_searches=0)
-    )
+    harness = harness_offering("web_search", context=ChatContext(session=None, max_searches=0))
     reply = await _dispatch(harness, "web_search", {"query": "x"})
     assert reply.refused and "budget" in reply.content.lower()
 
@@ -225,9 +223,13 @@ def test_dropping_a_paragraph_leaves_no_hole():
 
 def _row(role, content="x", **kw):
     return SimpleNamespace(
-        id=kw.pop("id", 1), role=role, content=content,
-        tool_name=kw.pop("tool_name", None), tool_call_id=kw.pop("tool_call_id", None),
-        proposal_status=kw.pop("proposal_status", None), **kw,
+        id=kw.pop("id", 1),
+        role=role,
+        content=content,
+        tool_name=kw.pop("tool_name", None),
+        tool_call_id=kw.pop("tool_call_id", None),
+        proposal_status=kw.pop("proposal_status", None),
+        **kw,
     )
 
 
@@ -236,8 +238,13 @@ def _row(role, content="x", **kw):
     [
         (None, None),
         ("The reader currently has this article open.", [{"role": "user", "content": "hi"}]),
-        (None, [{"role": "assistant", "content": None, "tool_calls": []},
-                {"role": "tool", "tool_call_id": "c1", "content": "done"}]),
+        (
+            None,
+            [
+                {"role": "assistant", "content": None, "tool_calls": []},
+                {"role": "tool", "tool_call_id": "c1", "content": "done"},
+            ],
+        ),
     ],
 )
 def test_the_prompt_carries_exactly_one_system_message_and_it_is_first(header, tail):
@@ -247,8 +254,11 @@ def test_the_prompt_carries_exactly_one_system_message_and_it_is_first(header, t
     reports that as a bare 400 naming no message, so the only cheap way to keep
     it fixed is to assert the shape here. The header is now a prompt slot, which
     is what makes a second system message unreachable rather than avoided."""
-    rows = [_row("user"), _row("assistant"), _row("proposal", tool_name="write_article_from_url",
-                                                  proposal_status="approved")]
+    rows = [
+        _row("user"),
+        _row("assistant"),
+        _row("proposal", tool_name="write_article_from_url", proposal_status="approved"),
+    ]
     harness = chat.chat_harness(None, open_article=header)
     messages = chat.build_messages(harness, rows, tail=tail)
     systems = [i for i, m in enumerate(messages) if m["role"] == "system"]

@@ -117,9 +117,7 @@ async def tee_to_client(
 
     async def run() -> None:
         try:
-            result = await synthesize_to_file(
-                text=text, dest=dest, sink=queue.put, **synth_kwargs
-            )
+            result = await synthesize_to_file(text=text, dest=dest, sink=queue.put, **synth_kwargs)
             await on_success(result)
         except BaseException as exc:  # noqa: BLE001 — reported via on_failure
             log.warning("tee synthesis for %s failed: %s", dest.name, exc)

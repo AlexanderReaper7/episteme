@@ -126,12 +126,8 @@ def chat_harness(
             post_id=post_id,
             max_searches=settings.chat_max_searches,
             max_fetches=settings.chat_max_fetches,
-            search_exhausted=(
-                "Search budget exhausted for this turn; answer from what you have."
-            ),
-            fetch_exhausted=(
-                "Fetch budget exhausted for this turn; answer from what you have."
-            ),
+            search_exhausted=("Search budget exhausted for this turn; answer from what you have."),
+            fetch_exhausted=("Fetch budget exhausted for this turn; answer from what you have."),
         ),
         on_tool=on_tool,
     )
@@ -149,13 +145,17 @@ async def load_history(session: AsyncSession, chat_session_id: str) -> list[Chat
     amnesiac one that still looks like it is working.
     """
     rows = (
-        await session.execute(
-            select(ChatMessage)
-            .where(ChatMessage.session_id == chat_session_id)
-            .order_by(ChatMessage.id.desc())
-            .limit(settings.chat_history_turns)
+        (
+            await session.execute(
+                select(ChatMessage)
+                .where(ChatMessage.session_id == chat_session_id)
+                .order_by(ChatMessage.id.desc())
+                .limit(settings.chat_history_turns)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return list(reversed(rows))
 
 
@@ -385,11 +385,7 @@ async def stream_turn(
 ) -> AsyncIterator[dict]:
     """One conversational turn. Yields text deltas, tool notices, proposals, done."""
     history = await load_history(session, chat_session_id)
-    session.add(
-        ChatMessage(
-            session_id=chat_session_id, role="user", content=text, post_id=post_id
-        )
-    )
+    session.add(ChatMessage(session_id=chat_session_id, role="user", content=text, post_id=post_id))
     await session.commit()
 
     queue: asyncio.Queue = asyncio.Queue()

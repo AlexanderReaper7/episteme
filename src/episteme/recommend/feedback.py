@@ -76,9 +76,7 @@ async def _snapshot(session: AsyncSession, post_id: int) -> dict:
     source_ids = list(
         (
             await session.execute(
-                select(SourceItem.source_id)
-                .where(SourceItem.story_id == post.story_id)
-                .distinct()
+                select(SourceItem.source_id).where(SourceItem.story_id == post.story_id).distinct()
             )
         )
         .scalars()
@@ -88,7 +86,9 @@ async def _snapshot(session: AsyncSession, post_id: int) -> dict:
     index = await topics_module.slug_index(session)
     return {
         "post_id": post.id,
-        "embedding": list(story.centroid) if story is not None and story.centroid is not None else None,
+        "embedding": list(story.centroid)
+        if story is not None and story.centroid is not None
+        else None,
         "topics_snapshot": [topics_module.slug_for(label, index) for label in labels],
         "source_ids": source_ids,
         "difficulty": post.difficulty,
@@ -208,9 +208,7 @@ async def record_topic_weights(
             raise FeedbackError("set_topic needs a topic")
         cleaned.append((slug, _clean_weight("set_topic", weight)))
 
-    events = [
-        Feedback(kind="set_topic", topic=slug, value=value) for slug, value in cleaned
-    ]
+    events = [Feedback(kind="set_topic", topic=slug, value=value) for slug, value in cleaned]
     session.add_all(events)
     await session.commit()
     state = await rebuild(session)
@@ -318,7 +316,9 @@ async def recent(session: AsyncSession, limit: int = 50) -> list[Feedback]:
     return list(
         (
             await session.execute(
-                select(Feedback).order_by(Feedback.created_at.desc(), Feedback.id.desc()).limit(limit)
+                select(Feedback)
+                .order_by(Feedback.created_at.desc(), Feedback.id.desc())
+                .limit(limit)
             )
         )
         .scalars()
@@ -330,9 +330,7 @@ def _empty_signals() -> dict:
     return {"kinds": {}, "topics": {}, "sources": {}}
 
 
-async def signals_for_posts(
-    session: AsyncSession, post_ids: list[int]
-) -> dict[int, dict]:
+async def signals_for_posts(session: AsyncSession, post_ids: list[int]) -> dict[int, dict]:
     """Which signals already exist on each of these posts, in ONE query for the
     whole page — the feed renders its buttons in the state the reader left them,
     and an active button carries its own event id so undo stays exact.
@@ -345,12 +343,16 @@ async def signals_for_posts(
     if not post_ids:
         return {}
     events = (
-        await session.execute(
-            select(Feedback)
-            .where(Feedback.post_id.in_(post_ids), Feedback.kind != "nl_feedback")
-            .order_by(Feedback.id)
+        (
+            await session.execute(
+                select(Feedback)
+                .where(Feedback.post_id.in_(post_ids), Feedback.kind != "nl_feedback")
+                .order_by(Feedback.id)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     signals: dict[int, dict] = {}
     for event in events:
         bucket = signals.setdefault(event.post_id, _empty_signals())

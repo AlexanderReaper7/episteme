@@ -45,10 +45,7 @@ def _topic_entries(labels: list[str], index: dict) -> list[dict]:
     here is what keeps a chip rendering as pressed after the topic has been
     renamed. One definition, shared by the single-post and whole-page paths, so
     the two can't pair them differently."""
-    return [
-        {"label": label, "slug": topics_service.slug_for(label, index)}
-        for label in labels
-    ]
+    return [{"label": label, "slug": topics_service.slug_for(label, index)} for label in labels]
 
 
 def _post_labels(post: Post, story: Story | None) -> list[str]:
@@ -57,9 +54,7 @@ def _post_labels(post: Post, story: Story | None) -> list[str]:
     return list(post.topics or []) or list((story.topics if story else None) or [])
 
 
-async def post_context(
-    session: AsyncSession, post_id: int, variant: Variant = "article"
-) -> dict:
+async def post_context(session: AsyncSession, post_id: int, variant: Variant = "article") -> dict:
     """Everything `_feedback.html` needs for one post's control set: the signals
     already recorded, the topics that can be steered, and — on the article page —
     the outlets that can be hidden."""
@@ -98,9 +93,7 @@ async def feed_context(session: AsyncSession, posts: list[Post]) -> dict[int, di
     from the single query the feed already makes. Outlets are deliberately absent:
     hiding a whole publisher is destructive and stays on the article page.
     """
-    signals = await feedback_service.signals_for_posts(
-        session, [post.id for post in posts]
-    )
+    signals = await feedback_service.signals_for_posts(session, [post.id for post in posts])
     index = await topics_service.slug_index(session) if posts else {}
     contexts = {}
     for post in posts:
@@ -182,9 +175,7 @@ async def _tune_context(
             post.id: post
             for post in (
                 await session.execute(
-                    select(Post).where(
-                        Post.id.in_([e.post_id for e in events if e.post_id])
-                    )
+                    select(Post).where(Post.id.in_([e.post_id for e in events if e.post_id]))
                 )
             ).scalars()
         }
@@ -196,9 +187,7 @@ async def _tune_context(
         # and selecting whole Topic rows would drag a 1024-dim embedding per entry
         # across for a list of strings.
         vocabulary = list(
-            (await session.execute(select(Topic.label).order_by(Topic.label)))
-            .scalars()
-            .all()
+            (await session.execute(select(Topic.label).order_by(Topic.label))).scalars().all()
         )
         slug_labels = await topics_service.slug_labels(session)
     return {
@@ -217,9 +206,7 @@ async def _tune_context(
         # strongest pull and the strongest push are both at the top.
         "topic_rows": [
             (slug, slug_labels.get(slug) or slug.replace("-", " "), weight)
-            for slug, weight in sorted(
-                state.topic_weights.items(), key=lambda kv: -abs(kv[1])
-            )
+            for slug, weight in sorted(state.topic_weights.items(), key=lambda kv: -abs(kv[1]))
         ],
         # Bars are drawn as a fraction of the clamp, so the scale a weight is
         # measured against is the same one that bounds it.
@@ -278,9 +265,7 @@ def _number(raw: str) -> float:
         raise feedback_service.FeedbackError(f"“{raw}” is not a number") from None
 
 
-def changed_weights(
-    submitted: dict[str, str], dirty_field: str | None
-) -> dict[str, str]:
+def changed_weights(submitted: dict[str, str], dirty_field: str | None) -> dict[str, str]:
     """Which of the submitted sliders the reader actually moved.
 
     The browser posts the whole list, so this is the guard against an untouched
@@ -380,13 +365,9 @@ async def tune_block(request: Request):
     async with SessionLocal() as session:
         try:
             if keyword:
-                await feedback_service.record(
-                    session, "block_keyword", keyword=keyword
-                )
+                await feedback_service.record(session, "block_keyword", keyword=keyword)
             elif raw_source:
-                await feedback_service.record(
-                    session, "hide_source", source_id=int(raw_source)
-                )
+                await feedback_service.record(session, "hide_source", source_id=int(raw_source))
             else:
                 raise feedback_service.FeedbackError("Name a word or pick an outlet")
         except feedback_service.FeedbackError as exc:
@@ -414,9 +395,7 @@ async def tune_unblock(
     async with SessionLocal() as session:
         try:
             if keyword:
-                await feedback_service.record(
-                    session, "unblock_keyword", keyword=keyword
-                )
+                await feedback_service.record(session, "unblock_keyword", keyword=keyword)
             elif source_id is not None:
                 await feedback_service.unblock_source(session, source_id)
             else:

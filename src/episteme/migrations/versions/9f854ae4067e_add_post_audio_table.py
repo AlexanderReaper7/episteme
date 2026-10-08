@@ -9,8 +9,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = '9f854ae4067e'
-down_revision = '3daf6dbaefc3'
+revision = "9f854ae4067e"
+down_revision = "3daf6dbaefc3"
 branch_labels = None
 depends_on = None
 
@@ -38,27 +38,38 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.create_table('post_audio',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('post_id', sa.Integer(), nullable=False),
-    sa.Column('voice', sa.Text(), nullable=False),
-    sa.Column('status', sa.String(length=20), nullable=False),
-    sa.Column('path', sa.Text(), nullable=True),
-    sa.Column('model', sa.Text(), nullable=True),
-    sa.Column('audio_format', sa.String(length=10), nullable=False),
-    sa.Column('duration_seconds', sa.Float(), nullable=True),
-    sa.Column('char_count', sa.Integer(), nullable=False),
-    sa.Column('script_hash', sa.String(length=64), nullable=True),
-    sa.Column('error', sa.Text(), nullable=True),
-    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.ForeignKeyConstraint(['post_id'], ['posts.id'], ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('id'),
-    sa.UniqueConstraint('post_id', 'voice', name='uq_post_audio_post_voice')
+    op.create_table(
+        "post_audio",
+        sa.Column("id", sa.Integer(), nullable=False),
+        sa.Column("post_id", sa.Integer(), nullable=False),
+        sa.Column("voice", sa.Text(), nullable=False),
+        sa.Column("status", sa.String(length=20), nullable=False),
+        sa.Column("path", sa.Text(), nullable=True),
+        sa.Column("model", sa.Text(), nullable=True),
+        sa.Column("audio_format", sa.String(length=10), nullable=False),
+        sa.Column("duration_seconds", sa.Float(), nullable=True),
+        sa.Column("char_count", sa.Integer(), nullable=False),
+        sa.Column("script_hash", sa.String(length=64), nullable=True),
+        sa.Column("error", sa.Text(), nullable=True),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.ForeignKeyConstraint(["post_id"], ["posts.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("post_id", "voice", name="uq_post_audio_post_voice"),
     )
-    op.create_index('ix_post_audio_post_id', 'post_audio', ['post_id'])
+    op.create_index("ix_post_audio_post_id", "post_audio", ["post_id"])
 
 
 def downgrade() -> None:
-    op.drop_index('ix_post_audio_post_id', table_name='post_audio')
-    op.drop_table('post_audio')
+    op.drop_index("ix_post_audio_post_id", table_name="post_audio")
+    op.drop_table("post_audio")

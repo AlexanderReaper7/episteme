@@ -66,8 +66,7 @@ def prune_cutoffs(
         "failed": failed_days,
     }
     return {
-        name: (now - timedelta(days=value)) if value > 0 else None
-        for name, value in days.items()
+        name: (now - timedelta(days=value)) if value > 0 else None for name, value in days.items()
     }
 
 
@@ -107,9 +106,7 @@ async def _delete_finished(
     if tasks is not None:
         task_filter = "AND j.task_name = ANY(:tasks)"
         params["tasks"] = tasks
-    result = await session.execute(
-        text(_DELETE.format(task_filter=task_filter)), params
-    )
+    result = await session.execute(text(_DELETE.format(task_filter=task_filter)), params)
     return result.rowcount or 0
 
 
@@ -132,9 +129,7 @@ async def prune_job_history(
     cutoffs = prune_cutoffs(
         now or datetime.now(UTC),
         maintenance_days=(
-            settings.job_history_maintenance_days
-            if maintenance_days is None
-            else maintenance_days
+            settings.job_history_maintenance_days if maintenance_days is None else maintenance_days
         ),
         ingest_days=settings.job_history_ingest_days if ingest_days is None else ingest_days,
         work_days=settings.job_history_work_days if work_days is None else work_days,
@@ -154,9 +149,7 @@ async def prune_job_history(
         cutoff = cutoffs.get(class_name)
         if cutoff is None:
             continue
-        count = await _delete_finished(
-            session, statuses=("succeeded",), cutoff=cutoff, tasks=tasks
-        )
+        count = await _delete_finished(session, statuses=("succeeded",), cutoff=cutoff, tasks=tasks)
         if count:
             deleted[class_name] = count
     if (failed_cutoff := cutoffs["failed"]) is not None:

@@ -75,9 +75,7 @@ def _context(backend=None, pipeline=None, llm=None, **kwargs):
     """backend_context with every read pre-supplied, so nothing touches the host
     agent, the endpoints or the database - the same path the dashboard render
     takes."""
-    return asyncio.run(
-        backend_context(backend or UP, pipeline or RUNNING, llm or LLM, **kwargs)
-    )
+    return asyncio.run(backend_context(backend or UP, pipeline or RUNNING, llm or LLM, **kwargs))
 
 
 def _panel(**kwargs):
@@ -140,9 +138,7 @@ def test_the_force_offer_rides_in_the_poll_url():
     root = re.search(r'<div id="backend-state"[^>]*>', _panel(offer_force=True)).group(0)
     assert "offer_force=true" in root
     assert "force stop" in _panel(offer_force=True)
-    assert "offer_force" not in re.search(
-        r'<div id="backend-state"[^>]*>', _panel()
-    ).group(0)
+    assert "offer_force" not in re.search(r'<div id="backend-state"[^>]*>', _panel()).group(0)
 
 
 def test_the_action_message_sits_outside_the_polled_block():
@@ -216,18 +212,26 @@ def test_the_digest_moves_when_an_endpoint_stops_answering():
     """The user-visible symptom that started this: the endpoint dot stayed green
     until somebody reloaded. If the digest does not carry endpoint health, the
     poll answers 204 forever and the card never comes back."""
-    down = {**LLM, "endpoints": [{**LLM["endpoints"][0], "available": False, "models": []},
-                                 LLM["endpoints"][1]]}
+    down = {
+        **LLM,
+        "endpoints": [
+            {**LLM["endpoints"][0], "available": False, "models": []},
+            LLM["endpoints"][1],
+        ],
+    }
     assert _context()["backend_hash"] != _context(UP, RUNNING, down)["backend_hash"]
 
 
 def test_the_digest_moves_when_the_router_swaps_which_model_is_loaded():
     """main↔fast is the state change with no process-level trace at all: same
     PIDs, same ports, same uptime. Only the endpoint inventory says it happened."""
-    swapped = {**LLM, "endpoints": [
-        {**LLM["endpoints"][0], "models": [{"id": "Qwopus-Fast", "status": "loaded"}]},
-        LLM["endpoints"][1],
-    ]}
+    swapped = {
+        **LLM,
+        "endpoints": [
+            {**LLM["endpoints"][0], "models": [{"id": "Qwopus-Fast", "status": "loaded"}]},
+            LLM["endpoints"][1],
+        ],
+    }
     assert _context()["backend_hash"] != _context(UP, RUNNING, swapped)["backend_hash"]
 
 
@@ -279,8 +283,13 @@ def test_the_digest_ignores_pause_fields_the_panel_does_not_render():
 
 def _request():
     return Request(
-        {"type": "http", "method": "GET", "path": "/admin/partials/backend",
-         "headers": [], "query_string": b""}
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/admin/partials/backend",
+            "headers": [],
+            "query_string": b"",
+        }
     )
 
 

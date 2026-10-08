@@ -16,9 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..models import PostAudio
 
 
-async def upsert_post_audio(
-    session: AsyncSession, post_id: int, voice: str, **fields
-) -> None:
+async def upsert_post_audio(session: AsyncSession, post_id: int, voice: str, **fields) -> None:
     """Insert-or-update the post_audio row for (post_id, voice). `onupdate=` is
     not applied by on_conflict_do_update, so updated_at is set explicitly."""
     stmt = pg_insert(PostAudio).values(post_id=post_id, voice=voice, **fields)

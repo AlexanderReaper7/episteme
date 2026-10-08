@@ -12,31 +12,62 @@ from episteme.web.templating import templates
 ALL_SECTIONS = [
     {"type": "prose", "text": "**bold** body"},
     {"type": "key_points", "items": ["point one", "point two"]},
-    {"type": "image", "url": "https://cdn.example.org/webb.jpg", "caption": "The nebula",
-     "attribution": "ESA Webb", "source_url": "https://esa.int/a1"},
-    {"type": "video", "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-     "caption": "Flyover", "attribution": "NASA", "source_url": "https://nasa.gov/a2"},
-    {"type": "quiz", "questions": [
-        {"question": "Why is the sky blue?",
-         "choices": ["Rayleigh scattering", "Ozone"], "answer_index": 0,
-         "explanation": "Shorter wavelengths scatter more."}]},
-    {"type": "chart", "spec": {"mark": "bar", "data": {"values": [{"x": "a", "y": 1}]}},
-     "caption": "Counts"},
+    {
+        "type": "image",
+        "url": "https://cdn.example.org/webb.jpg",
+        "caption": "The nebula",
+        "attribution": "ESA Webb",
+        "source_url": "https://esa.int/a1",
+    },
+    {
+        "type": "video",
+        "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        "caption": "Flyover",
+        "attribution": "NASA",
+        "source_url": "https://nasa.gov/a2",
+    },
+    {
+        "type": "quiz",
+        "questions": [
+            {
+                "question": "Why is the sky blue?",
+                "choices": ["Rayleigh scattering", "Ozone"],
+                "answer_index": 0,
+                "explanation": "Shorter wavelengths scatter more.",
+            }
+        ],
+    },
+    {
+        "type": "chart",
+        "spec": {"mark": "bar", "data": {"values": [{"x": "a", "y": 1}]}},
+        "caption": "Counts",
+    },
     {"type": "diagram", "mermaid": "flowchart LR; A --> B", "caption": "Flow"},
-    {"type": "timeline", "events": [{"date": "1969", "label": "Apollo 11"},
-                                    {"date": "2026", "label": "Artemis II"}]},
+    {
+        "type": "timeline",
+        "events": [{"date": "1969", "label": "Apollo 11"}, {"date": "2026", "label": "Artemis II"}],
+    },
     {"type": "glossary", "terms": [{"term": "quasar", "definition": "a luminous AGN"}]},
     {"type": "sources", "items": [{"title": "Src", "url": "https://s.org/1", "outlet": "S"}]},
-    {"type": "further_reading", "items": [{"title": "More", "url": "https://m.org/1",
-                                           "outlet": "M"}]},
+    {
+        "type": "further_reading",
+        "items": [{"title": "More", "url": "https://m.org/1", "outlet": "M"}],
+    },
 ]
 
 
 def _render(sections):
     post = Post(
-        id=1, kind="article", title="T", summary="S", difficulty="intermediate",
-        topics=["astronomy"], sections=sections, reading_time_minutes=3,
-        generated_at=datetime(2026, 7, 19, tzinfo=UTC), model_used="test-model",
+        id=1,
+        kind="article",
+        title="T",
+        summary="S",
+        difficulty="intermediate",
+        topics=["astronomy"],
+        sections=sections,
+        reading_time_minutes=3,
+        generated_at=datetime(2026, 7, 19, tzinfo=UTC),
+        model_used="test-model",
     )
     # `_feedback.html` is a strict component — it renders from the database state
     # its route supplies and has no defaults, so a caller that forgets the context
@@ -58,17 +89,17 @@ def _render(sections):
 
 def test_all_section_types_render():
     html = _render(ALL_SECTIONS)
-    assert "<strong>bold</strong>" in html                                # prose markdown
-    assert "point one" in html                                            # key_points
-    assert 'src="https://cdn.example.org/webb.jpg"' in html               # image hotlink
-    assert "ESA Webb" in html                                             # stamped attribution
+    assert "<strong>bold</strong>" in html  # prose markdown
+    assert "point one" in html  # key_points
+    assert 'src="https://cdn.example.org/webb.jpg"' in html  # image hotlink
+    assert "ESA Webb" in html  # stamped attribution
     assert 'src="https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ"' in html  # whitelist embed
-    assert "data-answer=" in html and "Rayleigh scattering" in html       # quiz
-    assert "data-spec=" in html and "chart-target" in html                # chart
-    assert 'class="mermaid"' in html and "flowchart LR" in html           # diagram
-    assert "Apollo 11" in html                                            # timeline
-    assert "quasar" in html                                               # glossary
-    assert "https://s.org/1" in html and "https://m.org/1" in html        # citation tails
+    assert "data-answer=" in html and "Rayleigh scattering" in html  # quiz
+    assert "data-spec=" in html and "chart-target" in html  # chart
+    assert 'class="mermaid"' in html and "flowchart LR" in html  # diagram
+    assert "Apollo 11" in html  # timeline
+    assert "quasar" in html  # glossary
+    assert "https://s.org/1" in html and "https://m.org/1" in html  # citation tails
 
 
 def test_sections_expose_hydration_markers_not_inline_scripts():
@@ -84,13 +115,22 @@ def test_sections_expose_hydration_markers_not_inline_scripts():
     assert 'src="/static/vendor/vega' not in with_chart
     assert "post.js" not in with_chart
 
-    with_diagram = _render([{"type": "diagram", "mermaid": "flowchart LR; A --> B",
-                             "caption": "c"}])
+    with_diagram = _render(
+        [{"type": "diagram", "mermaid": "flowchart LR; A --> B", "caption": "c"}]
+    )
     assert 'class="mermaid"' in with_diagram
     assert 'src="/static/vendor/mermaid.min.js' not in with_diagram
 
-    with_quiz = _render([{"type": "quiz", "questions": [
-        {"question": "q", "choices": ["a", "b"], "answer_index": 1, "explanation": "e"}]}])
+    with_quiz = _render(
+        [
+            {
+                "type": "quiz",
+                "questions": [
+                    {"question": "q", "choices": ["a", "b"], "answer_index": 1, "explanation": "e"}
+                ],
+            }
+        ]
+    )
     assert "section-quiz" in with_quiz and "data-answer=" in with_quiz
 
     prose_only = _render([{"type": "prose", "text": "just text"}])
@@ -100,12 +140,23 @@ def test_sections_expose_hydration_markers_not_inline_scripts():
     assert 'src="/static/vendor/mermaid.min.js' not in prose_only
 
 
-MULTI_QUIZ = {"type": "quiz", "questions": [
-    {"question": "Why is the sky blue?", "choices": ["Rayleigh scattering", "Ozone"],
-     "answer_index": 0, "explanation": "Shorter wavelengths scatter more."},
-    {"question": "Why are sunsets red?", "choices": ["Dust", "Longer path length", "Ozone"],
-     "answer_index": 1, "explanation": "Blue is scattered out of the line of sight."},
-]}
+MULTI_QUIZ = {
+    "type": "quiz",
+    "questions": [
+        {
+            "question": "Why is the sky blue?",
+            "choices": ["Rayleigh scattering", "Ozone"],
+            "answer_index": 0,
+            "explanation": "Shorter wavelengths scatter more.",
+        },
+        {
+            "question": "Why are sunsets red?",
+            "choices": ["Dust", "Longer path length", "Ozone"],
+            "answer_index": 1,
+            "explanation": "Blue is scattered out of the line of sight.",
+        },
+    ],
+}
 
 
 def _quiz_answers(html):
@@ -128,9 +179,9 @@ def _quiz_answers(html):
 def test_multi_question_quiz_renders_one_check_with_numbered_items():
     html = _render([MULTI_QUIZ])
     assert html.count('class="quiz-item"') == 2
-    assert html.count("Check your understanding") == 1   # one heading, not one per question
+    assert html.count("Check your understanding") == 1  # one heading, not one per question
     assert "Question 1 of 2" in html and "Question 2 of 2" in html
-    assert "Shorter wavelengths scatter more." in html   # per-question explanation
+    assert "Shorter wavelengths scatter more." in html  # per-question explanation
 
 
 def test_single_question_quiz_omits_numbering():
@@ -180,7 +231,16 @@ def test_malformed_quiz_question_renders_without_raising():
 
 
 def test_video_without_embeddable_url_falls_back_to_link():
-    html = _render([{"type": "video", "url": "https://example.org/raw.mp4",
-                     "caption": "c", "attribution": "X", "source_url": "https://x.org"}])
+    html = _render(
+        [
+            {
+                "type": "video",
+                "url": "https://example.org/raw.mp4",
+                "caption": "c",
+                "attribution": "X",
+                "source_url": "https://x.org",
+            }
+        ]
+    )
     assert "<iframe" not in html
     assert 'href="https://example.org/raw.mp4"' in html

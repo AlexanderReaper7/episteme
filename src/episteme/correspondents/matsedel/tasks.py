@@ -83,19 +83,18 @@ async def matsedel_scrape() -> None:
         await session.commit()
 
         if failed and not read and not whole:
-            raise RuntimeError(
-                "No kitchen could be read: " + "; ".join(failed)
-            )
+            raise RuntimeError("No kitchen could be read: " + "; ".join(failed))
         for filed in sorted(mondays):
             await file_week(session, filed)
         await session.commit()
     log.info(
-        "Matsedel week of %s: %d read (%s), %d already whole, %d not published yet "
-        "(%s), %d failed",
+        "Matsedel week of %s: %d read (%s), %d already whole, %d not published yet (%s), %d failed",
         monday,
-        len(read), ", ".join(read) or "-",
+        len(read),
+        ", ".join(read) or "-",
         len(whole),
-        len(behind), ", ".join(behind) or "-",
+        len(behind),
+        ", ".join(behind) or "-",
         len(failed),
     )
 
@@ -142,10 +141,14 @@ async def matsedel_notify() -> None:
     href = day_href(today)
     async with SessionLocal() as session:
         post = (
-            await session.execute(
-                select(Post).where(Post.href == href, Post.status == "published")
+            (
+                await session.execute(
+                    select(Post).where(Post.href == href, Post.status == "published")
+                )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
         if post is None:
             log.info("No lunch post for %s; nothing to notify", today)
             return

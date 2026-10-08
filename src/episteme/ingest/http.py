@@ -88,9 +88,7 @@ class FetchError(Exception):
 class FetchResponse:
     """Minimal, transport-agnostic response returned by `polite_get`."""
 
-    def __init__(
-        self, status_code: int, content: bytes, text: str, headers: httpx.Headers
-    ) -> None:
+    def __init__(self, status_code: int, content: bytes, text: str, headers: httpx.Headers) -> None:
         self.status_code = status_code
         self.content = content
         self.text = text
@@ -170,9 +168,7 @@ async def polite_get(
         timeout=settings.http_timeout_seconds, follow_redirects=follow_redirects, headers=headers
     ) as client:
         response = await client.get(url, extensions=extensions)
-    return FetchResponse(
-        response.status_code, response.content, response.text, response.headers
-    )
+    return FetchResponse(response.status_code, response.content, response.text, response.headers)
 
 
 def parse_retry_after(value: str | None) -> int | None:

@@ -142,9 +142,7 @@ class Harness:
             return ""
         added = get(name)
         _check_context(self.name, added, self.context)
-        at = next(
-            (i for i, tool in enumerate(self._tools) if tool.terminal), len(self._tools)
-        )
+        at = next((i for i, tool in enumerate(self._tools) if tool.terminal), len(self._tools))
         self._tools.insert(at, added)
         log.info("%s: offered %s mid-run", self.name, name)
         return because

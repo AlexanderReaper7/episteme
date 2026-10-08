@@ -136,14 +136,18 @@ async def _rehome_aggregate_card(session: AsyncSession, story: Story, item: Sour
     story's current one.
     """
     post = (
-        await session.execute(
-            select(Post).where(
-                Post.story_id == story.id,
-                Post.kind == "aggregate",
-                Post.status == "published",
+        (
+            await session.execute(
+                select(Post).where(
+                    Post.story_id == story.id,
+                    Post.kind == "aggregate",
+                    Post.status == "published",
+                )
             )
         )
-    ).scalars().first()
+        .scalars()
+        .first()
+    )
     if post is None:
         return
     current = await _primary_item(session, story.id)
@@ -221,9 +225,7 @@ async def triage_stories(
         if limit is not None:
             query = query.limit(limit)
     stories = (await session.execute(query)).scalars().all()
-    reader = profile.describe(
-        await profile.load(session), labels=await topics.slug_labels(session)
-    )
+    reader = profile.describe(await profile.load(session), labels=await topics.slug_labels(session))
     triaged = 0
     for story in stories:
         if await pause_requested(session):
@@ -236,9 +238,7 @@ async def triage_stories(
             prompt += f"\n\nThe reader:\n{reader}"
         try:
             with llm_context(stage="triage", story_id=story.id):
-                result = await gateway.complete_json(
-                    "fast", TRIAGE_SYSTEM, prompt, TriageResult
-                )
+                result = await gateway.complete_json("fast", TRIAGE_SYSTEM, prompt, TriageResult)
         except LLMUnavailable:
             raise
         except LLMError as exc:
@@ -445,9 +445,7 @@ def _reading_time(sections: list[dict]) -> int:
     return max(1, round(words / 220))
 
 
-def _writer_seed(
-    sources: list[str], candidates: dict[str, dict], reader: str = ""
-) -> str:
+def _writer_seed(sources: list[str], candidates: dict[str, dict], reader: str = "") -> str:
     seed = (
         "Source items for this story (trusted feed). Research to deepen the story — "
         "fetch these URLs to recover links they contain, search for primary sources — "
@@ -494,13 +492,17 @@ async def _primary_item(session: AsyncSession, story_id: int) -> SourceItem | No
     Ordered by `PRIMARY_ITEM_ORDER`, the same expression `Story.items` carries, so
     this and a rendered card cannot pick different rows."""
     return (
-        await session.execute(
-            select(SourceItem)
-            .where(SourceItem.story_id == story_id)
-            .order_by(*PRIMARY_ITEM_ORDER)
-            .limit(1)
+        (
+            await session.execute(
+                select(SourceItem)
+                .where(SourceItem.story_id == story_id)
+                .order_by(*PRIMARY_ITEM_ORDER)
+                .limit(1)
+            )
         )
-    ).scalars().first()
+        .scalars()
+        .first()
+    )
 
 
 async def ensure_aggregate_post(session: AsyncSession, story: Story) -> None:
@@ -625,9 +627,7 @@ async def _rank_write_queue(
         candidate = scorers.Candidate(
             post_id=0,
             embedding=list(story.centroid) if story.centroid is not None else None,
-            topic_slugs=[
-                topics.slug_for(label, slugs) for label in (story.topics or [])
-            ],
+            topic_slugs=[topics.slug_for(label, slugs) for label in (story.topics or [])],
             source_ids=by_story.get(story.id, []),
             # Quality is already the base term below; leaving it out of the
             # affinity here keeps it from being counted twice.
@@ -694,9 +694,7 @@ async def _resolve_deferred_topics(
         await session.rollback()
         return
     for post_id, raw_labels, known in deferred:
-        labels = dict(known) | {
-            raw: entries[raw].label for raw in raw_labels if raw in entries
-        }
+        labels = dict(known) | {raw: entries[raw].label for raw in raw_labels if raw in entries}
         post = await session.get(Post, post_id)
         if post is not None:
             post.topics = _ordered_labels(raw_labels, labels)
@@ -728,12 +726,16 @@ async def write_posts(
         # the outlet or keyword later, these become writable again untouched —
         # they simply never consume main-model minutes while the block stands.
         candidates = (
-            await session.execute(
-                pending.write_pending(profile_state).order_by(
-                    Story.rank_score.desc().nulls_last(), Story.last_item_at.desc()
+            (
+                await session.execute(
+                    pending.write_pending(profile_state).order_by(
+                        Story.rank_score.desc().nulls_last(), Story.last_item_at.desc()
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         stories = await _rank_write_queue(session, candidates, profile_state)
         stories = stories[: limit if limit is not None else settings.max_writes_per_run]
 
@@ -824,7 +826,9 @@ async def write_posts(
         # `ingest_url` already refused the pages that are genuinely empty.
         available_chars = source_chars + outcome.gathered_chars
         if not requested and available_chars < settings.min_write_chars:
-            await _demote(session, story, f"Too thin to write ({available_chars} chars after research)")
+            await _demote(
+                session, story, f"Too thin to write ({available_chars} chars after research)"
+            )
             await session.commit()
             log.info("Story %d aggregated: only %d chars after research", story.id, available_chars)
             continue
@@ -1052,12 +1056,16 @@ async def _prune_expired(session: AsyncSession) -> None:
     # Unlink the narration files first: the DB rows cascade away with the posts,
     # but the MP3s live on disk and would otherwise be orphaned.
     orphan_audio = (
-        await session.execute(
-            select(PostAudio.path)
-            .join(Post, Post.id == PostAudio.post_id)
-            .where(pruned_posts, PostAudio.path.is_not(None))
+        (
+            await session.execute(
+                select(PostAudio.path)
+                .join(Post, Post.id == PostAudio.post_id)
+                .where(pruned_posts, PostAudio.path.is_not(None))
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     audio_root = Path(settings.audio_dir)
     for rel_path in orphan_audio:
         try:
@@ -1176,7 +1184,10 @@ async def narrate_posts(
             narrated += 1
             log.info(
                 "Narrated post %d voice %s (%d chars, %d bytes)",
-                pid, voice_id, len(script), result.bytes_written,
+                pid,
+                voice_id,
+                len(script),
+                result.bytes_written,
             )
         except LLMUnavailable:
             # Nothing here talks to a model today; `script.build_script` is the

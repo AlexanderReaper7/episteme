@@ -49,7 +49,9 @@ async def test_complete_json_retries_on_invalid_then_succeeds():
         assert "failed validation" in body["messages"][1]["content"]
         return httpx.Response(
             200,
-            json=_completion('{"decision": "skip", "quality_score": 0.5, "topics": ["noise"], "reason": "spam"}'),
+            json=_completion(
+                '{"decision": "skip", "quality_score": 0.5, "topics": ["noise"], "reason": "spam"}'
+            ),
         )
 
     result = await _gateway_with(handler).complete_json("fast", "sys", "user", TriageResult)
@@ -75,7 +77,9 @@ async def test_complete_json_falls_back_to_json_object_format():
             return httpx.Response(400, json={"error": "unknown response_format"})
         return httpx.Response(
             200,
-            json=_completion('{"decision": "aggregate", "quality_score": 3, "topics": ["tech"], "reason": "ok"}'),
+            json=_completion(
+                '{"decision": "aggregate", "quality_score": 3, "topics": ["tech"], "reason": "ok"}'
+            ),
         )
 
     result = await _gateway_with(handler).complete_json("fast", "sys", "user", TriageResult)
@@ -118,10 +122,10 @@ async def test_http_status_errors_are_llm_errors_too():
 @pytest.mark.parametrize(
     "body",
     [
-        {"text": "<html>gateway timeout</html>"},          # 200, not JSON at all
+        {"text": "<html>gateway timeout</html>"},  # 200, not JSON at all
         {"json": {"error": {"message": "no slot available"}}},  # JSON, no choices
-        {"json": {"choices": []}},                          # choices, but empty
-        {"json": {"choices": [{"message": {}}]}},           # message, no content
+        {"json": {"choices": []}},  # choices, but empty
+        {"json": {"choices": [{"message": {}}]}},  # message, no content
     ],
     ids=["not-json", "no-choices", "empty-choices", "no-content"],
 )
@@ -284,7 +288,12 @@ async def test_unavailable_endpoints_names_only_the_down_one(endpoints, monkeypa
         return httpx.Response(200, json={"data": []})
 
     assert await _gateway_with(handler).unavailable_endpoints() == ["http://embed.test/v1"]
-    assert await _gateway_with(lambda r: httpx.Response(200, json={"data": []})).unavailable_endpoints() == []
+    assert (
+        await _gateway_with(
+            lambda r: httpx.Response(200, json={"data": []})
+        ).unavailable_endpoints()
+        == []
+    )
 
 
 async def test_unload_visits_every_endpoint_and_the_server_decides_what_unloads(
@@ -366,9 +375,12 @@ def test_post_draft_schema_discriminated_union():
     sections = [
         {"type": "prose", "text": "Body"},
         {"type": "key_points", "items": ["a", "b"]},
-        {"type": "quiz", "questions": [
-            {"question": "q?", "choices": ["a", "b"], "answer_index": 0,
-             "explanation": "e"}]},
+        {
+            "type": "quiz",
+            "questions": [
+                {"question": "q?", "choices": ["a", "b"], "answer_index": 0, "explanation": "e"}
+            ],
+        },
     ]
     draft = PostDraft.model_validate(
         {

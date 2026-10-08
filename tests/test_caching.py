@@ -39,10 +39,15 @@ _NO_FEEDBACK = {
 }
 
 
-def _post_page_etag(post, voices=_VOICES, default_voice="v1", tts_configured=True,
-                    block=None, feedback_ctx=None):
+def _post_page_etag(
+    post, voices=_VOICES, default_voice="v1", tts_configured=True, block=None, feedback_ctx=None
+):
     return _post_etag_impl(
-        post, voices, default_voice, tts_configured, block,
+        post,
+        voices,
+        default_voice,
+        tts_configured,
+        block,
         _NO_FEEDBACK if feedback_ctx is None else feedback_ctx,
     )
 
@@ -50,8 +55,7 @@ def _post_page_etag(post, voices=_VOICES, default_voice="v1", tts_configured=Tru
 def _request(headers: dict[str, str]) -> Request:
     raw = [(k.lower().encode(), v.encode()) for k, v in headers.items()]
     return Request(
-        {"type": "http", "method": "GET", "path": "/",
-         "query_string": b"", "headers": raw}
+        {"type": "http", "method": "GET", "path": "/", "query_string": b"", "headers": raw}
     )
 
 
@@ -124,8 +128,7 @@ def _page(posts, has_more=False, next_cursor=None, feedback=None):
         "has_more": has_more,
         "next_cursor": next_cursor,
         "feedback_contexts": {
-            post_id: {**empty, **context}
-            for post_id, context in (feedback or {}).items()
+            post_id: {**empty, **context} for post_id, context in (feedback or {}).items()
         },
     }
 
@@ -178,9 +181,18 @@ def test_feed_etag_changes_when_an_items_media_changes_the_banner():
     # banner without touching the item count or last_item_at — the etag must see it.
     base = _feed_etag(_page([_aggregate(items=[_item(id=1, media_refs=[])])]))
     with_img = _feed_etag(
-        _page([_aggregate(items=[_item(
-            id=1, media_refs=[{"kind": "image", "url": "https://example.org/new.jpg"}]
-        )])])
+        _page(
+            [
+                _aggregate(
+                    items=[
+                        _item(
+                            id=1,
+                            media_refs=[{"kind": "image", "url": "https://example.org/new.jpg"}],
+                        )
+                    ]
+                )
+            ]
+        )
     )
     assert with_img != base
 
@@ -199,17 +211,19 @@ def test_post_etag_moves_on_qa_revision_of_a_article():
     base = _post_page_etag(_article(), _VOICES, "v1", True)
     revised = _post_page_etag(
         _article(sections=[{"type": "prose", "text": "rewritten"}], quality_score=0.3),
-        _VOICES, "v1", True,
+        _VOICES,
+        "v1",
+        True,
     )
     assert revised != base
 
 
 def test_post_etag_tracks_narration_controls():
     base = _post_page_etag(_article(), _VOICES, "v1", True)
-    assert _post_page_etag(_article(), _VOICES, "v1", False) != base            # tts off
-    assert _post_page_etag(_article(), _VOICES, "v2", True) != base             # default voice
+    assert _post_page_etag(_article(), _VOICES, "v1", False) != base  # tts off
+    assert _post_page_etag(_article(), _VOICES, "v2", True) != base  # default voice
     more_voices = _VOICES + [SimpleNamespace(id="v2", label="Two", enabled=True)]
-    assert _post_page_etag(_article(), more_voices, "v1", True) != base         # catalog
+    assert _post_page_etag(_article(), more_voices, "v1", True) != base  # catalog
 
 
 # `test_aggregate_post_etag_folds_in_story_items` lived here until 2026-08-28. An
@@ -259,9 +273,7 @@ def test_history_restore_and_boosted_click_never_share_a_feed_validator():
     )
     boosted = _feed_etag(
         page,
-        fragment_block(
-            _request({"HX-Request": "true", "HX-Target": "main-content"}), "feed.html"
-        ),
+        fragment_block(_request({"HX-Request": "true", "HX-Target": "main-content"}), "feed.html"),
     )
     # The restore gets the same full document a plain hit does — same body, so
     # sharing that validator is correct and cheap.
@@ -322,14 +334,10 @@ def test_items_partial_etag_tracks_content_and_pagination():
     base = _items_partial_etag(_items_page([_item(id=1, title="T")]))
     assert _items_partial_etag(_items_page([_item(id=1, title="T2")])) != base
     # A re-fetch adding an image (drives the card banner) must move it.
-    assert _items_partial_etag(
-        _items_page([_item(id=1, title="T", media_refs=[])])
-    ) != base
+    assert _items_partial_etag(_items_page([_item(id=1, title="T", media_refs=[])])) != base
     # Pagination state is folded in.
     one = _items_partial_etag(_items_page([_item(id=1)], has_more=False))
-    two = _items_partial_etag(
-        _items_page([_item(id=1)], has_more=True, next_cursor={"id": 9})
-    )
+    two = _items_partial_etag(_items_page([_item(id=1)], has_more=True, next_cursor={"id": 9}))
     assert one != two
 
 
@@ -337,8 +345,14 @@ def test_items_partial_etag_tracks_content_and_pagination():
 
 
 def _prov_post(**kw):
-    base = dict(id=100, status="published", archived_at=None, pinned=False,
-                quality_score=0.8, generated_at="2026-07-21T09:00:00")
+    base = dict(
+        id=100,
+        status="published",
+        archived_at=None,
+        pinned=False,
+        quality_score=0.8,
+        generated_at="2026-07-21T09:00:00",
+    )
     base.update(kw)
     return base
 
@@ -362,9 +376,10 @@ def test_provenance_etag_moves_on_new_call_pin_or_archival():
     assert _provenance_etag(_prov_post(), [_call(1, pinned=True)], block=None) != base
     # The post pinned / archived / re-scored.
     assert _provenance_etag(_prov_post(pinned=True), [_call(1)], block=None) != base
-    assert _provenance_etag(
-        _prov_post(archived_at="2026-07-22T00:00:00"), [_call(1)], block=None
-    ) != base
+    assert (
+        _provenance_etag(_prov_post(archived_at="2026-07-22T00:00:00"), [_call(1)], block=None)
+        != base
+    )
     assert _provenance_etag(_prov_post(quality_score=0.3), [_call(1)], block=None) != base
 
 
@@ -415,9 +430,10 @@ def test_post_etag_moves_when_the_post_gains_feedback():
     base = _post_page_etag(post)
     assert _post_page_etag(post, feedback_ctx={**_NO_FEEDBACK, "signals": {"like": 4}}) != base
     # Topic and source steering render on the article page too, so they count.
-    assert _post_page_etag(
-        post, feedback_ctx={**_NO_FEEDBACK, "topic_signals": {("astronomy", "more_topic"): 5}}
-    ) != base
-    assert _post_page_etag(
-        post, feedback_ctx={**_NO_FEEDBACK, "source_signals": {7: 6}}
-    ) != base
+    assert (
+        _post_page_etag(
+            post, feedback_ctx={**_NO_FEEDBACK, "topic_signals": {("astronomy", "more_topic"): 5}}
+        )
+        != base
+    )
+    assert _post_page_etag(post, feedback_ctx={**_NO_FEEDBACK, "source_signals": {7: 6}}) != base

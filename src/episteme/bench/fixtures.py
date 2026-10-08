@@ -182,7 +182,10 @@ async def capture(
     await session.commit()
     log.info(
         "Captured fixture %r from chain %s: %d messages, ~%s tokens",
-        name, chain_id, len(messages), fixture.prompt_tokens,
+        name,
+        chain_id,
+        len(messages),
+        fixture.prompt_tokens,
     )
     return fixture
 
@@ -242,5 +245,8 @@ def synthetic_messages(approx_tokens: int) -> list[dict]:
     repeats = max(1, int(approx_tokens * 4 / len(sentence)))
     return [
         {"role": "system", "content": "You are a benchmark target. Answer briefly."},
-        {"role": "user", "content": sentence * repeats + "\n\nSummarize the above in one sentence."},
+        {
+            "role": "user",
+            "content": sentence * repeats + "\n\nSummarize the above in one sentence.",
+        },
     ]

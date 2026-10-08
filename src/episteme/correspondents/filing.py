@@ -123,10 +123,14 @@ async def file_post(
     await _embed_story(session, story, rows)
 
     post = (
-        await session.execute(
-            select(Post).where(Post.story_id == story.id, Post.status == "published")
+        (
+            await session.execute(
+                select(Post).where(Post.story_id == story.id, Post.status == "published")
+            )
         )
-    ).scalars().first()
+        .scalars()
+        .first()
+    )
     if post is None:
         post = Post(story_id=story.id, kind=kind)
         session.add(post)
@@ -147,7 +151,10 @@ async def file_post(
     await session.flush()
     log.info(
         "Filed post %s for story %d (%d item(s), publish_at=%s)",
-        post.id, story.id, len(rows), publish_at,
+        post.id,
+        story.id,
+        len(rows),
+        publish_at,
     )
     return post
 
@@ -167,10 +174,14 @@ async def _require_correspondent_source(session: AsyncSession, source: Source) -
     plugin is exactly what an external correspondent is (0046).
     """
     slug = (
-        await session.execute(
-            select(Correspondent.slug).where(Correspondent.slug == source.type_name)
+        (
+            await session.execute(
+                select(Correspondent.slug).where(Correspondent.slug == source.type_name)
+            )
         )
-    ).scalars().first()
+        .scalars()
+        .first()
+    )
     if slug is None:
         raise FilingError(
             f"source {source.id} has type_name {source.type_name!r}, which is not a "
@@ -208,9 +219,7 @@ async def _upsert_items(
             # A key that already belongs to another source is a collision, not a
             # correction, and silently re-homing the row would move it out from
             # under whatever filed it first.
-            raise FilingError(
-                f"item key {item.key!r} already belongs to source {row.source_id}"
-            )
+            raise FilingError(f"item key {item.key!r} already belongs to source {row.source_id}")
         row.url = item.url
         row.title = item.title or item.url
         row.extracted_text = item.text
@@ -226,9 +235,7 @@ async def _upsert_items(
     return rows
 
 
-async def _story_for(
-    session: AsyncSession, rows: Sequence[SourceItem], now: datetime
-) -> Story:
+async def _story_for(session: AsyncSession, rows: Sequence[SourceItem], now: datetime) -> Story:
     """The story these items already belong to, or a new one.
 
     A re-file finds the story through its items, which is why no `period_key`
@@ -264,9 +271,7 @@ async def _story_for(
     return story
 
 
-async def _embed_story(
-    session: AsyncSession, story: Story, rows: Sequence[SourceItem]
-) -> None:
+async def _embed_story(session: AsyncSession, story: Story, rows: Sequence[SourceItem]) -> None:
     """Best effort, exactly as `manual.ingest_url` is.
 
     A missing vector costs this story its place in semantic search; it does not

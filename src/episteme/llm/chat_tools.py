@@ -143,13 +143,17 @@ async def _search_posts(ctx: ChatContext, args: dict) -> str:
 async def _list_recent_posts(ctx: ChatContext, args: dict) -> str:
     limit = max(1, min(int(args.get("limit") or 10), 30))
     rows = (
-        await ctx.session.execute(
-            select(Post)
-            .where(Post.status == "published", Post.kind == "article")
-            .order_by(Post.generated_at.desc())
-            .limit(limit)
+        (
+            await ctx.session.execute(
+                select(Post)
+                .where(Post.status == "published", Post.kind == "article")
+                .order_by(Post.generated_at.desc())
+                .limit(limit)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     if not rows:
         return "No posts yet."
     return "\n".join(_post_brief(post) for post in rows)

@@ -45,18 +45,20 @@ async def store_week(session: AsyncSession, source: Source, menu: WeekMenu) -> M
     win.
     """
     week = (
-        await session.execute(
-            select(MatsedelWeek).where(
-                MatsedelWeek.source_id == source.id,
-                MatsedelWeek.week_key == menu.week_key,
+        (
+            await session.execute(
+                select(MatsedelWeek).where(
+                    MatsedelWeek.source_id == source.id,
+                    MatsedelWeek.week_key == menu.week_key,
+                )
             )
         )
-    ).scalars().first()
+        .scalars()
+        .first()
+    )
     stored: dict[date, list[str]] = {}
     if week is None:
-        week = MatsedelWeek(
-            source_id=source.id, week_key=menu.week_key, monday=menu.monday
-        )
+        week = MatsedelWeek(source_id=source.id, week_key=menu.week_key, monday=menu.monday)
         session.add(week)
         await session.flush()
     else:
@@ -73,9 +75,7 @@ async def store_week(session: AsyncSession, source: Source, menu: WeekMenu) -> M
         # unique constraint on (week_id, position) makes a partial rewrite
         # collide with itself halfway through. A kept day is rewritten too, from
         # what was just read out, so one sequence still numbers the whole week.
-        await session.execute(
-            delete(MatsedelDish).where(MatsedelDish.week_id == week.id)
-        )
+        await session.execute(delete(MatsedelDish).where(MatsedelDish.week_id == week.id))
         week.monday = menu.monday
 
     site = (source.config or {}).get("site")
@@ -84,9 +84,7 @@ async def store_week(session: AsyncSession, source: Source, menu: WeekMenu) -> M
     kept: list[date] = []
     for serve_date in sorted(set(incoming) | set(stored)):
         lines = incoming.get(serve_date, [])
-        if not any(tag_of(site, line) != HIDDEN for line in lines) and stored.get(
-            serve_date
-        ):
+        if not any(tag_of(site, line) != HIDDEN for line in lines) and stored.get(serve_date):
             lines = stored[serve_date]
             kept.append(serve_date)
         for line in lines:
@@ -175,9 +173,7 @@ async def stored_weeks(session: AsyncSession, mondays: Sequence[date]) -> set[da
     return set(
         (
             await session.execute(
-                select(MatsedelWeek.monday)
-                .where(MatsedelWeek.monday.in_(list(mondays)))
-                .distinct()
+                select(MatsedelWeek.monday).where(MatsedelWeek.monday.in_(list(mondays))).distinct()
             )
         ).scalars()
     )

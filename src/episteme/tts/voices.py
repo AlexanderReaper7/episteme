@@ -65,14 +65,38 @@ class ParamField:
 # here (and the code that reads its keys) — no template or handler change.
 PROVIDER_PARAM_SCHEMAS: dict[str, list[ParamField]] = {
     "fish": [
-        ParamField("temperature", "temperature", step="0.05", min=0, placeholder="0.7",
-                   help="Randomness of the synthesis (Fish default 0.7)."),
-        ParamField("top_p", "top_p", step="0.05", min=0, max=1, placeholder="0.7",
-                   help="Nucleus sampling cutoff."),
-        ParamField("prosody.speed", "prosody.speed", step="0.05", min=0, placeholder="1.0",
-                   help="Speaking rate; 1.0 is natural, <1 slower."),
-        ParamField("prosody.volume", "prosody.volume", step="1", placeholder="0",
-                   help="Loudness offset in dB; 0 leaves it unchanged."),
+        ParamField(
+            "temperature",
+            "temperature",
+            step="0.05",
+            min=0,
+            placeholder="0.7",
+            help="Randomness of the synthesis (Fish default 0.7).",
+        ),
+        ParamField(
+            "top_p",
+            "top_p",
+            step="0.05",
+            min=0,
+            max=1,
+            placeholder="0.7",
+            help="Nucleus sampling cutoff.",
+        ),
+        ParamField(
+            "prosody.speed",
+            "prosody.speed",
+            step="0.05",
+            min=0,
+            placeholder="1.0",
+            help="Speaking rate; 1.0 is natural, <1 slower.",
+        ),
+        ParamField(
+            "prosody.volume",
+            "prosody.volume",
+            step="1",
+            placeholder="0",
+            help="Loudness offset in dB; 0 leaves it unchanged.",
+        ),
     ],
 }
 

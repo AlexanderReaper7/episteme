@@ -58,9 +58,17 @@ def test_build_script_skips_quiz_and_reads_media_captions():
         title="T",
         sections=[
             {"type": "image", "url": "http://x/a.jpg", "caption": "A galaxy cluster"},
-            {"type": "quiz", "questions": [
-                {"question": "Q?", "choices": ["a", "b"], "answer_index": 0,
-                 "explanation": "because"}]},
+            {
+                "type": "quiz",
+                "questions": [
+                    {
+                        "question": "Q?",
+                        "choices": ["a", "b"],
+                        "answer_index": 0,
+                        "explanation": "because",
+                    }
+                ],
+            },
             {"type": "chart", "spec": {}, "caption": ""},
         ],
     )
@@ -87,8 +95,16 @@ def test_script_hash_is_stable_and_content_sensitive():
 
 
 def test_build_script_empty_when_nothing_audible():
-    post = _post(sections=[{"type": "quiz", "questions": [
-        {"question": "Q", "choices": ["a", "b"], "answer_index": 0, "explanation": "e"}]}])
+    post = _post(
+        sections=[
+            {
+                "type": "quiz",
+                "questions": [
+                    {"question": "Q", "choices": ["a", "b"], "answer_index": 0, "explanation": "e"}
+                ],
+            }
+        ]
+    )
     assert build_script(post).strip() == ""
 
 
@@ -117,8 +133,13 @@ def test_build_request_opus_frames_params():
 
 def test_build_request_mp3_uses_mp3_bitrate_not_opus():
     req = build_request(
-        text="", ref_id=None, params={}, audio_format="mp3",
-        opus_bitrate=64000, mp3_bitrate=192, latency="normal",
+        text="",
+        ref_id=None,
+        params={},
+        audio_format="mp3",
+        opus_bitrate=64000,
+        mp3_bitrate=192,
+        latency="normal",
     )
     assert req["format"] == "mp3"
     assert req["mp3_bitrate"] == 192
@@ -128,8 +149,13 @@ def test_build_request_mp3_uses_mp3_bitrate_not_opus():
 
 def test_build_request_omits_prosody_when_absent():
     req = build_request(
-        text="", ref_id="v", params={"temperature": 0.7}, audio_format="opus",
-        opus_bitrate=64000, mp3_bitrate=128, latency="balanced",
+        text="",
+        ref_id="v",
+        params={"temperature": 0.7},
+        audio_format="opus",
+        opus_bitrate=64000,
+        mp3_bitrate=128,
+        latency="balanced",
     )
     assert "prosody" not in req
 
@@ -138,6 +164,7 @@ async def _fake_stream(*chunks):
     async def gen(text, **kwargs):
         for c in chunks:
             yield c
+
     return gen
 
 
@@ -202,8 +229,13 @@ async def test_tee_to_client_streams_and_caches(monkeypatch, tmp_path):
         raise exc
 
     body = await tee_to_client(
-        text="x", dest=dest, on_success=on_success, on_failure=on_failure,
-        api_key="k", model="m", audio_format="opus",
+        text="x",
+        dest=dest,
+        on_success=on_success,
+        on_failure=on_failure,
+        api_key="k",
+        model="m",
+        audio_format="opus",
     )
     chunks = [chunk async for chunk in body]
     assert chunks == [b"a", b"b", b"c"]
@@ -229,8 +261,13 @@ async def test_tee_to_client_reports_failure(monkeypatch, tmp_path):
         failures.append(exc)
 
     body = await tee_to_client(
-        text="x", dest=dest, on_success=on_success, on_failure=on_failure,
-        api_key="k", model="m", audio_format="opus",
+        text="x",
+        dest=dest,
+        on_success=on_success,
+        on_failure=on_failure,
+        api_key="k",
+        model="m",
+        audio_format="opus",
     )
     chunks = [chunk async for chunk in body]
     assert chunks == []  # nothing streamed

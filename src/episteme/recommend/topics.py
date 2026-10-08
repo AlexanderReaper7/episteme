@@ -76,15 +76,15 @@ def clean_label(label: str) -> str:
 
 
 async def _by_slug(session: AsyncSession, slug: str) -> Topic | None:
-    return (
-        await session.execute(select(Topic).where(Topic.slug == slug))
-    ).scalars().first()
+    return (await session.execute(select(Topic).where(Topic.slug == slug))).scalars().first()
 
 
 async def _by_alias(session: AsyncSession, slug: str) -> Topic | None:
     return (
-        await session.execute(select(Topic).where(Topic.aliases.contains([slug])))
-    ).scalars().first()
+        (await session.execute(select(Topic).where(Topic.aliases.contains([slug]))))
+        .scalars()
+        .first()
+    )
 
 
 async def _embed_labels(labels: list[str]) -> dict[str, list[float]]:
@@ -112,10 +112,7 @@ async def _nearest(session: AsyncSession, vector: list[float]) -> tuple[Topic, f
     distance = Topic.embedding.cosine_distance(vector).label("distance")
     row = (
         await session.execute(
-            select(Topic, distance)
-            .where(Topic.embedding.is_not(None))
-            .order_by(distance)
-            .limit(1)
+            select(Topic, distance).where(Topic.embedding.is_not(None)).order_by(distance).limit(1)
         )
     ).first()
     if row is None:
@@ -165,9 +162,7 @@ async def _review_matches(
     prompt = "\n".join(lines)
     try:
         with llm_context(stage="topics"):
-            result = await gateway.complete_json(
-                "fast", TOPIC_DEDUP_SYSTEM, prompt, TopicMatches
-            )
+            result = await gateway.complete_json("fast", TOPIC_DEDUP_SYSTEM, prompt, TopicMatches)
     except LLMError as exc:
         log.warning("Topic dedup unavailable (%s); keeping proposed labels", exc)
         return {}
@@ -268,9 +263,7 @@ async def resolve_entries(
             folded[slug] = topic
         elif review_enabled:
             candidates = [
-                topic
-                for topic, similarity in near
-                if similarity >= settings.topic_review_threshold
+                topic for topic, similarity in near if similarity >= settings.topic_review_threshold
             ]
             if candidates:
                 to_review[cleaned] = candidates
@@ -289,9 +282,7 @@ async def resolve_entries(
             near = await _nearest(session, vector)
             if near is not None and near[1] >= settings.topic_match_threshold:
                 topic, similarity = near
-                log.info(
-                    "Topic %r folded into %r (cos %.3f)", cleaned, topic.label, similarity
-                )
+                log.info("Topic %r folded into %r (cos %.3f)", cleaned, topic.label, similarity)
         if topic is not None:
             # An alias makes the next occurrence of this wording a slug hit, so a
             # fold — and above all a dedup turn — is paid for exactly once.
@@ -352,9 +343,7 @@ async def slug_index(session: AsyncSession) -> dict[str, str]:
     1024-dimension embedding each, and this needs three strings from each. One
     map per scoring pass, not one lookup per candidate.
     """
-    rows = (
-        await session.execute(select(Topic.slug, Topic.label, Topic.aliases))
-    ).all()
+    rows = (await session.execute(select(Topic.slug, Topic.label, Topic.aliases))).all()
     index: dict[str, str] = {}
     # Canonical forms first, then aliases, so a stale alias can never shadow a
     # live entry's own slug or label.
@@ -404,9 +393,7 @@ async def backfill_embeddings(session: AsyncSession) -> int:
     embed endpoint has just proved it is up — see `pipeline.embed_new_items` —
     and deferrable by hand as `backfill_topic_embeddings`.
     """
-    topics = (
-        await session.execute(select(Topic).where(Topic.embedding.is_(None)))
-    ).scalars().all()
+    topics = (await session.execute(select(Topic).where(Topic.embedding.is_(None)))).scalars().all()
     if not topics:
         return 0
     vectors = await _embed_labels([topic.label for topic in topics])
@@ -540,9 +527,7 @@ async def _remap_feedback_slugs(session: AsyncSession, mapping: dict[str, str]) 
         if event.topic and slugify(event.topic) in mapping:
             event.topic = mapping[slugify(event.topic)]
             touched = True
-        snapshot = [
-            mapping.get(slugify(label), label) for label in event.topics_snapshot or []
-        ]
+        snapshot = [mapping.get(slugify(label), label) for label in event.topics_snapshot or []]
         if snapshot != list(event.topics_snapshot or []):
             event.topics_snapshot = snapshot
             touched = True
@@ -648,9 +633,7 @@ def _plausible_name(label: str, members: list[str]) -> bool:
     if not words:
         return False
     for member in members:
-        member_words = {
-            word for word in member.lower().replace("-", " ").split() if len(word) > 2
-        }
+        member_words = {word for word in member.lower().replace("-", " ").split() if len(word) > 2}
         if words & member_words:
             return True
     return False
@@ -673,9 +656,7 @@ async def _name_clusters(clusters: list[list[str]]) -> dict[int, str]:
     Anything not named, dropped, or rejected falls back to the cluster's most
     frequent member, so a bad response degrades the vocabulary's wording — never
     its structure."""
-    targets = [
-        (index, members) for index, members in enumerate(clusters) if len(members) > 1
-    ]
+    targets = [(index, members) for index, members in enumerate(clusters) if len(members) > 1]
     if not targets:
         return {}
     names: dict[int, str] = {}
@@ -683,8 +664,7 @@ async def _name_clusters(clusters: list[list[str]]) -> dict[int, str]:
     for start in range(0, len(targets), NAMING_BATCH):
         batch = targets[start : start + NAMING_BATCH]
         listing = "\n".join(
-            f"{position}. {', '.join(members)}"
-            for position, (_, members) in enumerate(batch)
+            f"{position}. {', '.join(members)}" for position, (_, members) in enumerate(batch)
         )
         try:
             with llm_context(stage="topics"):

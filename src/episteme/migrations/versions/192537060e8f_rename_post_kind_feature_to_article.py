@@ -24,8 +24,8 @@ Create Date: 2026-08-28 13:21:37.354357
 
 from alembic import op
 
-revision = '192537060e8f'
-down_revision = '05618d4b1026'
+revision = "192537060e8f"
+down_revision = "05618d4b1026"
 branch_labels = None
 depends_on = None
 

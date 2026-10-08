@@ -103,12 +103,8 @@ def render(request: Request, template: str, context: dict, status_code: int = 20
         ctx = {"request": request, **context}
         title = render_block(templates.env, template, "title", **ctx)
         body = render_block(templates.env, template, block, **ctx)
-        return HTMLResponse(
-            f"<title>Episteme{title}</title>\n{body}", status_code=status_code
-        )
-    return templates.TemplateResponse(
-        request, template, context, status_code=status_code
-    )
+        return HTMLResponse(f"<title>Episteme{title}</title>\n{body}", status_code=status_code)
+    return templates.TemplateResponse(request, template, context, status_code=status_code)
 
 
 def correspondent_page(
@@ -322,16 +318,17 @@ def _story_banner(story: Story) -> str | None:
 # (pipeline.sanitize_media_sections), but the iframe src is defense-in-depth:
 # only these hosts ever become an embed; anything else renders as a plain link.
 _EMBED_PATTERNS: list[tuple[re.Pattern, str]] = [
-    (re.compile(r"https?://(?:www\.)?(youtube(?:-nocookie)?\.com)/embed/([\w-]{6,})"),
-     r"https://www.youtube-nocookie.com/embed/\2"),
-    (re.compile(r"https?://(?:www\.)?youtube\.com/watch\?(?:.*&)?v=([\w-]{6,})"),
-     r"https://www.youtube-nocookie.com/embed/\1"),
-    (re.compile(r"https?://youtu\.be/([\w-]{6,})"),
-     r"https://www.youtube-nocookie.com/embed/\1"),
-    (re.compile(r"https?://player\.vimeo\.com/video/(\d+)"),
-     r"https://player.vimeo.com/video/\1"),
-    (re.compile(r"https?://(?:www\.)?vimeo\.com/(\d+)"),
-     r"https://player.vimeo.com/video/\1"),
+    (
+        re.compile(r"https?://(?:www\.)?(youtube(?:-nocookie)?\.com)/embed/([\w-]{6,})"),
+        r"https://www.youtube-nocookie.com/embed/\2",
+    ),
+    (
+        re.compile(r"https?://(?:www\.)?youtube\.com/watch\?(?:.*&)?v=([\w-]{6,})"),
+        r"https://www.youtube-nocookie.com/embed/\1",
+    ),
+    (re.compile(r"https?://youtu\.be/([\w-]{6,})"), r"https://www.youtube-nocookie.com/embed/\1"),
+    (re.compile(r"https?://player\.vimeo\.com/video/(\d+)"), r"https://player.vimeo.com/video/\1"),
+    (re.compile(r"https?://(?:www\.)?vimeo\.com/(\d+)"), r"https://player.vimeo.com/video/\1"),
 ]
 
 

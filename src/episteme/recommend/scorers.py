@@ -120,6 +120,7 @@ class TopicAffinity:
         weights = [profile.topic_weights.get(s, 0.0) for s in candidate.topic_slugs]
         return sum(weights) / len(weights)
 
+
 @register
 class SourceAffinity:
     """Learned preference for the outlets behind the story (averaged, as above)."""
@@ -173,9 +174,7 @@ class Authority:
         return (candidate.credibility - 0.5) * 2.0
 
 
-def score_candidate(
-    candidate: Candidate, profile: ProfileState
-) -> tuple[float, dict[str, float]]:
+def score_candidate(candidate: Candidate, profile: ProfileState) -> tuple[float, dict[str, float]]:
     """Combine every registered scorer. Returns the total and the per-signal
     breakdown, which is stored on the post: a ranking nobody can explain is a
     ranking nobody can debug (and is what the "why am I seeing this" chip will

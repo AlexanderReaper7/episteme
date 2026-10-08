@@ -22,8 +22,13 @@ CTX = {
 def _request(headers: dict[str, str]) -> Request:
     raw = [(k.lower().encode(), v.encode()) for k, v in headers.items()]
     return Request(
-        {"type": "http", "method": "GET", "path": "/admin/runs",
-         "query_string": b"", "headers": raw}
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/admin/runs",
+            "query_string": b"",
+            "headers": raw,
+        }
     )
 
 
@@ -34,19 +39,22 @@ def _body(response) -> str:
 def test_plain_request_renders_full_document():
     html = _body(render(_request({}), "admin/admin_runs.html", CTX))
     assert "<!DOCTYPE html>" in html or "<html" in html
-    assert "admin-sidebar-nav" in html          # shell present
-    assert "Pipeline runs" in html              # page content present
+    assert "admin-sidebar-nav" in html  # shell present
+    assert "Pipeline runs" in html  # page content present
 
 
 def test_boosted_admin_nav_returns_inner_fragment_only():
-    html = _body(render(
-        _request({"HX-Request": "true", "HX-Target": "admin-main"}),
-        "admin/admin_runs.html", CTX,
-    ))
-    assert "<html" not in html and "<body" not in html   # no document chrome
-    assert "admin-sidebar-nav" not in html               # sidebar NOT re-sent
+    html = _body(
+        render(
+            _request({"HX-Request": "true", "HX-Target": "admin-main"}),
+            "admin/admin_runs.html",
+            CTX,
+        )
+    )
+    assert "<html" not in html and "<body" not in html  # no document chrome
+    assert "admin-sidebar-nav" not in html  # sidebar NOT re-sent
     assert "<title>Episteme • Pipeline runs</title>" in html  # title for htmx
-    assert 'class="admin-title"' in html                 # the admin_content block
+    assert 'class="admin-title"' in html  # the admin_content block
 
 
 def test_boosted_public_nav_returns_content_fragment():
@@ -56,13 +64,16 @@ def test_boosted_public_nav_returns_content_fragment():
         "feed": {"posts": [], "has_more": False, "next_cursor": None, "first_page": True},
         "fallback": None,
     }
-    html = _body(render(
-        _request({"HX-Request": "true", "HX-Target": "main-content"}),
-        "feed.html", feed_ctx,
-    ))
+    html = _body(
+        render(
+            _request({"HX-Request": "true", "HX-Target": "main-content"}),
+            "feed.html",
+            feed_ctx,
+        )
+    )
     assert "<html" not in html and "<body" not in html
-    assert '<title>Episteme • Feed</title>' in html
-    assert 'id="feed"' in html                            # the content block
+    assert "<title>Episteme • Feed</title>" in html
+    assert 'id="feed"' in html  # the content block
 
 
 def test_admin_main_content_target_falls_back_to_full_document():
@@ -70,10 +81,13 @@ def test_admin_main_content_target_falls_back_to_full_document():
     # the leaf, so it can't be emitted as a fragment — render() falls back to the full
     # document rather than a half page. (This path isn't hit in practice: entering
     # admin is a full load and intra-admin nav targets #admin-main.)
-    html = _body(render(
-        _request({"HX-Request": "true", "HX-Target": "main-content"}),
-        "admin/admin_runs.html", CTX,
-    ))
+    html = _body(
+        render(
+            _request({"HX-Request": "true", "HX-Target": "main-content"}),
+            "admin/admin_runs.html",
+            CTX,
+        )
+    )
     assert "<html" in html and "admin-sidebar-nav" in html
 
 
@@ -83,18 +97,24 @@ def test_history_restore_request_gets_the_whole_document():
     # document, not the `content` block. This is the request the fragment/full-doc
     # split used to mis-tag: same body as a plain hit, but stamped with the
     # FRAGMENT's etag, which nested the next boosted navigation inside itself.
-    html = _body(render(
-        _request({"HX-Request": "true", "HX-History-Restore-Request": "true"}),
-        "admin/admin_runs.html", CTX,
-    ))
+    html = _body(
+        render(
+            _request({"HX-Request": "true", "HX-History-Restore-Request": "true"}),
+            "admin/admin_runs.html",
+            CTX,
+        )
+    )
     assert "<html" in html and "admin-sidebar-nav" in html
 
 
 def test_htmx_request_without_known_target_falls_back_to_full_document():
     # A boosted request whose target maps to no block (defensive) must not 500 or
     # emit a half page — it falls through to the full document.
-    html = _body(render(
-        _request({"HX-Request": "true", "HX-Target": "something-else"}),
-        "admin/admin_runs.html", CTX,
-    ))
+    html = _body(
+        render(
+            _request({"HX-Request": "true", "HX-Target": "something-else"}),
+            "admin/admin_runs.html",
+            CTX,
+        )
+    )
     assert "<html" in html and "admin-sidebar-nav" in html

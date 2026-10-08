@@ -24,9 +24,7 @@ def test_a_tool_loop_flattens_to_a_plain_conversation_ending_on_a_user_turn():
 def test_consecutive_same_role_turns_are_merged():
     """A chat template handed two user messages in a row is entitled to render
     them oddly, and the prompt has to be the same shape on every model compared."""
-    flat = flatten_for_replay(
-        [{"role": "tool", "content": "a"}, {"role": "tool", "content": "b"}]
-    )
+    flat = flatten_for_replay([{"role": "tool", "content": "a"}, {"role": "tool", "content": "b"}])
     assert flat == [{"role": "user", "content": "a\n\nb"}]
 
 
@@ -75,9 +73,7 @@ def test_an_instruction_larger_than_the_rung_survives_intact():
         {"role": "user", "content": "filler" * 100},
         {"role": "user", "content": "Q" * 5000},
     ]
-    assert truncate(messages, target_tokens=10, prompt_tokens=10000) == [
-        messages[0], messages[-1]
-    ]
+    assert truncate(messages, target_tokens=10, prompt_tokens=10000) == [messages[0], messages[-1]]
 
 
 def test_percentile_one_is_the_largest_conversation_on_record():

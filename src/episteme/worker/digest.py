@@ -42,13 +42,17 @@ MAX_TITLE_CHARS = 90
 
 async def latest_finished_run(session) -> PipelineRun | None:
     return (
-        await session.execute(
-            select(PipelineRun)
-            .where(PipelineRun.finished_at.is_not(None))
-            .order_by(PipelineRun.started_at.desc())
-            .limit(1)
+        (
+            await session.execute(
+                select(PipelineRun)
+                .where(PipelineRun.finished_at.is_not(None))
+                .order_by(PipelineRun.started_at.desc())
+                .limit(1)
+            )
         )
-    ).scalars().first()
+        .scalars()
+        .first()
+    )
 
 
 async def cards_since(session, since: datetime) -> list[Post]:
@@ -128,8 +132,7 @@ def compose(
             notify.LOW,
         )
     headlines = "\n".join(
-        f"• {(post.title or 'Untitled')[:MAX_TITLE_CHARS]}"
-        for post in cards[:MAX_HEADLINES]
+        f"• {(post.title or 'Untitled')[:MAX_TITLE_CHARS]}" for post in cards[:MAX_HEADLINES]
     )
     more = len(cards) - MAX_HEADLINES
     if more > 0:

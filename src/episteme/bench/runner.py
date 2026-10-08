@@ -114,9 +114,7 @@ def plan_items(
                     items.append(
                         Item(
                             model=model,
-                            messages=truncate(
-                                fixture.messages, int(rung), fixture.prompt_tokens
-                            ),
+                            messages=truncate(fixture.messages, int(rung), fixture.prompt_tokens),
                             predict=int(params.get("ladder_predict") or 8),
                             rung=int(rung),
                             variant=variant.label,
@@ -233,9 +231,7 @@ class _Lease:
 
     async def _refresh(self) -> None:
         async with SessionLocal() as session:
-            await hold_interactive(
-                session, BENCH_HOLDER, seconds=settings.bench_lease_seconds
-            )
+            await hold_interactive(session, BENCH_HOLDER, seconds=settings.bench_lease_seconds)
 
     async def _loop(self) -> None:
         while True:
@@ -262,9 +258,7 @@ async def _busy_percent() -> float:
         verdict = await warden.verdict()
     except WardenError:
         verdict = None
-    return ((verdict or {}).get("policy") or {}).get(
-        "gpu_busy_percent", DEFAULT_BUSY_PERCENT
-    )
+    return ((verdict or {}).get("policy") or {}).get("gpu_busy_percent", DEFAULT_BUSY_PERCENT)
 
 
 async def _environment() -> tuple[dict | None, float]:
@@ -304,13 +298,13 @@ async def _cancel_requested(run_id: int) -> bool:
         )
 
 
-async def _load_run(session: AsyncSession, run_id: int) -> tuple[BenchmarkRun, BenchmarkFixture | None]:
+async def _load_run(
+    session: AsyncSession, run_id: int
+) -> tuple[BenchmarkRun, BenchmarkFixture | None]:
     run = await session.get(BenchmarkRun, run_id)
     if run is None:
         raise BenchRefused(f"No benchmark run {run_id}")
-    fixture = (
-        await session.get(BenchmarkFixture, run.fixture_id) if run.fixture_id else None
-    )
+    fixture = await session.get(BenchmarkFixture, run.fixture_id) if run.fixture_id else None
     return run, fixture
 
 
@@ -379,9 +373,7 @@ async def run_benchmark(run_id: int) -> dict:
                     # Applying a variant restarts llama-server, so it can only
                     # happen at an item boundary and every model's residency is
                     # gone afterwards.
-                    preset_backup = await _apply_variant(
-                        params, item.variant, preset_backup
-                    )
+                    preset_backup = await _apply_variant(params, item.variant, preset_backup)
                     variant_applied = item.variant
                     loaded.clear()
                 await _set_progress(
@@ -432,8 +424,13 @@ async def run_benchmark(run_id: int) -> dict:
         )
         await session.commit()
     log.info("Benchmark run %d %s: %d/%d samples", run_id, status, done, len(items))
-    return {"run_id": run_id, "status": status, "samples": done, "planned": len(items),
-            "executor": executor}
+    return {
+        "run_id": run_id,
+        "status": status,
+        "samples": done,
+        "planned": len(items),
+        "executor": executor,
+    }
 
 
 async def _run_item(

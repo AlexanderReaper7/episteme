@@ -45,9 +45,7 @@ class Source(Base):
     http_last_modified: Mapped[str | None] = mapped_column(Text)
     # Set when the source rate-limits us; ingestion skips it until this passes.
     cooldown_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     items: Mapped[list[SourceItem]] = relationship(back_populates="source")
 
@@ -77,9 +75,7 @@ class SourceItem(Base):
     doi: Mapped[str | None] = mapped_column(String(255))
     arxiv_id: Mapped[str | None] = mapped_column(String(50))
     fetch_status: Mapped[str] = mapped_column(String(30), default="new")
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     source: Mapped[Source] = relationship(back_populates="items")
     story: Mapped[Story | None] = relationship(back_populates="items")
@@ -132,9 +128,7 @@ class Story(Base):
     item_count: Mapped[int] = mapped_column(default=0)
     first_item_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_item_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     # Ordered so that `story.items | first` IS the primary item (0047): the card
     # title, the source name, the snippet and the destination are all read off
@@ -180,13 +174,19 @@ class PostKind:
 
 POST_KINDS: dict[str, PostKind] = {
     "article": PostKind(
-        renders_itself=True, reviewed=True, scored=True, needs_items=False,
+        renders_itself=True,
+        reviewed=True,
+        scored=True,
+        needs_items=False,
         summarized=True,
     ),
     # An identity-only cluster card. Nothing was generated, so there is nothing
     # to review; it still ranks against the profile like any other feed unit.
     "aggregate": PostKind(
-        renders_itself=False, reviewed=False, scored=True, needs_items=True,
+        renders_itself=False,
+        reviewed=False,
+        scored=True,
+        needs_items=True,
         summarized=True,
     ),
     # Filed by a correspondent, finished on arrival (0046). It touches no
@@ -194,7 +194,10 @@ POST_KINDS: dict[str, PostKind] = {
     # later, and neither is a decision to make before there is a filed post to
     # look at.
     "filed": PostKind(
-        renders_itself=False, reviewed=False, scored=False, needs_items=True,
+        renders_itself=False,
+        reviewed=False,
+        scored=False,
+        needs_items=True,
         summarized=False,
     ),
 }
@@ -336,9 +339,7 @@ class Correspondent(Base):
     # Whatever the plugin declares configurable. Opaque to core, exactly as
     # `sources.config` is to everything but its adapter.
     config: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class PostSummary(Base):
@@ -391,16 +392,12 @@ class PostAudio(Base):
     own column here."""
 
     __tablename__ = "post_audio"
-    __table_args__ = (
-        UniqueConstraint("post_id", "voice", name="uq_post_audio_post_voice"),
-    )
+    __table_args__ = (UniqueConstraint("post_id", "voice", name="uq_post_audio_post_voice"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     # ondelete CASCADE so the retention prune's bulk `delete(Post)` (Core, no ORM
     # cascade) doesn't hit an FK violation on an archived post's audio rows.
-    post_id: Mapped[int] = mapped_column(
-        ForeignKey("posts.id", ondelete="CASCADE"), index=True
-    )
+    post_id: Mapped[int] = mapped_column(ForeignKey("posts.id", ondelete="CASCADE"), index=True)
     voice: Mapped[str] = mapped_column(Text)  # Fish reference_id (catalog voice id)
     # pending -> ready | failed. `ready` means `path` points at a playable file.
     status: Mapped[str] = mapped_column(String(20), default="pending")
@@ -418,9 +415,7 @@ class PostAudio(Base):
     # sha256 of the narration script; the stage re-narrates when it changes.
     script_hash: Mapped[str | None] = mapped_column(String(64))
     error: Mapped[str | None] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
@@ -454,9 +449,7 @@ class Feedback(Base):
     __table_args__ = (Index("ix_feedback_created_at", "created_at"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     # like | dislike | save | more_topic | less_topic | set_topic | hide_source
     # | block_keyword | unblock_keyword | nl_feedback
     kind: Mapped[str] = mapped_column(String(30))
@@ -560,9 +553,7 @@ class Topic(Base):
     # created when the embed model is down (backfilled later).
     embedding: Mapped[Any | None] = mapped_column(Vector(EMBEDDING_DIM), nullable=True)
     aliases: Mapped[list[str]] = mapped_column(JSONB, default=list)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class Voice(Base):
@@ -590,9 +581,7 @@ class Voice(Base):
     params: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     sort_order: Mapped[int] = mapped_column(default=0)
     enabled: Mapped[bool] = mapped_column(default=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 # Stages whose calls belong to ONE post generation (post-scoped provenance).
@@ -693,9 +682,7 @@ class ChatMessage(Base):
     tool_call_id: Mapped[str | None] = mapped_column(String(64))
     proposal_status: Mapped[str | None] = mapped_column(String(20))  # pending|approved|rejected
     chain_id: Mapped[str | None] = mapped_column(String(36))  # -> llm_calls.chain_id
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class LlmCall(Base):
@@ -706,9 +693,7 @@ class LlmCall(Base):
     __tablename__ = "llm_calls"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     role: Mapped[str] = mapped_column(String(10))  # main | fast | embed
     model: Mapped[str] = mapped_column(Text)
     kind: Mapped[str] = mapped_column(String(20))  # chat | tool-chat | embed
@@ -746,9 +731,7 @@ class PipelineRun(Base):
     __tablename__ = "pipeline_runs"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    started_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # running|succeeded|failed|skipped|paused — paused runs left work behind on
     # purpose; deferring the pipeline again picks it up (stages are data-driven).
@@ -816,11 +799,11 @@ class BenchmarkRun(Base):
     __tablename__ = "benchmark_run"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    started_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    status: Mapped[str] = mapped_column(String(20), default="running")  # running|succeeded|failed|cancelled
+    status: Mapped[str] = mapped_column(
+        String(20), default="running"
+    )  # running|succeeded|failed|cancelled
     executor: Mapped[str] = mapped_column(String(10), default="worker")  # worker | host
     scenario: Mapped[str] = mapped_column(String(20))  # quick|longctx|ladder|sweep
     fixture_id: Mapped[int | None] = mapped_column(

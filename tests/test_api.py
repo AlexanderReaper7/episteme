@@ -60,18 +60,21 @@ def test_audio_is_current_requires_ready_matching_script_format_and_params():
     from episteme.web.api import _audio_is_current
 
     row = SimpleNamespace(
-        status="ready", path="p.opus", script_hash="h", audio_format="opus",
+        status="ready",
+        path="p.opus",
+        script_hash="h",
+        audio_format="opus",
         params={"temperature": 0.7},
     )
     assert _audio_is_current(row, "h", "opus", {"temperature": 0.7})
     assert not _audio_is_current(row, "h2", "opus", {"temperature": 0.7})  # script drift
-    assert not _audio_is_current(row, "h", "mp3", {"temperature": 0.7})    # format drift
-    assert not _audio_is_current(row, "h", "opus", {"temperature": 0.4})   # params drift
-    assert not _audio_is_current(None, "h", "opus", {})                    # no row
+    assert not _audio_is_current(row, "h", "mp3", {"temperature": 0.7})  # format drift
+    assert not _audio_is_current(row, "h", "opus", {"temperature": 0.4})  # params drift
+    assert not _audio_is_current(None, "h", "opus", {})  # no row
     pending = SimpleNamespace(
         status="pending", path="p", script_hash="h", audio_format="opus", params={}
     )
-    assert not _audio_is_current(pending, "h", "opus", {})                 # not ready
+    assert not _audio_is_current(pending, "h", "opus", {})  # not ready
 
 
 def test_defer_args_vocabulary_bootstrap_is_two_tasks():

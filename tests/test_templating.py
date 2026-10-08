@@ -22,12 +22,15 @@ def test_markdown_strips_raw_html_and_event_handlers():
 @pytest.mark.parametrize(
     ("url", "expected"),
     [
-        ("https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-         "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ"),
-        ("https://youtu.be/dQw4w9WgXcQ",
-         "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ"),
-        ("https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ",
-         "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ"),
+        (
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ",
+        ),
+        ("https://youtu.be/dQw4w9WgXcQ", "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ"),
+        (
+            "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ",
+            "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ",
+        ),
         ("https://player.vimeo.com/video/76979871", "https://player.vimeo.com/video/76979871"),
         ("https://vimeo.com/76979871", "https://player.vimeo.com/video/76979871"),
     ],

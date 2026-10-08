@@ -30,9 +30,18 @@ def _post(kind: str, summary: str | None = "A summary that runs long.") -> Simpl
     )
     story = SimpleNamespace(items=[item], topics=[], last_item_at=None)
     return SimpleNamespace(
-        id=42, kind=kind, title="A title", summary=summary, story=story,
-        href=None, topics=[], banner_url=None, generated_at=None, publish_at=None,
-        reading_time_minutes=5, difficulty="intermediate",
+        id=42,
+        kind=kind,
+        title="A title",
+        summary=summary,
+        story=story,
+        href=None,
+        topics=[],
+        banner_url=None,
+        generated_at=None,
+        publish_at=None,
+        reading_time_minutes=5,
+        difficulty="intermediate",
     )
 
 
@@ -41,8 +50,12 @@ def _render(post) -> str:
         posts=[post],
         feedback_contexts={
             42: {
-                "post_id": 42, "signals": {}, "topic_signals": {},
-                "source_signals": {}, "post_topics": [], "post_sources": [],
+                "post_id": 42,
+                "signals": {},
+                "topic_signals": {},
+                "source_signals": {},
+                "post_topics": [],
+                "post_sources": [],
                 "variant": post.kind,
             }
         },
@@ -58,7 +71,7 @@ def test_every_card_kind_gets_the_control(kind):
     """The reason `_card_summary.html` is a file and not three copies: a card kind
     whose summary could not be opened would be one nobody noticed for months."""
     html = _render(_post(kind))
-    assert 'data-card-expand' in html
+    assert "data-card-expand" in html
     assert 'aria-controls="card-summary-42"' in html
     assert 'id="card-summary-42"' in html
 

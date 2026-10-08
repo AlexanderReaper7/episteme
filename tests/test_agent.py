@@ -25,17 +25,23 @@ _DRAFT = {
     # The quiz is mandatory (schemas._require_quiz), so a valid draft carries one.
     "sections": [
         {"type": "prose", "text": "Body"},
-        {"type": "quiz", "questions": [
-            {"question": "q?", "choices": ["a", "b"], "answer_index": 0,
-             "explanation": "e"}]},
+        {
+            "type": "quiz",
+            "questions": [
+                {"question": "q?", "choices": ["a", "b"], "answer_index": 0, "explanation": "e"}
+            ],
+        },
     ],
     "further_reading_urls": [],
 }
 
 
 def _assistant_toolcall(name, args, call_id="c1"):
-    return {"role": "assistant", "content": None,
-            "tool_calls": [{"id": call_id, "function": {"name": name, "arguments": args}}]}
+    return {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [{"id": call_id, "function": {"name": name, "arguments": args}}],
+    }
 
 
 def _assistant_final(text):
@@ -52,8 +58,9 @@ class ScriptedGateway:
         self.tool_turns = 0
         self.draft_turns = 0
 
-    async def chat_messages(self, role, messages, tools=None, response_schema=None,
-                            temperature=0.3):
+    async def chat_messages(
+        self, role, messages, tools=None, response_schema=None, temperature=0.3
+    ):
         assert role == "main"  # the writer loop runs on the main model
         if response_schema is not None:
             self.draft_turns += 1
@@ -66,16 +73,28 @@ class ScriptedGateway:
 
 async def test_loop_gathers_then_writes(monkeypatch):
     # Two fetches (>= the stop threshold), an editorial note, then the draft turn.
-    gw = ScriptedGateway([
-        _assistant_toolcall("fetch_page", '{"url": "https://esawebb.org/images/potm2606a/"}', "c1"),
-        _assistant_toolcall("fetch_page", '{"url": "https://ui.adsabs.harvard.edu/abs/paper"}', "c2"),
-        _assistant_final("Fetched the ESA Webb page and the paper; those are the strongest sources."),
-    ])
+    gw = ScriptedGateway(
+        [
+            _assistant_toolcall(
+                "fetch_page", '{"url": "https://esawebb.org/images/potm2606a/"}', "c1"
+            ),
+            _assistant_toolcall(
+                "fetch_page", '{"url": "https://ui.adsabs.harvard.edu/abs/paper"}', "c2"
+            ),
+            _assistant_final(
+                "Fetched the ESA Webb page and the paper; those are the strongest sources."
+            ),
+        ]
+    )
     monkeypatch.setattr(agent, "gateway", gw)
 
     async def fake_fetch(url):
-        return {"url": url, "title": f"title of {url}",
-                "text": f"A far richer description from {url}.", "links": []}
+        return {
+            "url": url,
+            "title": f"title of {url}",
+            "text": f"A far richer description from {url}.",
+            "links": [],
+        }
 
     monkeypatch.setattr(research, "fetch_page", fake_fetch)
 
@@ -93,10 +112,12 @@ async def test_loop_gathers_then_writes(monkeypatch):
 
 
 async def test_demote_story_skips_drafting(monkeypatch):
-    gw = ScriptedGateway([
-        _assistant_toolcall("fetch_page", '{"url": "https://a.org"}', "c1"),
-        _assistant_toolcall("demote_story", '{"reason": "just a photo caption"}', "c2"),
-    ])
+    gw = ScriptedGateway(
+        [
+            _assistant_toolcall("fetch_page", '{"url": "https://a.org"}', "c1"),
+            _assistant_toolcall("demote_story", '{"reason": "just a photo caption"}', "c2"),
+        ]
+    )
     monkeypatch.setattr(agent, "gateway", gw)
 
     async def fake_fetch(url):
@@ -116,13 +137,13 @@ async def test_finish_research_ends_loop_and_carries_note(monkeypatch):
     """The story-291 failure inverted: the model signals 'done researching' with an
     explicit tool call (it used to reach for demote_story, killing the article).
     finish_research must end the loop, keep the note, and go to the draft."""
-    gw = ScriptedGateway([
-        _assistant_toolcall("fetch_page", '{"url": "https://a.org"}', "c1"),
-        _assistant_toolcall(
-            "finish_research", '{"note": "Nature piece is strongest."}', "c2"
-        ),
-        _assistant_toolcall("web_search", '{"query": "never reached"}', "c3"),
-    ])
+    gw = ScriptedGateway(
+        [
+            _assistant_toolcall("fetch_page", '{"url": "https://a.org"}', "c1"),
+            _assistant_toolcall("finish_research", '{"note": "Nature piece is strongest."}', "c2"),
+            _assistant_toolcall("web_search", '{"query": "never reached"}', "c3"),
+        ]
+    )
     monkeypatch.setattr(agent, "gateway", gw)
 
     async def fake_fetch(url):
@@ -142,13 +163,16 @@ async def test_loop_nudges_when_model_narrates_instead_of_acting(monkeypatch):
     # Model returns a plan (no tool_calls) before fetching anything -> gets nudged,
     # then actually fetches on the next turn.
     monkeypatch.setattr(
-        agent, "gateway",
-        ScriptedGateway([
-            _assistant_final("Next I will fetch the ESA Webb page and the paper."),
-            _assistant_toolcall("fetch_page", '{"url": "https://esawebb.org/x"}', "c1"),
-            _assistant_toolcall("fetch_page", '{"url": "https://ads/y"}', "c2"),
-            _assistant_final("Done — fetched both."),
-        ]),
+        agent,
+        "gateway",
+        ScriptedGateway(
+            [
+                _assistant_final("Next I will fetch the ESA Webb page and the paper."),
+                _assistant_toolcall("fetch_page", '{"url": "https://esawebb.org/x"}', "c1"),
+                _assistant_toolcall("fetch_page", '{"url": "https://ads/y"}', "c2"),
+                _assistant_final("Done — fetched both."),
+            ]
+        ),
     )
 
     async def fake_fetch(url):
@@ -166,12 +190,15 @@ async def test_fetch_budget_is_enforced(monkeypatch):
     calls = []
 
     monkeypatch.setattr(
-        agent, "gateway",
-        ScriptedGateway([
-            _assistant_toolcall("fetch_page", '{"url": "https://a.org"}', "c1"),
-            _assistant_toolcall("fetch_page", '{"url": "https://b.org"}', "c2"),
-            _assistant_final("done"),
-        ]),
+        agent,
+        "gateway",
+        ScriptedGateway(
+            [
+                _assistant_toolcall("fetch_page", '{"url": "https://a.org"}', "c1"),
+                _assistant_toolcall("fetch_page", '{"url": "https://b.org"}', "c2"),
+                _assistant_final("done"),
+            ]
+        ),
     )
 
     async def fake_fetch(url):
@@ -196,8 +223,9 @@ async def test_stuck_budget_loop_forces_draft(monkeypatch):
     class AlwaysSearch:
         tool_turns = 0
 
-        async def chat_messages(self, role, messages, tools=None, response_schema=None,
-                                temperature=0.3):
+        async def chat_messages(
+            self, role, messages, tools=None, response_schema=None, temperature=0.3
+        ):
             if response_schema is not None:
                 return _assistant_final(json.dumps(_DRAFT))
             self.tool_turns += 1
@@ -252,8 +280,9 @@ async def test_loop_stops_at_max_steps(monkeypatch):
     class AlwaysSearch:
         tool_turns = 0
 
-        async def chat_messages(self, role, messages, tools=None, response_schema=None,
-                                temperature=0.3):
+        async def chat_messages(
+            self, role, messages, tools=None, response_schema=None, temperature=0.3
+        ):
             if response_schema is not None:
                 return _assistant_final(json.dumps(_DRAFT))
             self.tool_turns += 1
@@ -364,8 +393,9 @@ async def test_a_terminal_tool_ends_an_injected_run_before_the_next_turn():
         return "closed"
 
     harness = _harness(
-        Tool(name="wrap_up", schema=function("wrap_up", "d", {}, []),
-             handler=wrap_up, terminal=True)
+        Tool(
+            name="wrap_up", schema=function("wrap_up", "d", {}, []), handler=wrap_up, terminal=True
+        )
     )
     messages: list[dict] = []
     closing = await agent.run_tool_loop(harness, messages, turn=turn)
@@ -387,8 +417,13 @@ async def test_a_write_tool_leaves_the_loop_instead_of_running():
         raise AssertionError("a write tool executed inside the loop")
 
     harness = _harness(
-        Tool(name="do_it", schema=function("do_it", "d", {}, []), handler=never,
-             writes=True, describe=lambda args: f"do {args['url']}")
+        Tool(
+            name="do_it",
+            schema=function("do_it", "d", {}, []),
+            handler=never,
+            writes=True,
+            describe=lambda args: f"do {args['url']}",
+        )
     )
     with pytest.raises(WriteProposed) as raised:
         await agent.run_tool_loop(harness, [], turn=turn)
@@ -403,8 +438,10 @@ async def test_on_tool_is_told_before_the_tool_runs():
     events: list[str] = []
 
     async def turn(messages, tools):
-        return _assistant_toolcall("look", '{"q": "a"}', "c1") if not events else (
-            _assistant_final("done")
+        return (
+            _assistant_toolcall("look", '{"q": "a"}', "c1")
+            if not events
+            else (_assistant_final("done"))
         )
 
     async def look(ctx, args):

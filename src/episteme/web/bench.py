@@ -138,11 +138,7 @@ def _run_identity(run: dict) -> tuple:
 
 async def _fixtures(session) -> list[BenchmarkFixture]:
     return list(
-        (
-            await session.execute(
-                select(BenchmarkFixture).order_by(BenchmarkFixture.name)
-            )
-        )
+        (await session.execute(select(BenchmarkFixture).order_by(BenchmarkFixture.name)))
         .scalars()
         .all()
     )
@@ -191,9 +187,7 @@ def _runs_response(request: Request, context: dict):
 async def benchmarks_fixtures_partial(request: Request):
     async with SessionLocal() as session:
         fixtures = await _fixtures(session)
-    return templates.TemplateResponse(
-        request, "admin/_bench_fixtures.html", {"fixtures": fixtures}
-    )
+    return templates.TemplateResponse(request, "admin/_bench_fixtures.html", {"fixtures": fixtures})
 
 
 # --- launching ---------------------------------------------------------------------
@@ -375,9 +369,7 @@ async def benchmarks_fixture_delete(request: Request, fixture_id: int):
     `ON DELETE SET NULL`) and the run row still records the models, the params
     and the measured `prompt_n` of every sample."""
     async with SessionLocal() as session:
-        await session.execute(
-            delete(BenchmarkFixture).where(BenchmarkFixture.id == fixture_id)
-        )
+        await session.execute(delete(BenchmarkFixture).where(BenchmarkFixture.id == fixture_id))
         await session.commit()
     return await benchmarks_fixtures_partial(request)
 

@@ -85,9 +85,7 @@ def test_saving_is_bookmarking_and_moves_nothing():
 
 
 def test_like_builds_the_liked_centroid_and_nudges_its_topics():
-    state = replay(
-        [_event("like", embedding=_vec(1.0, 0.0), topics=["marine biology"])], now=NOW
-    )
+    state = replay([_event("like", embedding=_vec(1.0, 0.0), topics=["marine biology"])], now=NOW)
     assert state.liked_centroid[0] == 1.0
     assert state.disliked_centroid is None
     # A like is a signal about one post, so its topic spillover is weak.
@@ -95,9 +93,7 @@ def test_like_builds_the_liked_centroid_and_nudges_its_topics():
 
 
 def test_dislike_feeds_the_disliked_centroid_not_the_liked_one():
-    state = replay(
-        [_event("dislike", embedding=_vec(0.0, 1.0), topics=["ai hype"])], now=NOW
-    )
+    state = replay([_event("dislike", embedding=_vec(0.0, 1.0), topics=["ai hype"])], now=NOW)
     assert state.liked_centroid is None
     assert state.disliked_centroid[1] == 1.0
     assert state.topic_weights["ai-hype"] < 0
@@ -174,9 +170,7 @@ def test_a_hand_set_weight_does_not_decay():
     """A control whose value drifts on its own is a control that lies: the panel
     has to still read 4.0 next month. Like a block, this is a stated position
     rather than a reaction to one post."""
-    state = replay(
-        [_event("set_topic", topic="genetics", value=4.0, days_ago=365)], now=NOW
-    )
+    state = replay([_event("set_topic", topic="genetics", value=4.0, days_ago=365)], now=NOW)
     assert state.topic_weights["genetics"] == 4.0
 
 
@@ -245,9 +239,7 @@ def test_a_set_without_a_value_is_ignored_rather_than_read_as_zero():
 def test_hide_source_is_a_hard_block_and_does_not_decay():
     """A block is a standing instruction, not a mood: 'not this outlet' means the
     same thing two years later."""
-    state = replay(
-        [_event("hide_source", source_ids=[7], days_ago=3650)], now=NOW
-    )
+    state = replay([_event("hide_source", source_ids=[7], days_ago=3650)], now=NOW)
     assert state.blocked_sources == [7]
 
 
@@ -278,9 +270,7 @@ def test_unblocking_removes_a_keyword_a_statement_imposed():
                 days_ago=1,
                 nl_text="never crypto, and more genetics",
                 parsed_intent={
-                    "topics": [
-                        {"topic": "genetics", "direction": "more", "strength": 1.0}
-                    ],
+                    "topics": [{"topic": "genetics", "direction": "more", "strength": 1.0}],
                     "blocked_keywords": ["crypto"],
                 },
             ),
@@ -333,9 +323,7 @@ def test_an_empty_keyword_is_ignored_rather_than_blocking_everything():
 
 
 def test_keyword_blocks_do_not_decay():
-    state = replay(
-        [_event("block_keyword", keyword="crypto", days_ago=3650)], now=NOW
-    )
+    state = replay([_event("block_keyword", keyword="crypto", days_ago=3650)], now=NOW)
     assert state.blocked_keywords == ["crypto"]
 
 

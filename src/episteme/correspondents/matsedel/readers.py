@@ -297,8 +297,7 @@ def parse_week(html: str, *, url: str, today: date) -> WeekMenu:
         match = _WEEK_NO.search(fold(" ".join(lines)))
         if match is None:
             raise MatsedelError(
-                "no week number and no dated heading, so the menu could belong to "
-                "any week"
+                "no week number and no dated heading, so the menu could belong to any week"
             )
         monday = _monday_from_week_number(int(match.group(1)), today)
 
@@ -309,9 +308,7 @@ def parse_week(html: str, *, url: str, today: date) -> WeekMenu:
         if index >= SERVED_DAYS or index in seen or not day_lines:
             continue
         seen.add(index)
-        week.days.append(
-            DayMenu(served_on=monday + timedelta(days=index), lines=list(day_lines))
-        )
+        week.days.append(DayMenu(served_on=monday + timedelta(days=index), lines=list(day_lines)))
     if not week.days:
         raise MatsedelError("weekday headings, but no lines under any of them")
     return week
@@ -341,10 +338,7 @@ async def read_source(source: Source, *, today: date, wanted_monday: date) -> We
     week = parse_week(response.text or "", url=url, today=today)
     if week.monday < wanted_monday:
         raise NotPublishedYet(
-            f"{source.name}: the page still shows the week of {week.monday}, "
-            f"not {wanted_monday}"
+            f"{source.name}: the page still shows the week of {week.monday}, not {wanted_monday}"
         )
-    log.info(
-        "Read %s: %s, %d day(s)", source.name, week.week_key, len(week.days)
-    )
+    log.info("Read %s: %s, %d day(s)", source.name, week.week_key, len(week.days))
     return week

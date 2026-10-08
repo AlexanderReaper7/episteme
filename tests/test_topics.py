@@ -110,9 +110,7 @@ async def test_near_match_folds_and_records_the_alias(monkeypatch):
     """A new phrasing close enough to an existing entry joins it — and is recorded,
     so the next occurrence resolves at the alias tier instead of re-embedding."""
     existing = Topic(slug="astronomy", label="astronomy", aliases=[])
-    _stub_lookups(
-        monkeypatch, nearest=(existing, settings.topic_match_threshold + 0.01)
-    )
+    _stub_lookups(monkeypatch, nearest=(existing, settings.topic_match_threshold + 0.01))
     session = _FakeSession()
     assert await topics.resolve(session, ["stellar astronomy"]) == ["astronomy"]
     assert existing.aliases == ["stellar-astronomy"]
@@ -121,14 +119,10 @@ async def test_near_match_folds_and_records_the_alias(monkeypatch):
 
 async def test_distant_label_creates_a_new_entry(monkeypatch):
     existing = Topic(slug="astronomy", label="astronomy", aliases=[])
-    _stub_lookups(
-        monkeypatch, nearest=(existing, settings.topic_match_threshold - 0.01)
-    )
+    _stub_lookups(monkeypatch, nearest=(existing, settings.topic_match_threshold - 0.01))
     session = _FakeSession()
     assert await topics.resolve(session, ["Marine Biology"]) == ["marine biology"]
-    assert [(t.slug, t.label) for t in session.added] == [
-        ("marine-biology", "marine biology")
-    ]
+    assert [(t.slug, t.label) for t in session.added] == [("marine-biology", "marine biology")]
 
 
 async def test_closed_set_mode_drops_unknown_labels(monkeypatch):
@@ -199,9 +193,9 @@ def _band(offset):
 async def test_dedup_turn_folds_a_label_the_embedding_tier_missed(monkeypatch):
     existing = Topic(slug="cardiovascular-disease", label="cardiovascular disease", aliases=[])
     _stub_lookups(monkeypatch, near_many=[(existing, _band(0.1))])
-    gateway = _DedupGateway({"matches": [
-        {"proposed": "heart disease", "existing": "cardiovascular disease"}
-    ]})
+    gateway = _DedupGateway(
+        {"matches": [{"proposed": "heart disease", "existing": "cardiovascular disease"}]}
+    )
     monkeypatch.setattr(topics, "gateway", gateway)
     session = _FakeSession()
 
@@ -246,9 +240,9 @@ async def test_dedup_turn_may_only_pick_from_what_it_was_offered(monkeypatch):
     subject would inherit the reader's weight for another."""
     offered = Topic(slug="oncology", label="oncology", aliases=[])
     _stub_lookups(monkeypatch, near_many=[(offered, _band(0.1))])
-    gateway = _DedupGateway({"matches": [
-        {"proposed": "immunotherapy", "existing": "marine biology"}
-    ]})
+    gateway = _DedupGateway(
+        {"matches": [{"proposed": "immunotherapy", "existing": "marine biology"}]}
+    )
     monkeypatch.setattr(topics, "gateway", gateway)
     session = _FakeSession()
 
@@ -262,9 +256,9 @@ async def test_dedup_turn_ignores_an_echo_of_a_label_it_was_not_asked_about(monk
     `proposed` is dropped rather than applied to whatever sat at that index."""
     existing = Topic(slug="astronomy", label="astronomy", aliases=[])
     _stub_lookups(monkeypatch, near_many=[(existing, _band(0.1))])
-    gateway = _DedupGateway({"matches": [
-        {"proposed": "some other tag entirely", "existing": "astronomy"}
-    ]})
+    gateway = _DedupGateway(
+        {"matches": [{"proposed": "some other tag entirely", "existing": "astronomy"}]}
+    )
     monkeypatch.setattr(topics, "gateway", gateway)
     session = _FakeSession()
 
@@ -313,15 +307,11 @@ async def test_a_confident_embedding_match_never_reaches_the_model(monkeypatch):
     """The fold threshold still decides on its own — the turn is a fallback for
     the band below it, not a second opinion on everything."""
     existing = Topic(slug="astronomy", label="astronomy", aliases=[])
-    _stub_lookups(
-        monkeypatch, near_many=[(existing, settings.topic_match_threshold + 0.01)]
-    )
+    _stub_lookups(monkeypatch, near_many=[(existing, settings.topic_match_threshold + 0.01)])
     gateway = _DedupGateway()
     monkeypatch.setattr(topics, "gateway", gateway)
 
-    assert await topics.resolve(_FakeSession(), ["stellar astronomy"], review=True) == [
-        "astronomy"
-    ]
+    assert await topics.resolve(_FakeSession(), ["stellar astronomy"], review=True) == ["astronomy"]
     assert gateway.calls == []
 
 
@@ -493,9 +483,7 @@ async def test_naming_is_batched_so_alignment_stays_tractable(monkeypatch):
         ("", ["astronomy"], False),
     ],
 )
-def test_name_plausibility_accepts_coined_names_but_rejects_misalignment(
-    label, members, ok
-):
+def test_name_plausibility_accepts_coined_names_but_rejects_misalignment(label, members, ok):
     """Permissive by design: it must not reject a legitimately coined canonical
     name, only one that cannot belong to this cluster at all."""
     assert topics._plausible_name(label, members) is ok
@@ -566,15 +554,24 @@ async def test_merge_carries_the_absorbed_topics_history_to_the_survivor(monkeyp
         by_slug={"quantum-mechanics": source, "quantum-physics": target},
     )
     steered = Feedback(
-        id=1, kind="more_topic", topic="quantum-mechanics",
-        topics_snapshot=["quantum-mechanics"], source_ids=[],
+        id=1,
+        kind="more_topic",
+        topic="quantum-mechanics",
+        topics_snapshot=["quantum-mechanics"],
+        source_ids=[],
     )
     liked = Feedback(
-        id=2, kind="like", topic=None,
-        topics_snapshot=["quantum-mechanics", "astronomy"], source_ids=[],
+        id=2,
+        kind="like",
+        topic=None,
+        topics_snapshot=["quantum-mechanics", "astronomy"],
+        source_ids=[],
     )
     stated = Feedback(
-        id=3, kind="nl_feedback", topics_snapshot=[], source_ids=[],
+        id=3,
+        kind="nl_feedback",
+        topics_snapshot=[],
+        source_ids=[],
         parsed_intent={
             "topics": [{"topic": "quantum-mechanics", "direction": "more", "strength": 2.0}]
         },
@@ -611,9 +608,10 @@ async def test_backfill_does_nothing_and_costs_nothing_when_there_is_nothing_to_
 
 def test_remap_preserves_order_and_collapses_merge_duplicates():
     mapping = {"astrophysics": "astronomy", "space": "astronomy"}
-    assert topics.remap_labels(
-        ["astrophysics", "genetics", "space"], mapping
-    ) == ["astronomy", "genetics"]
+    assert topics.remap_labels(["astrophysics", "genetics", "space"], mapping) == [
+        "astronomy",
+        "genetics",
+    ]
 
 
 def test_remap_leaves_unmapped_labels_alone():

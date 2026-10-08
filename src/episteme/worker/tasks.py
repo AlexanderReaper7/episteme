@@ -32,7 +32,9 @@ async def _fetch_with_escalation(adapter, source: Source) -> list[RawItem]:
             raise  # already at the strongest mode
         log.warning(
             "Source %r blocked (%d); escalating http_mode to %r and retrying",
-            source.name, exc.status_code, stronger,
+            source.name,
+            exc.status_code,
+            stronger,
         )
         source.config = {**source.config, "http_mode": stronger}
         return await adapter.fetch(source, source.last_fetched_at)
@@ -77,9 +79,7 @@ async def ingest_source(source_id: int) -> None:
         hashes = {content_hash(item.url): item for item in raw_items}
         existing = set(
             (
-                await session.execute(
-                    select(SourceItem.hash).where(SourceItem.hash.in_(hashes))
-                )
+                await session.execute(select(SourceItem.hash).where(SourceItem.hash.in_(hashes)))
             ).scalars()
         )
 

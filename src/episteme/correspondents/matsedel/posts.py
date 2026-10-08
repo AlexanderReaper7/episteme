@@ -38,6 +38,7 @@ SLUG = "matsedel"
 DEFAULT_PUBLISH_HOUR = 6
 DEFAULT_EXPIRE_HOUR = 14
 
+
 #: What the reader's clock says. Matsedel is four restaurants in one town, so its
 #: opening hours are in the same zone the rest of the UI is rendered in.
 def _zone() -> ZoneInfo:
@@ -88,8 +89,10 @@ def _title(served_on: date) -> str:
 
 async def _config(session: AsyncSession) -> dict:
     row = (
-        await session.execute(select(Correspondent).where(Correspondent.slug == SLUG))
-    ).scalars().first()
+        (await session.execute(select(Correspondent).where(Correspondent.slug == SLUG)))
+        .scalars()
+        .first()
+    )
     return dict(row.config or {}) if row is not None else {}
 
 

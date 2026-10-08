@@ -228,9 +228,7 @@ def test_a_page_is_rendered_inside_the_core_wrapper(tmp_path):
     sheet = tmp_path / "fake.css"
     sheet.write_text(".x {}", encoding="utf-8")
     name = write_page_template(tmp_path)
-    response = correspondent_page(
-        _request({}), make_plugin(stylesheet=sheet), name
-    )
+    response = correspondent_page(_request({}), make_plugin(stylesheet=sheet), name)
     html = response.body.decode()
     assert '<div class="correspondent-page correspondent--fake">' in html
     assert '<link rel="stylesheet" href="/c/fake/style.css">' in html
@@ -305,9 +303,7 @@ async def test_ensure_rows_creates_one_row_per_plugin():
     registry.register(lambda: make_plugin(slug="matsedel", label="Matsedel"))
     session = FakeSession([])
     assert await rows.ensure_rows(session) == 1
-    assert [(r.slug, r.label, r.config) for r in session.added] == [
-        ("matsedel", "Matsedel", {})
-    ]
+    assert [(r.slug, r.label, r.config) for r in session.added] == [("matsedel", "Matsedel", {})]
     assert session.committed
 
 
@@ -330,9 +326,7 @@ async def test_a_row_whose_plugin_is_gone_is_left_alone():
 
 
 def test_the_shipped_template_extends_base_and_scopes_the_wrapper():
-    source = Path("src/episteme/web/templates/correspondent.html").read_text(
-        encoding="utf-8"
-    )
+    source = Path("src/episteme/web/templates/correspondent.html").read_text(encoding="utf-8")
     assert 'extends "base.html"' in source
     assert "correspondent--{{ correspondent.slug }}" in source
     assert "/c/{{ correspondent.slug }}/style.css" in source

@@ -65,9 +65,7 @@ def current_chain_id() -> str | None:
 
 
 def _hash_messages(messages: list) -> str:
-    return hashlib.sha256(
-        json.dumps(messages, sort_keys=True, default=str).encode()
-    ).hexdigest()
+    return hashlib.sha256(json.dumps(messages, sort_keys=True, default=str).encode()).hexdigest()
 
 
 def _strip_images(messages: list) -> list:

@@ -148,17 +148,21 @@ def test_a_boundary_ends_one_day_and_not_the_week():
     weekday heading further down the page still opens its own block. A page that
     prices Monday's lunch must not lose Tuesday."""
     lines = [
-        "MÅNDAG", "Pannbiff med pepparsås", "Dagens rätt 140kr inkl. bröd",
+        "MÅNDAG",
+        "Pannbiff med pepparsås",
+        "Dagens rätt 140kr inkl. bröd",
         "Kokt fisk med äggsås",
-        "TISDAG", "Raggmunk med stekt fläsk",
-        "ONSDAG", "Ost & champinjongratinerad kassler",
-        "TORSDAG", "Fisksoppa med pannkakor",
-        "FREDAG", "Vegetarisk biff",
+        "TISDAG",
+        "Raggmunk med stekt fläsk",
+        "ONSDAG",
+        "Ost & champinjongratinerad kassler",
+        "TORSDAG",
+        "Fisksoppa med pannkakor",
+        "FREDAG",
+        "Vegetarisk biff",
     ]
     body = "".join(f"<p>{H.escape(line)}</p>" for line in lines)
-    week = parse_week(
-        f"<html><body><p>Vecka 35</p>{body}</body></html>", url="u", today=READ_ON
-    )
+    week = parse_week(f"<html><body><p>Vecka 35</p>{body}</body></html>", url="u", today=READ_ON)
     by_day = {d.served_on.weekday(): d.lines for d in week.days}
     # Monday ends at the price, losing the line under it. That is the cost of a
     # boundary, and it is the trade: a price means the menu is over.
@@ -172,9 +176,7 @@ def test_a_page_whose_last_day_is_bounded_needs_no_cap():
     starts and the cap never binds. Saturday and Sunday are parsed and then
     dropped, because only Monday to Friday become posts."""
     week = parse_week(_page("koppargrillen"), url="u", today=READ_ON)
-    assert [d.served_on for d in week.days] == [
-        THAT_MONDAY + timedelta(days=n) for n in range(5)
-    ]
+    assert [d.served_on for d in week.days] == [THAT_MONDAY + timedelta(days=n) for n in range(5)]
     assert week.days[-1].lines == [
         "Kokt fiskfilé med äggsås",
         "Fläskytterfilé med bearnaisesås",
@@ -193,9 +195,7 @@ def test_every_page_reads_as_the_week_it_was_read_in(site):
     week = parse_week(_page(site), url="https://x.test/menu", today=READ_ON)
     assert week.week_key == "2026w35"
     assert week.monday == THAT_MONDAY
-    assert [d.served_on for d in week.days] == [
-        THAT_MONDAY + timedelta(days=n) for n in range(5)
-    ]
+    assert [d.served_on for d in week.days] == [THAT_MONDAY + timedelta(days=n) for n in range(5)]
     assert all(d.lines for d in week.days)
 
 
@@ -282,14 +282,20 @@ def test_the_summary_skips_the_labels_that_introduce_dishes():
     """Italia's block opens with `Fran Buffe:` and Vänerparken's with `BUFFE`.
     Neither names a dish, and a feed card built from them would say the same
     thing every day of the year."""
-    assert mposts.summary_line(
-        _Source("italia", "Restaurang Italia"),
-        ["Från Buffé:", "Färsbiff med klyftpotatis", "Pizza slice"],
-    ) == "Restaurang Italia: Färsbiff med klyftpotatis"
-    assert mposts.summary_line(
-        _Source("vanerparken", "Restaurang Vänerparken"),
-        ["Dagens rätt:", "Dansk hackebiff med löksky"],
-    ) == "Restaurang Vänerparken: Dansk hackebiff med löksky"
+    assert (
+        mposts.summary_line(
+            _Source("italia", "Restaurang Italia"),
+            ["Från Buffé:", "Färsbiff med klyftpotatis", "Pizza slice"],
+        )
+        == "Restaurang Italia: Färsbiff med klyftpotatis"
+    )
+    assert (
+        mposts.summary_line(
+            _Source("vanerparken", "Restaurang Vänerparken"),
+            ["Dagens rätt:", "Dansk hackebiff med löksky"],
+        )
+        == "Restaurang Vänerparken: Dansk hackebiff med löksky"
+    )
 
 
 def test_the_summary_skips_a_label_only_the_tag_table_knows_about():
@@ -358,6 +364,7 @@ def filed(monkeypatch):
 
         monkeypatch.setattr(mposts, "week_of", _week_of)
         if config is not None:
+
             async def _c(_session):
                 return config
 
@@ -370,10 +377,7 @@ def filed(monkeypatch):
 def _full_week(source):
     return _Week(
         source,
-        [
-            _Dish(THAT_MONDAY + timedelta(days=n), f"dish {n}")
-            for n in range(5)
-        ],
+        [_Dish(THAT_MONDAY + timedelta(days=n), f"dish {n}") for n in range(5)],
     )
 
 
@@ -519,9 +523,7 @@ def test_ingest_skips_a_source_whose_type_is_a_correspondent():
     from episteme.worker.tasks import not_a_correspondents_source
 
     sql = " ".join(str(not_a_correspondents_source()).split())
-    assert sql == (
-        "(sources.type_name NOT IN (SELECT correspondents.slug FROM correspondents))"
-    )
+    assert sql == ("(sources.type_name NOT IN (SELECT correspondents.slug FROM correspondents))")
 
 
 def test_the_adapters_type_name_is_the_plugins_slug():
@@ -539,9 +541,9 @@ def test_the_adapters_type_name_is_the_plugins_slug():
 @pytest.mark.parametrize(
     "line",
     [
-        "Från Buffé:",          # Italia, before the buffet's dishes
-        "Från köket:",          # Italia, before the kitchen's
-        "VECKANS LUNCH:",       # Italia, above the whole week
+        "Från Buffé:",  # Italia, before the buffet's dishes
+        "Från köket:",  # Italia, before the kitchen's
+        "VECKANS LUNCH:",  # Italia, above the whole week
     ],
 )
 def test_a_line_the_restaurant_wrote_as_a_heading_is_a_label(line):
@@ -570,7 +572,7 @@ def test_capitals_alone_do_not_make_a_heading(line):
     "line",
     [
         "Pannbiff med pepparsås",
-        "Omelett",                       # one word, and still a dish
+        "Omelett",  # one word, and still a dish
         "Pizzor nummer 1 - 8",
         "Piccata Milanese med tomatconcassé",
         "VECKANS VEGAN: Sensommargryta med blomkål & rotsaker",  # labelled dish
@@ -597,11 +599,11 @@ def test_the_rule_the_label_rule_is_known_to_miss():
 def test_a_tag_beats_the_rule_and_the_rule_still_decides_the_rest():
     """A tag is an override on a default, not a replacement for it. A restaurant
     added next year is untagged, and its first week still has to render."""
-    assert tag_of("vanerparken", "BUFFÉ") == mtags.LABEL          # tagged
-    assert tag_of("vanerparken", "Från köket:") == mtags.LABEL    # the rule
-    assert tag_of("vanerparken", "Pannbiff") == mtags.DISH        # the rule
-    assert tag_of("nykyrkan", "BUFFÉ") == mtags.DISH              # untagged site
-    assert tag_of(None, "Från köket:") == mtags.LABEL             # no site at all
+    assert tag_of("vanerparken", "BUFFÉ") == mtags.LABEL  # tagged
+    assert tag_of("vanerparken", "Från köket:") == mtags.LABEL  # the rule
+    assert tag_of("vanerparken", "Pannbiff") == mtags.DISH  # the rule
+    assert tag_of("nykyrkan", "BUFFÉ") == mtags.DISH  # untagged site
+    assert tag_of(None, "Från köket:") == mtags.LABEL  # no site at all
 
 
 def test_a_tag_belongs_to_one_kitchen():
@@ -756,9 +758,7 @@ async def test_a_day_with_no_menu_does_not_replace_a_day_that_had_one():
         _StoredWeek(THAT_MONDAY),
         [(THAT_MONDAY, "Pasta med rökt skinka & blue cheese")],
     )
-    await store_week(
-        session, _Source("kalasboden", "Kalasboden"), _menu(mon=[PLACEHOLDER])
-    )
+    await store_week(session, _Source("kalasboden", "Kalasboden"), _menu(mon=[PLACEHOLDER]))
     assert session.written() == [(THAT_MONDAY, "Pasta med rökt skinka & blue cheese")]
 
 
@@ -766,9 +766,7 @@ async def test_a_real_menu_still_replaces_a_real_menu():
     """The guard is about a page that says nothing, not about a page that changed
     its mind. A corrected menu is the site being right and has to win."""
     session = _StoreSession(_StoredWeek(THAT_MONDAY), [(THAT_MONDAY, "Pannbiff")])
-    await store_week(
-        session, _Source("kalasboden", "Kalasboden"), _menu(mon=["Kålpudding"])
-    )
+    await store_week(session, _Source("kalasboden", "Kalasboden"), _menu(mon=["Kålpudding"]))
     assert session.written() == [(THAT_MONDAY, "Kålpudding")]
 
 
@@ -779,9 +777,7 @@ async def test_a_day_the_read_dropped_entirely_is_kept():
         _StoredWeek(THAT_MONDAY),
         [(THAT_MONDAY, "old monday"), (TUESDAY, "real tuesday")],
     )
-    await store_week(
-        session, _Source("kalasboden", "Kalasboden"), _menu(mon=["new monday"])
-    )
+    await store_week(session, _Source("kalasboden", "Kalasboden"), _menu(mon=["new monday"]))
     assert session.written() == [
         (THAT_MONDAY, "new monday"),
         (TUESDAY, "real tuesday"),
@@ -813,9 +809,7 @@ async def test_a_first_read_stores_exactly_what_it_read():
     """Nothing to protect on a week nobody has stored, placeholder or not: a
     kitchen that has never published gets the page it actually served."""
     session = _StoreSession()
-    await store_week(
-        session, _Source("kalasboden", "Kalasboden"), _menu(mon=[PLACEHOLDER])
-    )
+    await store_week(session, _Source("kalasboden", "Kalasboden"), _menu(mon=[PLACEHOLDER]))
     assert session.written() == [(THAT_MONDAY, PLACEHOLDER)]
 
 
@@ -868,9 +862,7 @@ def test_every_day_keeps_a_column_for_every_kitchen(week_context):
         assert [c["kitchen"]["name"] for c in day["cells"]] == [
             k["name"] for k in context["kitchens"]
         ]
-    assert context["days"][0]["cells"][1]["lines"] == [
-        {"text": "lasagne al forno", "label": False}
-    ]
+    assert context["days"][0]["cells"][1]["lines"] == [{"text": "lasagne al forno", "label": False}]
     # Tuesday: the column is still there, and it is empty.
     assert context["days"][1]["cells"][1]["lines"] == []
 
@@ -901,9 +893,7 @@ def test_a_kitchen_carries_the_css_hook_its_typeface_hangs_on(week_context):
     """Each restaurant's name is set in the face its own site uses, and the
     modifier is the `sources` config key rather than a slugified label, so
     renaming a restaurant in /admin cannot silently drop its typography."""
-    context = week_context(
-        [_WeekRow(_Source("vanerparken", "Restaurang Vänerparken"), [])]
-    )
+    context = week_context([_WeekRow(_Source("vanerparken", "Restaurang Vänerparken"), [])])
     assert context["kitchens"][0]["site"] == "vanerparken"
 
 
@@ -966,9 +956,7 @@ def week_view(monkeypatch):
         monkeypatch.setattr(mviews, "week_of", _week_of)
         monkeypatch.setattr(mviews, "stored_weeks", _stored_weeks)
         monkeypatch.setattr(mviews, "latest_monday", _latest_monday)
-        monkeypatch.setattr(
-            mviews, "correspondent_page", lambda _r, _p, _t, context: context
-        )
+        monkeypatch.setattr(mviews, "correspondent_page", lambda _r, _p, _t, context: context)
         return asyncio.run(mviews.week_view(None, monday=monday.isoformat()))
 
     return build
@@ -1023,8 +1011,13 @@ def week_template():
 
 def _nav(template, *, previous=None, next=None):
     return template.render(
-        kitchens=[], kitchens_read=0, days=[], monday=THAT_MONDAY,
-        previous=previous, next=next, today=READ_ON,
+        kitchens=[],
+        kitchens_read=0,
+        days=[],
+        monday=THAT_MONDAY,
+        previous=previous,
+        next=next,
+        today=READ_ON,
     )
 
 
@@ -1199,9 +1192,7 @@ def _stored(site, days):
 def _complete(week):
     from episteme.correspondents.matsedel.store import week_is_complete
 
-    return week_is_complete(
-        THAT_MONDAY, (week.source.config or {}).get("site"), week.dishes
-    )
+    return week_is_complete(THAT_MONDAY, (week.source.config or {}).get("site"), week.dishes)
 
 
 def test_a_kitchen_with_all_five_weekdays_is_skipped():
@@ -1224,6 +1215,4 @@ def test_a_week_of_placeholders_is_not_a_week():
 def test_a_day_of_nothing_but_labels_still_counts():
     """A label is something the restaurant wrote for that day, so the day was
     published. What it is worth is the card's problem, not the scheduler's."""
-    assert _complete(
-        _stored("italia", {n: ["Från Buffé:"] for n in range(5)})
-    )
+    assert _complete(_stored("italia", {n: ["Från Buffé:"] for n in range(5)}))

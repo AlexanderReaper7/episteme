@@ -122,7 +122,8 @@ async def _adopt_existing_database(config) -> None:
     base = ScriptDirectory.from_config(config).get_base()
     log.warning(
         "Found application tables but no alembic_version: adopting this database "
-        "by stamping baseline %s (no DDL will run)", base,
+        "by stamping baseline %s (no DDL will run)",
+        base,
     )
     # Stamping writes a version row and applies no schema changes, so neither the
     # review gate nor the pre-migration backup — both of which exist to protect

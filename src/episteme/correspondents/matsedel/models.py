@@ -65,9 +65,7 @@ class MatsedelWeek(Base):
     # The week the menu covers, Monday. Every query that orders history uses this
     # rather than `week_key`, because `2026w9` sorts after `2026w35` as a string.
     monday: Mapped[date] = mapped_column(Date())
-    fetched_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     source: Mapped[Source] = relationship()
     dishes: Mapped[list[MatsedelDish]] = relationship(
@@ -86,9 +84,7 @@ class MatsedelDish(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    week_id: Mapped[int] = mapped_column(
-        ForeignKey("matsedel_weeks.id", ondelete="CASCADE")
-    )
+    week_id: Mapped[int] = mapped_column(ForeignKey("matsedel_weeks.id", ondelete="CASCADE"))
     # The date this line is served on, not a weekday index: a post is minted for a
     # date, and a weekday would have to be resolved against the week on every read.
     serve_date: Mapped[date] = mapped_column(Date())

@@ -126,8 +126,13 @@ def test_summarize_stops_at_the_first_dead_call(monkeypatch):
 
         async def get(self, _model, pk):
             return SimpleNamespace(
-                id=pk, kind="article", title="T", story_id=7,
-                summary=None, summarized_at=None, sections=[],
+                id=pk,
+                kind="article",
+                title="T",
+                story_id=7,
+                summary=None,
+                summarized_at=None,
+                sections=[],
             )
 
         def add(self, _obj):

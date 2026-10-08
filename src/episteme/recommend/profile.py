@@ -148,9 +148,7 @@ def replay(events: list[Feedback], now: datetime | None = None) -> ProfileState:
             spill = strength * settings.feedback_topic_spillover
             for label in event.topics_snapshot or []:
                 bump(topic_raw, topics_module.slugify(label), spill)
-            source_spill = (
-                settings.feedback_source_step * (1 if strength > 0 else -1) * decay
-            )
+            source_spill = settings.feedback_source_step * (1 if strength > 0 else -1) * decay
             for source_id in event.source_ids or []:
                 bump(source_raw, str(source_id), source_spill)
             if event.difficulty:
@@ -183,9 +181,7 @@ def replay(events: list[Feedback], now: datetime | None = None) -> ProfileState:
             # has to mean. The event itself stays in the log, so undoing it
             # restores exactly the weight that was there before.
             if event.topic and event.value is not None:
-                topic_raw[topics_module.slugify(event.topic)] = _clamp(
-                    float(event.value)
-                )
+                topic_raw[topics_module.slugify(event.topic)] = _clamp(float(event.value))
 
         elif event.kind == "hide_source":
             # A hard block, not a weight: it is not subject to decay, because the
@@ -233,14 +229,10 @@ def replay(events: list[Feedback], now: datetime | None = None) -> ProfileState:
     state.liked_centroid = _normalize(liked_sum)
     state.disliked_centroid = _normalize(disliked_sum)
     state.topic_weights = {
-        slug: _clamp(weight)
-        for slug, weight in sorted(topic_raw.items())
-        if abs(weight) > 1e-6
+        slug: _clamp(weight) for slug, weight in sorted(topic_raw.items()) if abs(weight) > 1e-6
     }
     state.source_weights = {
-        key: _clamp(weight)
-        for key, weight in sorted(source_raw.items())
-        if abs(weight) > 1e-6
+        key: _clamp(weight) for key, weight in sorted(source_raw.items()) if abs(weight) > 1e-6
     }
     total_difficulty = sum(abs(v) for v in difficulty_raw.values())
     state.difficulty_weights = (
@@ -253,9 +245,7 @@ def replay(events: list[Feedback], now: datetime | None = None) -> ProfileState:
     return state
 
 
-def describe(
-    state: ProfileState, limit: int = 8, labels: dict[str, str] | None = None
-) -> str:
+def describe(state: ProfileState, limit: int = 8, labels: dict[str, str] | None = None) -> str:
     """The profile as a short paragraph for a prompt.
 
     Deliberately qualitative — "strongly interested in", not "weight 4.2". The
@@ -288,9 +278,7 @@ def describe(
     # technical post and nothing else leaves {"technical": -1.0}, and taking the
     # max of that would tell triage and the writer "Prefers technical depth" on
     # the strength of the reader rejecting exactly that.
-    preferred = max(
-        state.difficulty_weights.items(), key=lambda kv: kv[1], default=(None, 0.0)
-    )
+    preferred = max(state.difficulty_weights.items(), key=lambda kv: kv[1], default=(None, 0.0))
     if preferred[1] > 0:
         lines.append(f"Prefers {preferred[0]} depth.")
     elif state.difficulty_weights:

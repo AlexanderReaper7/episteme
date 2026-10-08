@@ -139,9 +139,7 @@ async def test_a_dead_host_returns_false_and_does_not_raise(ntfy):
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("nope", request=request)
 
-    result = await notify.publish(
-        "t", "Title", "Body", transport=httpx.MockTransport(handler)
-    )
+    result = await notify.publish("t", "Title", "Body", transport=httpx.MockTransport(handler))
     assert result is False
 
 

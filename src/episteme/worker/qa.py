@@ -118,9 +118,7 @@ class _Renderer:
             viewport={"width": settings.qa_viewport_width, "height": 1400}
         )
         try:
-            await page.goto(
-                f"{settings.web_internal_url}/post/{post_id}", wait_until="load"
-            )
+            await page.goto(f"{settings.web_internal_url}/post/{post_id}", wait_until="load")
             # Let hotlinked media settle or fail out, and give client-hydrated sections
             # (vega charts, mermaid diagrams) time to draw — they render after load.
             await page.wait_for_timeout(1500)
@@ -167,8 +165,7 @@ def _grounding_digest(items: list[SourceItem], story: Story) -> str:
     fetched = (story.research_notes or {}).get("fetched") or []
     if fetched:
         lines = "\n".join(
-            f"- {entry.get('title') or entry.get('url')} — {entry.get('url')}"
-            for entry in fetched
+            f"- {entry.get('title') or entry.get('url')} — {entry.get('url')}" for entry in fetched
         )
         parts.append("PAGES THE WRITER FETCHED DURING RESEARCH:\n" + lines)
     return "\n\n---\n\n".join(parts)
@@ -363,8 +360,7 @@ async def _edit_section(ctx: QAContext, args: dict, *, kind: str) -> ToolReply:
     if kind == "insert_section":
         if not 0 <= index <= len(editor.body):
             return ToolReply(
-                f"Rejected - index {index} is out of range; insert accepts "
-                f"0..{len(editor.body)}."
+                f"Rejected - index {index} is out of range; insert accepts 0..{len(editor.body)}."
             )
         section, error = _validate_section(args.get("section"), editor.candidates)
         if section is None:
@@ -394,8 +390,11 @@ async def _edit_section(ctx: QAContext, args: dict, *, kind: str) -> ToolReply:
 
     editor.edits += 1
     editor.dirty = True
-    verb = {"replace_section": "Replaced", "insert_section": "Inserted",
-            "delete_section": "Deleted"}[kind]
+    verb = {
+        "replace_section": "Replaced",
+        "insert_section": "Inserted",
+        "delete_section": "Deleted",
+    }[kind]
     extra = _offer_rerender(ctx) if section is not None and needs_render([section]) else ""
     return editor.state_reply(f"{verb} section {index}.{extra}")
 
@@ -528,6 +527,7 @@ _NUDGE = (
 )
 _MAX_NUDGES = 1
 
+
 def qa_harness(editor, session, renderer, *, visual: bool, on_idle) -> Harness:
     """One review's harness. `visual` decides whether `rerender` starts on the table.
 
@@ -555,9 +555,7 @@ _VERDICT_REQUEST = (
 )
 
 
-def _initial_prompt(
-    items: list[SourceItem], story: Story, editor: _Editor, *, visual: bool
-) -> str:
+def _initial_prompt(items: list[SourceItem], story: Story, editor: _Editor, *, visual: bool) -> str:
     closing = (
         "The screenshot below is that same post as the reader sees it rendered — it "
         "carries a chart or diagram, which the JSON describes only as a spec. Review "

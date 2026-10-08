@@ -15,6 +15,5 @@ def get_adapter(type_name: str) -> SourceAdapter:
         return _ADAPTERS[type_name]
     except KeyError:
         raise LookupError(
-            f"No source adapter registered for type {type_name!r}; "
-            f"known types: {sorted(_ADAPTERS)}"
+            f"No source adapter registered for type {type_name!r}; known types: {sorted(_ADAPTERS)}"
         ) from None

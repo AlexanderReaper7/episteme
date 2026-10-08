@@ -55,7 +55,9 @@ def _section_speech(section: dict[str, Any]) -> str:
     if kind == "prose":
         return _markdown_to_speech(section.get("text", ""))
     if kind == "key_points":
-        return "\n".join(_ensure_sentence(item) for item in section.get("items", []) if item.strip())
+        return "\n".join(
+            _ensure_sentence(item) for item in section.get("items", []) if item.strip()
+        )
     if kind == "glossary":
         return "\n".join(
             _ensure_sentence(f"{t.get('term', '')}: {t.get('definition', '')}")

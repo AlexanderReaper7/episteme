@@ -66,9 +66,7 @@ def test_a_qa_body_edit_marks_the_summary_stale_without_clearing_it():
 
 
 def _sql(clause) -> str:
-    return str(
-        clause.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True})
-    )
+    return str(clause.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
 
 
 def test_summarize_is_due_for_a_missing_summary_a_cleared_stamp_or_a_grown_cluster():
@@ -101,23 +99,29 @@ def test_the_admin_page_counts_the_stage_it_names():
 
 def _post(**kw) -> SimpleNamespace:
     fields = {
-        "id": 1, "kind": "article", "title": "T", "story_id": 7,
-        "summary": None, "summarized_at": None, "sections": [],
+        "id": 1,
+        "kind": "article",
+        "title": "T",
+        "story_id": 7,
+        "summary": None,
+        "summarized_at": None,
+        "sections": [],
     }
     return SimpleNamespace(**{**fields, **kw})
 
 
 def _item(name: str, title: str, text: str) -> SimpleNamespace:
     return SimpleNamespace(
-        title=title, url=f"https://example.org/{title}", extracted_text=text,
-        raw_content=None, source=SimpleNamespace(name=name),
+        title=title,
+        url=f"https://example.org/{title}",
+        extracted_text=text,
+        raw_content=None,
+        source=SimpleNamespace(name=name),
     )
 
 
 def test_an_article_is_summarized_from_its_body_not_its_sources():
-    system, user = _summary_input(
-        _post(sections=[{"type": "prose", "text": "the finding"}]), []
-    )
+    system, user = _summary_input(_post(sections=[{"type": "prose", "text": "the finding"}]), [])
     assert system is ARTICLE_SUMMARY_SYSTEM
     assert "the finding" in user
 
@@ -126,12 +130,14 @@ def test_an_article_summary_never_sees_the_quiz_or_the_citation_tails():
     """A quiz asks about the post instead of stating it, and the tails are built
     from the database (0007). A summarizer shown either starts writing them."""
     _, user = _summary_input(
-        _post(sections=[
-            {"type": "prose", "text": "the finding"},
-            {"type": "quiz", "questions": [{"question": "which?"}]},
-            {"type": "sources", "items": ["a citation"]},
-            {"type": "further_reading", "items": ["a link"]},
-        ]),
+        _post(
+            sections=[
+                {"type": "prose", "text": "the finding"},
+                {"type": "quiz", "questions": [{"question": "which?"}]},
+                {"type": "sources", "items": ["a citation"]},
+                {"type": "further_reading", "items": ["a link"]},
+            ]
+        ),
         [],
     )
     assert "the finding" in user
@@ -270,9 +276,9 @@ def test_the_writer_gets_the_whole_source_text():
     long = "y" * 6000
     seed = _writer_sources([_item("ScienceDaily", "First", long)])
     assert long in seed[0]
-    assert not any(
-        name.startswith("_condensed") for name in dir(pipeline)
-    ), "the condense pass should be gone, not renamed"
+    assert not any(name.startswith("_condensed") for name in dir(pipeline)), (
+        "the condense pass should be gone, not renamed"
+    )
 
 
 def test_the_source_caps_are_a_runaway_guard_not_a_budget():

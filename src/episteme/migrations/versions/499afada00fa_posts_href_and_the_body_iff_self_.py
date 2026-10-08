@@ -41,15 +41,14 @@ Create Date: 2026-08-28 21:52:29.147439
 import sqlalchemy as sa
 from alembic import op
 
-revision = '499afada00fa'
-down_revision = '192537060e8f'
+revision = "499afada00fa"
+down_revision = "192537060e8f"
 branch_labels = None
 depends_on = None
 
 CHECK_NAME = "ck_posts_body_iff_self_rendering"
 CHECK_SQL = (
-    "(href IS NULL) = "
-    "(jsonb_typeof(sections) = 'array' AND jsonb_array_length(sections) > 0)"
+    "(href IS NULL) = (jsonb_typeof(sections) = 'array' AND jsonb_array_length(sections) > 0)"
 )
 
 

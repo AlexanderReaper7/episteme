@@ -29,7 +29,6 @@ SLUG = "matsedel"
 WEEKDAY_NAMES = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday")
 
 
-
 def _monday_of(day: date) -> date:
     return day - timedelta(days=day.weekday())
 

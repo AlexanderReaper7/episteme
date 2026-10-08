@@ -33,6 +33,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from episteme import models
+
 # Imported for its side effect: a correspondent plugin may define tables, and
 # they go in core's single history (0046). Autogenerate compares against
 # `Base.metadata`, which only knows about a table whose class has been imported.
@@ -149,7 +150,9 @@ def run_migrations_offline() -> None:
     database. Whoever runs the emitted SQL is the one applying it."""
     if applies_ddl():
         enforce_review_gate()
-    _configure(url=settings.sqlalchemy_url, literal_binds=True, dialect_opts={"paramstyle": "named"})
+    _configure(
+        url=settings.sqlalchemy_url, literal_binds=True, dialect_opts={"paramstyle": "named"}
+    )
     with context.begin_transaction():
         context.run_migrations()
 

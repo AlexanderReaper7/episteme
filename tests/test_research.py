@@ -130,12 +130,12 @@ def test_extract_links_keeps_outbound_anchor_text():
     """The JWST case: a 'Read more' anchor to a richer external page must survive,
     with its text, even though trafilatura's content extraction drops it."""
     html = (
-        '<html><body>'
+        "<html><body>"
         '<a href="https://esawebb.org/images/potm2606a/">Read more about the image.</a>'
         '<a href="/relative/path">A relative link</a>'
         '<a href="mailto:someone@example.org">email</a>'
         '<a href="javascript:void(0)">js</a>'
-        '</body></html>'
+        "</body></html>"
     )
     links = _extract_links(html, "https://www.nasa.gov/image-article/young-galaxy-cluster/")
     urls = {link["url"]: link["text"] for link in links}

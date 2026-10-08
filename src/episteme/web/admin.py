@@ -71,9 +71,7 @@ async def admin_home(request: Request):
             # fetched rather than probing the warden and every endpoint a
             # second time. It carries the digest the poll URL needs, so the pair
             # is self-timing from the first paint.
-            **await backend_context(
-                status["llm"]["warden"], status["pipeline"], status["llm"]
-            ),
+            **await backend_context(status["llm"]["warden"], status["pipeline"], status["llm"]),
         },
     )
 
@@ -125,9 +123,7 @@ def job_params(task: str) -> tuple[dict[str, str], ...]:
     which has none - and a control row whose fields move between renders is worse
     than a wrong one."""
     accepted = DEFERRABLE_TASKS[task][1]
-    return tuple(
-        {"name": name, **JOB_PARAMS[name]} for name in JOB_PARAM_ORDER if name in accepted
-    )
+    return tuple({"name": name, **JOB_PARAMS[name]} for name in JOB_PARAM_ORDER if name in accepted)
 
 
 def parse_target(name: str, raw: object) -> int | None:
@@ -158,58 +154,125 @@ def _job(task: str, icon: str, **rest: object) -> dict:
 # is what the stage actually does, which the takes/makes pair cannot say - the
 # chain is drawn vertically precisely so there is room for it.
 STAGES: tuple[dict, ...] = (
-    _job("embed", "embed", takes="new source items", makes="embeddings",
-         note="Runs every unembedded source item through the local embedding model. "
-              "Nothing downstream can see an item until it has a vector."),
-    _job("cluster", "cluster", takes="embedded items", makes="stories",
-         note="Groups embedded items by cosine similarity inside a rolling window, "
-              "growing each story's centroid as members join. One story is one event, "
-              "however many outlets covered it."),
-    _job("triage", "triage", takes="new stories", makes="write / aggregate / skip",
-         note="The fast model reads a digest of each new story and decides its fate: "
-              "a written article, an aggregation card, or nothing. Cheap, and it is "
-              "what keeps the expensive stage off everything that does not deserve it."),
-    _job("write", "write", takes="stories marked write", makes="article posts",
-         note="The main model researches and writes the article in one agentic "
-              "conversation, choosing its own rich sections. Nearly all the GPU time "
-              "on this page is here: budget minutes per story, not seconds."),
-    _job("qa", "qa", takes="unscored posts", makes="edits + quality score",
-         note="A vision pass over the rendered page. The model reviews the article as "
-              "a reader sees it, applies corrections through a tool harness, and "
-              "scores what is left."),
-    _job("summarize", "summarize", takes="posts with a missing or stale summary",
-         makes="feed card text",
-         note="The fast model writes each card's summary - from the finished body for "
-              "an article, from the whole cluster for an aggregate. A post is not in "
-              "the feed until this has run for it."),
-    _job("narrate", "narrate", takes="posts with no audio", makes="narration",
-         note="Sends each finished article to the TTS provider and stores the audio. "
-              "The nightly batch is off unless tts_enabled, so this button is normally "
-              "the only thing that runs it."),
-    _job("score", "score", takes="published posts", makes="feed ranking",
-         note="Recomputes every published post's affinity against your interest "
-              "profile and reorders the feed. No LLM, and the one to run after "
-              "retuning weights by hand."),
+    _job(
+        "embed",
+        "embed",
+        takes="new source items",
+        makes="embeddings",
+        note="Runs every unembedded source item through the local embedding model. "
+        "Nothing downstream can see an item until it has a vector.",
+    ),
+    _job(
+        "cluster",
+        "cluster",
+        takes="embedded items",
+        makes="stories",
+        note="Groups embedded items by cosine similarity inside a rolling window, "
+        "growing each story's centroid as members join. One story is one event, "
+        "however many outlets covered it.",
+    ),
+    _job(
+        "triage",
+        "triage",
+        takes="new stories",
+        makes="write / aggregate / skip",
+        note="The fast model reads a digest of each new story and decides its fate: "
+        "a written article, an aggregation card, or nothing. Cheap, and it is "
+        "what keeps the expensive stage off everything that does not deserve it.",
+    ),
+    _job(
+        "write",
+        "write",
+        takes="stories marked write",
+        makes="article posts",
+        note="The main model researches and writes the article in one agentic "
+        "conversation, choosing its own rich sections. Nearly all the GPU time "
+        "on this page is here: budget minutes per story, not seconds.",
+    ),
+    _job(
+        "qa",
+        "qa",
+        takes="unscored posts",
+        makes="edits + quality score",
+        note="A vision pass over the rendered page. The model reviews the article as "
+        "a reader sees it, applies corrections through a tool harness, and "
+        "scores what is left.",
+    ),
+    _job(
+        "summarize",
+        "summarize",
+        takes="posts with a missing or stale summary",
+        makes="feed card text",
+        note="The fast model writes each card's summary - from the finished body for "
+        "an article, from the whole cluster for an aggregate. A post is not in "
+        "the feed until this has run for it.",
+    ),
+    _job(
+        "narrate",
+        "narrate",
+        takes="posts with no audio",
+        makes="narration",
+        note="Sends each finished article to the TTS provider and stores the audio. "
+        "The nightly batch is off unless tts_enabled, so this button is normally "
+        "the only thing that runs it.",
+    ),
+    _job(
+        "score",
+        "score",
+        takes="published posts",
+        makes="feed ranking",
+        note="Recomputes every published post's affinity against your interest "
+        "profile and reorders the feed. No LLM, and the one to run after "
+        "retuning weights by hand.",
+    ),
 )
 
 # The rest of the deferrable surface. Every one of these was reachable only by
 # curl before, including `narrate` - a real pipeline stage that had no button at
 # all while six of its siblings did.
 MAINTENANCE_OPS: tuple[dict, ...] = (
-    _job("ingest_source", "ingest-one", label="ingest one source",
-         help="Poll a single source now, ignoring its fetch interval."),
-    _job("backup_database", "backup", label="back up database",
-         help="pg_dump into the backups mount. Manual-only; nothing schedules this."),
-    _job("propose_topics", "propose", label="propose topics",
-         help="Cluster raw tags into a vocabulary proposal. Applies nothing, review it on Topics."),
-    _job("apply_topics", "apply", label="apply topics",
-         help="Commit the reviewed proposal and rewrite every story and post topic list."),
-    _job("backfill_topic_embeddings", "heal", label="backfill topic embeddings",
-         help="Heal topics created while the embed endpoint was down. Normally automatic."),
-    _job("recover_stalled_jobs", "recover", label="recover stalled jobs",
-         help="Requeue jobs a killed worker stranded in “doing”. Runs every 5 minutes."),
-    _job("prune_job_history", "delete", label="prune job history",
-         help="Delete finished jobs past their retention window. Runs nightly."),
+    _job(
+        "ingest_source",
+        "ingest-one",
+        label="ingest one source",
+        help="Poll a single source now, ignoring its fetch interval.",
+    ),
+    _job(
+        "backup_database",
+        "backup",
+        label="back up database",
+        help="pg_dump into the backups mount. Manual-only; nothing schedules this.",
+    ),
+    _job(
+        "propose_topics",
+        "propose",
+        label="propose topics",
+        help="Cluster raw tags into a vocabulary proposal. Applies nothing, review it on Topics.",
+    ),
+    _job(
+        "apply_topics",
+        "apply",
+        label="apply topics",
+        help="Commit the reviewed proposal and rewrite every story and post topic list.",
+    ),
+    _job(
+        "backfill_topic_embeddings",
+        "heal",
+        label="backfill topic embeddings",
+        help="Heal topics created while the embed endpoint was down. Normally automatic.",
+    ),
+    _job(
+        "recover_stalled_jobs",
+        "recover",
+        label="recover stalled jobs",
+        help="Requeue jobs a killed worker stranded in “doing”. Runs every 5 minutes.",
+    ),
+    _job(
+        "prune_job_history",
+        "delete",
+        label="prune job history",
+        help="Delete finished jobs past their retention window. Runs nightly.",
+    ),
 )
 
 # A target is hoisted out of the jobs and rendered once for the group when EVERY
@@ -245,7 +308,9 @@ def _group(jobs: tuple[dict, ...]) -> dict:
 
     def own(job: dict) -> dict:
         params = tuple(p for p in job["params"] if p["name"] not in shared)
-        include = [s for s, on in (("closest .job-run", params), ("previous .job-shared", shared)) if on]
+        include = [
+            s for s, on in (("closest .job-run", params), ("previous .job-shared", shared)) if on
+        ]
         return {**job, "params": params, "include": ", ".join(include)}
 
     return {
@@ -265,7 +330,12 @@ def _cron_help(expression: str) -> str:
     fields = expression.split()
     if len(fields) == 5 and fields[1:] == ["*", "*", "*", "*"] and fields[0].startswith("*/"):
         return f"every {fields[0][2:]} minutes"
-    if len(fields) == 5 and fields[2:] == ["*", "*", "*"] and fields[0].isdigit() and fields[1].isdigit():
+    if (
+        len(fields) == 5
+        and fields[2:] == ["*", "*", "*"]
+        and fields[0].isdigit()
+        and fields[1].isdigit()
+    ):
         return f"daily at {int(fields[1]):02d}:{int(fields[0]):02d}"
     return expression
 
@@ -387,8 +457,14 @@ def _param_schemas_json() -> dict[str, list[dict]]:
     return {
         provider: [
             {
-                "key": f.key, "label": f.label, "kind": f.kind, "step": f.step,
-                "min": f.min, "max": f.max, "placeholder": f.placeholder, "help": f.help,
+                "key": f.key,
+                "label": f.label,
+                "kind": f.kind,
+                "step": f.step,
+                "min": f.min,
+                "max": f.max,
+                "placeholder": f.placeholder,
+                "help": f.help,
             }
             for f in fields
         ]
@@ -507,9 +583,7 @@ async def _topics_ctx() -> dict:
 
 @router.get("/topics", response_class=HTMLResponse)
 async def admin_topics(request: Request):
-    return render(
-        request, "admin/admin_topics.html", {"active": "topics", **await _topics_ctx()}
-    )
+    return render(request, "admin/admin_topics.html", {"active": "topics", **await _topics_ctx()})
 
 
 # Declared before the /{slug}/{action} route below, which would otherwise match
@@ -548,9 +622,7 @@ async def admin_post_pin(request: Request, post_id: int, value: bool = True):
     so the button swaps in place (no full reload). Thin wrapper over the JSON API."""
     await api_post_pin(post_id, value=value)
     post = await api_post(post_id)
-    return templates.TemplateResponse(
-        request, "admin/_post_pin_cell.html", {"post": post}
-    )
+    return templates.TemplateResponse(request, "admin/_post_pin_cell.html", {"post": post})
 
 
 def _job_identity(job: dict) -> tuple:
@@ -692,9 +764,7 @@ async def queue_context(
 
 
 @router.get("/partials/queue", response_class=HTMLResponse)
-async def queue_partial(
-    request: Request, view: str = DEFAULT_QUEUE_VIEW, v: str | None = None
-):
+async def queue_partial(request: Request, view: str = DEFAULT_QUEUE_VIEW, v: str | None = None):
     context = await queue_context(view, open_groups(request))
     if unchanged(context["queue_hash"], v):
         return Response(status_code=204, headers=POLL_HEADERS)
@@ -769,9 +839,7 @@ async def backend_context(
 
 
 @router.get("/partials/backend", response_class=HTMLResponse)
-async def backend_partial(
-    request: Request, v: str | None = None, offer_force: bool = False
-):
+async def backend_partial(request: Request, v: str | None = None, offer_force: bool = False):
     """The status poll, for both llama.cpp cards: the process block replaces
     itself and the endpoint card rides back beside it as an out-of-band swap.
 
@@ -914,9 +982,7 @@ async def admin_defer(request: Request, task: str):
     except ValueError as exc:
         context = {"error": str(exc)}
     else:
-        job = job_presentation(
-            {"task_name": result["deferred"], "args": result["args"]}
-        )
+        job = job_presentation({"task_name": result["deferred"], "args": result["args"]})
         context = {
             "label": job["label"],
             "detail": job["detail"],

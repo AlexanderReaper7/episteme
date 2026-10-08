@@ -60,9 +60,7 @@ def test_every_icon_a_template_asks_for_exists_in_the_sprite():
     only way this is ever caught is here."""
     available = _sprite_ids()
     missing = {
-        name: sorted(set(where))
-        for name, where in _referenced().items()
-        if name not in available
+        name: sorted(set(where)) for name, where in _referenced().items() if name not in available
     }
     assert not missing, f"no such symbol: {missing}"
 
@@ -91,7 +89,7 @@ def test_the_sprite_sits_outside_the_htmx_swap_region():
     discarded on the first navigation and every <use> on the page resolves to
     nothing — with no error anywhere."""
     base = (TEMPLATES / "base.html").read_text(encoding="utf-8")
-    assert base.index('_icon_sprite.html') < base.index('id="main-content"')
+    assert base.index("_icon_sprite.html") < base.index('id="main-content"')
 
 
 def test_icons_are_decorative_so_the_control_carries_the_name():
@@ -143,8 +141,7 @@ def test_admin_domain_actions_keep_their_words():
     # same defect this test exists for, one layer down.
     labels = [
         " ".join(
-            re.sub(r"<[^>]+>", " ", button).split()
-            + re.findall(r'aria-label="([^"]*)"', button)
+            re.sub(r"<[^>]+>", " ", button).split() + re.findall(r'aria-label="([^"]*)"', button)
         )
         for button in re.findall(r"<button\b.*?</button>", html, re.S)
     ]

@@ -73,7 +73,14 @@ def compare_rows(params: dict, samples: list[dict]) -> list[dict]:
             row["warmups"] += 1
             continue
         row["n"] += 1
-        for column in ("prompt_n", "prefill_ms", "decode_tokens", "decode_ms", "wall_ms", "cache_n"):
+        for column in (
+            "prompt_n",
+            "prefill_ms",
+            "decode_tokens",
+            "decode_ms",
+            "wall_ms",
+            "cache_n",
+        ):
             row[column] += sample.get(column) or 0
         if sample.get("accept_pct") is not None:
             row["accept"].append(sample["accept_pct"])

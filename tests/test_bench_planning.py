@@ -63,7 +63,10 @@ def test_a_sweep_repeats_every_model_under_every_variant():
         _fixture(),
     )
     assert [(item.variant, item.model) for item in items] == [
-        ("x", "a"), ("x", "b"), ("y", "a"), ("y", "b")
+        ("x", "a"),
+        ("x", "b"),
+        ("y", "a"),
+        ("y", "b"),
     ]
 
 
@@ -108,12 +111,21 @@ def test_form_params_reach_the_planner_under_the_names_it_reads():
     differently does not fail: it silently produces a default run whose stored
     params claim otherwise."""
     params = build_params(
-        {"scenario": "ladder", "reps": "2", "predict": "64", "rungs": "1000, 2000 4096",
-         "ladder_predict": "4", "warmup": "on"}
+        {
+            "scenario": "ladder",
+            "reps": "2",
+            "predict": "64",
+            "rungs": "1000, 2000 4096",
+            "ladder_predict": "4",
+            "warmup": "on",
+        }
     )
     assert params == {
-        "reps": 2, "predict": 64, "warmup": True,
-        "rungs": [1000, 2000, 4096], "ladder_predict": 4,
+        "reps": 2,
+        "predict": 64,
+        "warmup": True,
+        "rungs": [1000, 2000, 4096],
+        "ladder_predict": 4,
     }
     items = plan_items("ladder", ["m"], params, _fixture())
     assert [item.rung for item in items] == [1000, 2000, 4096]

@@ -89,9 +89,7 @@ async def rescore(
             quality_score=(
                 post.quality_score if post.quality_score is not None else story.rank_score
             ),
-            credibility=(
-                sum(rating for _, rating in sources) / len(sources) if sources else 0.5
-            ),
+            credibility=(sum(rating for _, rating in sources) / len(sources) if sources else 0.5),
         )
         total, components = scorers.score_candidate(candidate, state)
         post.affinity_score = total
@@ -139,9 +137,9 @@ async def defer_rescore() -> None:
             }
         async with job_app.open_async():
             try:
-                await job_app.configure_task(
-                    "episteme.pipeline_stage", **options
-                ).defer_async(stage="score")
+                await job_app.configure_task("episteme.pipeline_stage", **options).defer_async(
+                    stage="score"
+                )
             except AlreadyEnqueued:
                 log.debug("Rescore already pending; this signal rides on it")
     except Exception as exc:  # noqa: BLE001 - recording the signal is what matters

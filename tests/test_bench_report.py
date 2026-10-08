@@ -7,11 +7,21 @@ from episteme.bench.report import compare_rows, is_warmup, ladder_series, run_ch
 
 def _sample(**over) -> dict:
     base = {
-        "model": "big", "variant": "", "rep": 1, "rung": None,
-        "prompt_n": 1000, "cache_n": 0, "prefill_ms": 1000,
-        "decode_tokens": 100, "decode_ms": 1000, "wall_ms": 2100,
-        "load_ms": None, "accept_pct": None, "error": None,
-        "prefill_series": [], "decode_series": [],
+        "model": "big",
+        "variant": "",
+        "rep": 1,
+        "rung": None,
+        "prompt_n": 1000,
+        "cache_n": 0,
+        "prefill_ms": 1000,
+        "decode_tokens": 100,
+        "decode_ms": 1000,
+        "wall_ms": 2100,
+        "load_ms": None,
+        "accept_pct": None,
+        "error": None,
+        "prefill_series": [],
+        "decode_series": [],
     }
     return base | over
 
@@ -21,7 +31,7 @@ def test_rates_are_totals_over_totals_not_means_of_ratios():
     and produces a headline no individual measurement supports - which is the
     failure this whole feature exists to catch."""
     samples = [
-        _sample(rep=1, prompt_n=2000, prefill_ms=1000),   # 2000 tok/s
+        _sample(rep=1, prompt_n=2000, prefill_ms=1000),  # 2000 tok/s
         _sample(rep=2, prompt_n=19000, prefill_ms=19000),  # 1000 tok/s
     ]
     row = compare_rows({"warmup": False}, samples)[0]
@@ -46,11 +56,9 @@ def test_warmup_is_derived_from_the_runs_parameters_not_stored():
 
 
 def test_a_failed_sample_is_counted_never_averaged():
-    """"The 27B produced four numbers and two timeouts" is the finding. A table
+    """ "The 27B produced four numbers and two timeouts" is the finding. A table
     that quietly averaged the four would report a healthy model."""
-    rows = compare_rows(
-        {"warmup": False}, [_sample(rep=1), _sample(rep=2, error="read timeout")]
-    )
+    rows = compare_rows({"warmup": False}, [_sample(rep=1), _sample(rep=2, error="read timeout")])
     assert rows[0]["n"] == 1 and rows[0]["errors"] == 1
 
 
@@ -70,7 +78,7 @@ def test_the_ladder_plots_measured_prompt_length_not_the_rung_requested():
         _sample(rep=0, rung=8192, prompt_n=7697, prefill_ms=7697),
         _sample(rep=0, rung=2048, prompt_n=1990, prefill_ms=1000),
     ]
-    (label, points), = ladder_series(samples)
+    ((label, points),) = ladder_series(samples)
     assert label == "big"
     assert sorted(point[0] for point in points) == [1990.0, 7697.0]
 
@@ -112,7 +120,7 @@ def test_the_y_axis_starts_at_zero():
 
 
 def test_axis_labels_are_round_numbers():
-    """"13.7 / 27.4 / 41.1" cannot be used to read a value off a line, which is
+    """ "13.7 / 27.4 / 41.1" cannot be used to read a value off a line, which is
     the only thing an axis is for."""
     chart = line_chart([("m", [[0, 0], [137, 41.1]])])
     assert [label for _, label in chart.y_ticks] == ["0", "20", "40"]

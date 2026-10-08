@@ -120,9 +120,11 @@ def test_work_still_in_flight_is_never_folded_away():
 def test_folding_never_drops_a_job():
     """A fold is not a filter. Every row handed in has to come back either as its
     own entry or inside exactly one group."""
-    jobs = _run("govern_resources", 4) + _run("ingest_source", 3, start_id=800) + [
-        _job(id=700, label="write", status="failed")
-    ]
+    jobs = (
+        _run("govern_resources", 4)
+        + _run("ingest_source", 3, start_id=800)
+        + [_job(id=700, label="write", status="failed")]
+    )
     entries = group_jobs(jobs)
     seen = []
     for entry in entries:
@@ -214,7 +216,7 @@ def test_the_group_state_is_recorded_but_never_applied_by_script():
     """app.js must not set `checked`. The server stamps it; script only writes the
     cookie the server reads."""
     js = (BASE_DIR / "static" / "app.js").read_text(encoding="utf-8")
-    body = js[js.index("function recordOpenGroups"): js.index("function agoText")]
+    body = js[js.index("function recordOpenGroups") : js.index("function agoText")]
     assert "document.cookie" in body
     assert ".checked =" not in body and ".checked=" not in body
 
@@ -247,7 +249,7 @@ def test_the_everything_view_reads_a_window_worth_folding():
 
 
 def test_the_page_says_the_history_it_shows_is_pruned():
-    """"nothing failed" means nothing failed inside the retained window, and the
+    """ "nothing failed" means nothing failed inside the retained window, and the
     window differs by what the job was."""
     html = _queue()
     assert "Pruned nightly" in html
@@ -349,7 +351,7 @@ def test_exactly_one_filter_chip_reads_as_active():
 
 
 def test_the_empty_state_says_which_view_is_empty():
-    """"queue empty" under a Failed filter means the opposite of "queue empty"
+    """ "queue empty" under a Failed filter means the opposite of "queue empty"
     under All, and the old table said the same three words either way."""
     assert "Nothing has failed" in _queue(view="failed", empty_note=QUEUE_VIEWS["failed"][2])
     assert "No jobs yet" in _queue(view="recent", empty_note=QUEUE_VIEWS["recent"][2])
@@ -403,9 +405,7 @@ def test_a_missing_instant_renders_a_dash_not_an_empty_tag():
 def test_a_queued_row_says_so_rather_than_rendering_an_empty_cell():
     """`scheduled_at` is NULL for anything deferred on demand — nearly every job
     — which is why the old `scheduled` column was blank on almost every row."""
-    html = _queue(
-        jobs=[_job(status="todo", started=None, finished=None, duration_seconds=None)]
-    )
+    html = _queue(jobs=[_job(status="todo", started=None, finished=None, duration_seconds=None)])
     assert "queued" in html
 
 
@@ -467,7 +467,14 @@ def test_every_stage_button_says_what_it_consumes_and_produces():
 def test_the_stage_chain_is_rendered_in_pipeline_order():
     """It is a sequence and it was drawn as a set of six equal buttons."""
     assert [s["task"] for s in STAGES] == [
-        "embed", "cluster", "triage", "write", "qa", "summarize", "narrate", "score"
+        "embed",
+        "cluster",
+        "triage",
+        "write",
+        "qa",
+        "summarize",
+        "narrate",
+        "score",
     ]
     html = _jobs_page()
     positions = [html.index(f"/admin/defer/{s['task']}") for s in STAGES]
@@ -502,7 +509,7 @@ def test_a_jobs_targets_are_rendered_inside_the_job_that_reads_them():
 
     # ...and the shared field is outside every job control, because it belongs to
     # the group rather than to any one of them.
-    chain = html[html.index('class="stage-group"'):]
+    chain = html[html.index('class="stage-group"') :]
     assert chain.index('<input name="limit"') < chain.index('class="stage-block job-run"')
 
 
@@ -625,7 +632,7 @@ def test_every_job_group_uses_its_own_glyph():
 
 
 def test_pause_states_what_it_does_to_work_in_flight():
-    """"pause + unload" names two mechanisms and no consequence. The question an
+    """ "pause + unload" names two mechanisms and no consequence. The question an
     operator has is whether pressing it loses the story being written."""
     html = _jobs_page()
     assert "Stop after the current story" in html
@@ -690,9 +697,7 @@ def test_every_job_answers_inside_its_own_control():
         assert f'id="{slot}"' in html, slot
     # ...and the slot is inside the control, not in a shared box somewhere else.
     for job in (*STAGE_GROUP["jobs"], *OPS_GROUP["jobs"]):
-        block = re.search(
-            rf'defer/{job["task"]}"(.*?)(?=hx-post="/admin/|\Z)', html, re.S
-        ).group(1)
+        block = re.search(rf'defer/{job["task"]}"(.*?)(?=hx-post="/admin/|\Z)', html, re.S).group(1)
         assert f'id="defer-{job["task"]}"' in block, job["task"]
 
 
@@ -708,8 +713,8 @@ def test_a_stage_is_an_expandable_block_that_still_runs_while_collapsed():
     assert len(blocks) == len(STAGES)
     for block in blocks:
         summary = re.search(r"<summary.*?</summary>", block, re.S).group(0)
-        assert "hx-post=\"/admin/defer/" in summary  # run button is in the header
-    assert "<details class=\"disclosure stage-details\" open>" not in html
+        assert 'hx-post="/admin/defer/' in summary  # run button is in the header
+    assert '<details class="disclosure stage-details" open>' not in html
 
 
 def test_a_collapsed_stage_still_carries_its_target_to_the_server():
@@ -854,7 +859,7 @@ def test_the_js_retimer_and_the_python_renderer_agree_on_the_thresholds():
     ticker — so the boundaries must not drift, or a row would visibly change its
     wording 30 seconds after arriving without anything having happened."""
     js = (BASE_DIR / "static" / "app.js").read_text(encoding="utf-8")
-    retimer = js[js.index("function agoText"): js.index("function retimeAgo")]
+    retimer = js[js.index("function agoText") : js.index("function retimeAgo")]
     # The four thresholds _ago is built on, and the two special cases.
     for boundary in ("60", "3600", "86400", "45"):
         assert boundary in retimer, boundary
@@ -871,7 +876,7 @@ def test_the_js_retimer_and_the_python_renderer_agree_on_the_thresholds():
 
 
 def test_a_near_instant_job_does_not_render_as_zero():
-    """"0.0s" reads as a failed measurement, and a no-op stage — score with
+    """ "0.0s" reads as a failed measurement, and a no-op stage — score with
     nothing to rescore — lands there routinely."""
     assert _duration(0.04) == "<0.1s"
     assert _duration(0.0) == "<0.1s"

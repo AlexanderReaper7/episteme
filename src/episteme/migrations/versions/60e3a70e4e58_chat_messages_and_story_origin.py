@@ -9,8 +9,8 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
-revision = '60e3a70e4e58'
-down_revision = 'bed89c48b376'
+revision = "60e3a70e4e58"
+down_revision = "bed89c48b376"
 branch_labels = None
 depends_on = None
 
@@ -54,16 +54,17 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["post_id"], ["posts.id"], ondelete="SET NULL"),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index(
-        "ix_chat_messages_session", "chat_messages", ["session_id", "id"], unique=False
-    )
+    op.create_index("ix_chat_messages_session", "chat_messages", ["session_id", "id"], unique=False)
     op.add_column(
         "stories",
         sa.Column("origin", sa.String(length=20), nullable=False, server_default="ingest"),
     )
     op.alter_column(
-        "stories", "origin", server_default=None,
-        existing_type=sa.String(length=20), existing_nullable=False,
+        "stories",
+        "origin",
+        server_default=None,
+        existing_type=sa.String(length=20),
+        existing_nullable=False,
     )
 
 

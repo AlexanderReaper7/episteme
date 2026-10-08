@@ -15,7 +15,9 @@ class TriageResult(BaseModel):
     # Ranking signal: higher = more learning value / more interesting. Deliberately
     # unbounded above (guide the model to ~0-10 but let it exceed for standouts) so the
     # scale keeps meaning as the feed grows — the writer works candidates best-first.
-    quality_score: float = Field(ge=0, description="Learning value + interest; ~0-10, higher is better")
+    quality_score: float = Field(
+        ge=0, description="Learning value + interest; ~0-10, higher is better"
+    )
     topics: list[str] = Field(min_length=1, max_length=3)
     reason: str = Field(max_length=500)
 
@@ -120,9 +122,7 @@ class CardSummary(BaseModel):
     @model_validator(mode="after")
     def _reads_as_finished(self) -> "CardSummary":
         if not self.summary.strip().endswith((".", "!", "?", '"', "'", ")", "…")):
-            raise ValueError(
-                "summary ends mid-sentence - write a shorter one that finishes"
-            )
+            raise ValueError("summary ends mid-sentence - write a shorter one that finishes")
         return self
 
 
@@ -193,7 +193,9 @@ class ChartAxis(BaseModel):
         description="quantitative = numbers, nominal = unordered categories, "
         "ordinal = ranked categories, temporal = dates"
     )
-    title: str = Field(default="", max_length=100, description="Axis label; defaults to the field name")
+    title: str = Field(
+        default="", max_length=100, description="Axis label; defaults to the field name"
+    )
 
 
 class ChartEncoding(BaseModel):
@@ -271,10 +273,24 @@ class ChartSection(BaseModel):
 # diagram validation — the grammar cannot constrain a DSL held in a string, so the
 # rest is what QA's screenshot still exists for.
 MERMAID_DIAGRAM_TYPES = (
-    "flowchart", "graph", "sequenceDiagram", "classDiagram", "stateDiagram",
-    "stateDiagram-v2", "erDiagram", "journey", "gantt", "pie", "quadrantChart",
-    "requirementDiagram", "gitGraph", "mindmap", "timeline", "sankey-beta",
-    "xychart-beta", "block-beta",
+    "flowchart",
+    "graph",
+    "sequenceDiagram",
+    "classDiagram",
+    "stateDiagram",
+    "stateDiagram-v2",
+    "erDiagram",
+    "journey",
+    "gantt",
+    "pie",
+    "quadrantChart",
+    "requirementDiagram",
+    "gitGraph",
+    "mindmap",
+    "timeline",
+    "sankey-beta",
+    "xychart-beta",
+    "block-beta",
 )
 
 

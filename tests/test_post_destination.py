@@ -48,13 +48,23 @@ def _item(**kw):
 
 def _card(**kw):
     """A feed card's worth of post, whatever the kind."""
-    story = SimpleNamespace(topics=["astro"], last_item_at=datetime(2026, 7, 21, 8, 0),
-                            items=[_item()])
+    story = SimpleNamespace(
+        topics=["astro"], last_item_at=datetime(2026, 7, 21, 8, 0), items=[_item()]
+    )
     base = dict(
-        id=200, kind="article", story=story, href=None, sections=[],
-        title="A title", summary="A summary", topics=["astro"], difficulty="medium",
-        reading_time_minutes=4, banner_url=None,
-        generated_at=datetime(2026, 7, 21, 8, 0), publish_at=None,
+        id=200,
+        kind="article",
+        story=story,
+        href=None,
+        sections=[],
+        title="A title",
+        summary="A summary",
+        topics=["astro"],
+        difficulty="medium",
+        reading_time_minutes=4,
+        banner_url=None,
+        generated_at=datetime(2026, 7, 21, 8, 0),
+        publish_at=None,
     )
     base.update(kw)
     return SimpleNamespace(**base)
@@ -65,10 +75,17 @@ def _render(post, labels=None) -> str:
     return templates.env.get_template("_feed.html").render(
         posts=[post],
         correspondent_labels=labels if labels is not None else {},
-        feedback_contexts={post.id: {"post_id": post.id, "signals": {},
-                                     "topic_signals": {}, "source_signals": {},
-                                     "post_topics": [], "post_sources": [],
-                                     "variant": "card"}},
+        feedback_contexts={
+            post.id: {
+                "post_id": post.id,
+                "signals": {},
+                "topic_signals": {},
+                "source_signals": {},
+                "post_topics": [],
+                "post_sources": [],
+                "variant": "card",
+            }
+        },
     )
 
 
@@ -136,8 +153,9 @@ def test_the_primary_item_key_orders_by_publish_date_then_id():
 
 def _request(headers: dict[str, str]) -> Request:
     raw = [(k.lower().encode(), v.encode()) for k, v in headers.items()]
-    return Request({"type": "http", "method": "GET", "path": "/post/200",
-                    "query_string": b"", "headers": raw})
+    return Request(
+        {"type": "http", "method": "GET", "path": "/post/200", "query_string": b"", "headers": raw}
+    )
 
 
 def _session_returning(post):

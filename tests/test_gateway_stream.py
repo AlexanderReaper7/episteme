@@ -128,7 +128,9 @@ async def test_stream_request_asks_for_streaming_and_usage():
         return httpx.Response(200, content=_body([_chunk({"content": "x"})]))
 
     gateway = LLMGateway(transport=httpx.MockTransport(handler))
-    async for _ in gateway.chat_stream("chat", [{"role": "user", "content": "hi"}], tools=[{"t": 1}]):
+    async for _ in gateway.chat_stream(
+        "chat", [{"role": "user", "content": "hi"}], tools=[{"t": 1}]
+    ):
         pass
     assert seen["stream"] is True
     assert seen["stream_options"] == {"include_usage": True}

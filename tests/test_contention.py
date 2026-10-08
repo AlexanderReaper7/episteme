@@ -58,7 +58,10 @@ async def test_pause_state_reads_a_legacy_row_as_manual():
     from episteme.worker.control import pause_state
 
     assert await pause_state(_FakeSession({"paused": True})) == {
-        "paused": True, "reason": MANUAL, "since": None, "contended_at": None
+        "paused": True,
+        "reason": MANUAL,
+        "since": None,
+        "contended_at": None,
     }
 
 
@@ -136,7 +139,10 @@ async def test_pause_does_not_unload_a_model_out_from_under_a_running_story(monk
     monkeypatch.setattr(contention, "pipeline_job_running", _async(True))
     result = await apply_announcement(_FakeSession({}), "pause", BUSY_REASON)
     assert result == {
-        "applied": True, "paused": True, "worker_running": True, "unloaded_models": []
+        "applied": True,
+        "paused": True,
+        "worker_running": True,
+        "unloaded_models": [],
     }
     assert unloads == []
 
@@ -364,9 +370,7 @@ async def test_a_release_names_exactly_one_holder():
 
     session = _Recorder()
     await release_interactive(session, CHAT_HOLDER)
-    assert [params for _, params in session.calls] == [
-        {"key": LEASE_KEY, "holder": CHAT_HOLDER}
-    ]
+    assert [params for _, params in session.calls] == [{"key": LEASE_KEY, "holder": CHAT_HOLDER}]
 
 
 async def test_the_lease_statements_bind_the_parameters_they_read_as():
@@ -482,6 +486,7 @@ def _agent(handler) -> Warden:
 async def test_reads_degrade_to_none_when_the_agent_is_down(agent_url):
     """The panel must render a dead agent, not raise. Episteme is designed to run
     without one at all."""
+
     def boom(request):
         raise httpx.ConnectError("refused")
 
@@ -494,6 +499,7 @@ async def test_reads_degrade_to_none_when_the_agent_is_down(agent_url):
 async def test_actions_raise_when_the_agent_is_down(agent_url):
     """Opposite convention from reads, deliberately: a start button that silently
     does nothing is worse than one that says why it failed."""
+
     def boom(request):
         raise httpx.ConnectError("refused")
 
@@ -537,9 +543,7 @@ async def test_a_delta_read_forwards_the_offset(agent_url):
     assert seen["since"] == "900"
 
 
-async def test_reads_and_actions_get_timeouts_sized_for_what_they_wait_on(
-    agent_url, monkeypatch
-):
+async def test_reads_and_actions_get_timeouts_sized_for_what_they_wait_on(agent_url, monkeypatch):
     """One timeout for everything was wrong in both directions. Sized for /start
     it made a hung agent block the dashboard — /status rides the page load and
     /logs polls every 3s — for two minutes; sized for a read it would abandon a
@@ -566,9 +570,7 @@ async def test_reads_and_actions_get_timeouts_sized_for_what_they_wait_on(
     # A restart is a stop and a start inside one request, so it cannot inherit a
     # ceiling sized for one leg.
     assert seen["/restart"] == 360.0
-    assert settings.llm_warden_restart_timeout_seconds > (
-        settings.llm_warden_timeout_seconds
-    )
+    assert settings.llm_warden_restart_timeout_seconds > (settings.llm_warden_timeout_seconds)
 
 
 # --- the graceful stop (web/api.py) -------------------------------------------
@@ -696,11 +698,14 @@ async def test_the_stream_sends_a_tail_once_and_then_only_what_was_appended(monk
     """The bytes are the small part of it: re-swapping the whole pane also threw
     away the operator's text selection and scrollback, every 3 seconds, while
     they were reading it."""
-    events, asked = await _drive(monkeypatch, [
-        {"lines": ["a", "b"], "next_offset": 10, "exists": True, "size_bytes": 10},
-        {"lines": ["c"], "next_offset": 12, "exists": True, "size_bytes": 12},
-        {"lines": [], "next_offset": 12, "exists": True, "size_bytes": 12},
-    ])
+    events, asked = await _drive(
+        monkeypatch,
+        [
+            {"lines": ["a", "b"], "next_offset": 10, "exists": True, "size_bytes": 10},
+            {"lines": ["c"], "next_offset": 12, "exists": True, "size_bytes": 12},
+            {"lines": [], "next_offset": 12, "exists": True, "size_bytes": 12},
+        ],
+    )
 
     assert [name for name, _ in events] == ["reset", "lines"]
     assert events[0][1]["lines"] == ["a", "b"]
@@ -718,7 +723,7 @@ async def test_the_stream_resumes_a_server_rendered_snapshot_without_resending_i
         since=42,
     )
     assert asked == [42]
-    assert [name for name, _ in events] == ["lines"]   # append, not replace
+    assert [name for name, _ in events] == ["lines"]  # append, not replace
 
 
 async def test_a_truncated_log_reaches_the_browser_as_a_replace(monkeypatch):
@@ -736,10 +741,13 @@ async def test_an_unreachable_agent_does_not_close_the_stream(monkeypatch):
     """Watching llama.cpp restart is a reason to have this pane open, so the
     agent going away has to be an event, not the end of the connection — the
     stream must outlive the process it reports on."""
-    events, _ = await _drive(monkeypatch, [
-        None,
-        {"lines": ["back"], "next_offset": 5, "exists": True, "size_bytes": 5},
-    ])
+    events, _ = await _drive(
+        monkeypatch,
+        [
+            None,
+            {"lines": ["back"], "next_offset": 5, "exists": True, "size_bytes": 5},
+        ],
+    )
     assert [name for name, _ in events] == ["unavailable", "reset"]
     assert "unreachable" in events[0][1]["detail"]
 
@@ -762,8 +770,7 @@ async def test_the_stream_is_refused_outright_when_no_agent_is_configured(monkey
 def _render_log(**ctx):
     from episteme.web.templating import templates
 
-    base = dict(which="router", logs_available=["router", "embed"], agent_enabled=True,
-                since=None)
+    base = dict(which="router", logs_available=["router", "embed"], agent_enabled=True, since=None)
     return templates.env.get_template("admin/_backend_log.html").render(**{**base, **ctx})
 
 
@@ -802,10 +809,14 @@ async def test_an_agent_predating_the_offset_protocol_degrades_to_replacing(monk
     separately, so an agent that answers without `next_offset` is a normal state,
     not a bug. Appending its answers would re-append the whole tail every second;
     treating them as replaces is exactly the poll this stream came from."""
-    events, asked = await _drive(monkeypatch, [
-        {"lines": ["a", "b"], "exists": True, "size_bytes": 10},
-        {"lines": ["a", "b"], "exists": True, "size_bytes": 10},
-    ], since=None)
+    events, asked = await _drive(
+        monkeypatch,
+        [
+            {"lines": ["a", "b"], "exists": True, "size_bytes": 10},
+            {"lines": ["a", "b"], "exists": True, "size_bytes": 10},
+        ],
+        since=None,
+    )
 
     assert [name for name, _ in events] == ["reset", "reset"]
     assert asked == [None, None]  # no offset to advance to, so none is claimed

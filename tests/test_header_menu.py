@@ -79,7 +79,7 @@ def test_every_way_of_closing_it():
         "/* ====================="
     )[0]
     assert 'e.target.closest("[data-site-menu]")' in body  # the button toggles
-    assert "if (nav.classList.contains(\"is-open\")) setSiteMenu(false);" in body
+    assert 'if (nav.classList.contains("is-open")) setSiteMenu(false);' in body
     assert 'e.key !== "Escape"' in body
     # NOT htmx:load: a polling fragment anywhere on the page fires it, and the
     # menu would close under the reader's finger.
@@ -92,4 +92,6 @@ def test_the_glyphs_are_the_sprites_and_swap_on_the_button():
     page = _page()
     assert re.search(r'site-menu-glyph site-menu-glyph--closed"[^>]*>\s*<use href="#i-menu"', page)
     assert re.search(r'site-menu-glyph site-menu-glyph--open"[^>]*>\s*<use href="#i-remove"', page)
-    assert '.site-menu-toggle[aria-expanded="true"] .site-menu-glyph--closed { display: none; }' in CSS
+    assert (
+        '.site-menu-toggle[aria-expanded="true"] .site-menu-glyph--closed { display: none; }' in CSS
+    )

@@ -34,9 +34,7 @@ def page(monkeypatch):
     def build(rows, plugins=()):
         class _Session:
             async def execute(self, _statement):
-                return SimpleNamespace(
-                    scalars=lambda: SimpleNamespace(all=lambda: list(rows))
-                )
+                return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: list(rows)))
 
             async def __aenter__(self):
                 return self
@@ -101,7 +99,7 @@ def test_a_block_does_not_govern_the_html_it_is_handed(page):
     its correspondent's page. The rule this pins: an element that swaps in HTML
     core did not author must not hand that HTML its own htmx attributes."""
     html = page([row("matsedel", "Matsedel")])
-    body = html[html.index('class="glance-block-body"'):]
+    body = html[html.index('class="glance-block-body"') :]
     body = body[: body.index(">")]
     assert 'hx-target="this"' in body
     assert 'hx-disinherit="*"' in body

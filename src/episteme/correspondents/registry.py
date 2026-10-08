@@ -92,9 +92,7 @@ def validate(plugin: CorrespondentPlugin) -> None:
         raise RegistryError(f"{slug}: template directory {tpl} does not exist")
     router = plugin.router
     served = {
-        route.path
-        for route in router.routes
-        if "GET" in (getattr(route, "methods", None) or ())
+        route.path for route in router.routes if "GET" in (getattr(route, "methods", None) or ())
     }
     if GLANCE_PATH not in served:
         raise RegistryError(
@@ -108,8 +106,7 @@ def get_plugin(slug: str) -> CorrespondentPlugin:
         return _PLUGINS[slug]
     except KeyError:
         raise LookupError(
-            f"No correspondent plugin registered for {slug!r}; "
-            f"known: {sorted(_PLUGINS)}"
+            f"No correspondent plugin registered for {slug!r}; known: {sorted(_PLUGINS)}"
         ) from None
 
 

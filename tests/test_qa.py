@@ -20,8 +20,10 @@ from episteme.worker.qa import (
     qa_harness,
 )
 
-_QUIZ = {"type": "quiz", "questions": [
-    {"question": "q?", "choices": ["a", "b"], "answer_index": 0, "explanation": "e"}]}
+_QUIZ = {
+    "type": "quiz",
+    "questions": [{"question": "q?", "choices": ["a", "b"], "answer_index": 0, "explanation": "e"}],
+}
 
 _SECTIONS = [
     {"type": "prose", "text": "old body"},
@@ -48,8 +50,13 @@ def _editor(candidates=None, sections=None, *, session=None, renderer=None, visu
     handlers only ever see it through the context.
     """
     post = Post(
-        id=1, kind="article", title="T", summary="S", difficulty="intermediate",
-        topics=["astronomy"], sections=sections or [dict(s) for s in _SECTIONS],
+        id=1,
+        kind="article",
+        title="T",
+        summary="S",
+        difficulty="intermediate",
+        topics=["astronomy"],
+        sections=sections or [dict(s) for s in _SECTIONS],
     )
     editor = _Editor.of(post, candidates or {})
     editor.harness = qa_harness(
@@ -102,8 +109,9 @@ async def test_replace_section_touches_only_that_section():
     """The whole point of section-addressed editing: a fix to one paragraph must
     leave the quiz — which QA used to have to re-emit blind — byte-identical."""
     editor = _editor()
-    reply = await _call(editor, "replace_section",
-                        {"index": 0, "section": {"type": "prose", "text": "new body"}})
+    reply = await _call(
+        editor, "replace_section", {"index": 0, "section": {"type": "prose", "text": "new body"}}
+    )
     assert not reply.refused
     assert editor.body[0] == {"type": "prose", "text": "new body"}
     assert editor.body[1] == _SECTIONS[1]
@@ -115,11 +123,16 @@ async def test_every_mutation_returns_the_renumbered_body():
     """An insert shifts every index after it, so the reply re-issues the listing —
     otherwise the model's next call addresses a stale index."""
     editor = _editor()
-    reply = await _call(editor, "insert_section",
-                        {"index": 0, "section": {"type": "prose", "text": "lede"}})
+    reply = await _call(
+        editor, "insert_section", {"index": 0, "section": {"type": "prose", "text": "lede"}}
+    )
     listing = json.loads(reply.content.split("now:\n", 1)[1])
     assert [e["section"]["type"] for e in listing["sections"]] == [
-        "prose", "prose", "key_points", "quiz"]
+        "prose",
+        "prose",
+        "key_points",
+        "quiz",
+    ]
     assert listing["sections"][3]["index"] == 3
 
 
@@ -140,7 +153,11 @@ async def test_flush_splices_the_citation_tail_back_on():
     await _call(editor, "delete_section", {"index": 1})
     await _flush(session, editor)
     assert [s["type"] for s in editor.post.sections] == [
-        "prose", "quiz", "sources", "further_reading"]
+        "prose",
+        "quiz",
+        "sources",
+        "further_reading",
+    ]
     assert session.commits == 1
     assert editor.post.reading_time_minutes >= 1
     await _flush(session, editor)  # nothing pending -> no second write
@@ -162,16 +179,21 @@ async def test_deleting_the_last_quiz_is_refused():
 
 async def test_replacing_the_last_quiz_with_prose_is_refused():
     editor = _editor()
-    reply = await _call(editor, "replace_section",
-                        {"index": 2, "section": {"type": "prose", "text": "no quiz"}})
+    reply = await _call(
+        editor, "replace_section", {"index": 2, "section": {"type": "prose", "text": "no quiz"}}
+    )
     assert reply.content.startswith("Rejected")
     assert editor.body[2] == _QUIZ
 
 
 async def test_replacing_the_quiz_with_a_corrected_quiz_is_allowed():
     """Fixing a bad question is exactly what the invariant must not block."""
-    fixed = {"type": "quiz", "questions": [
-        {"question": "q2?", "choices": ["x", "y"], "answer_index": 1, "explanation": "e2"}]}
+    fixed = {
+        "type": "quiz",
+        "questions": [
+            {"question": "q2?", "choices": ["x", "y"], "answer_index": 1, "explanation": "e2"}
+        ],
+    }
     editor = _editor()
     await _call(editor, "replace_section", {"index": 2, "section": fixed})
     assert editor.body[2] == fixed
@@ -182,13 +204,18 @@ async def test_invalid_section_is_a_tool_error_not_a_failed_review():
     conversation — it used to fail the entire QAReview and burn a repair retry
     re-emitting a whole body that was otherwise correct."""
     editor = _editor()
-    reply = await _call(editor, "replace_section",
-                        {"index": 0, "section": {"type": "carousel", "items": []}})
+    reply = await _call(
+        editor, "replace_section", {"index": 0, "section": {"type": "carousel", "items": []}}
+    )
     assert reply.content.startswith("Rejected") and not reply.refused
     assert editor.body[0] == _SECTIONS[0] and editor.edits == 0
 
-    bad_quiz = {"type": "quiz", "questions": [
-        {"question": "q?", "choices": ["a", "b"], "answer_index": 7, "explanation": "e"}]}
+    bad_quiz = {
+        "type": "quiz",
+        "questions": [
+            {"question": "q?", "choices": ["a", "b"], "answer_index": 7, "explanation": "e"}
+        ],
+    }
     reply = await _call(editor, "replace_section", {"index": 2, "section": bad_quiz})
     assert reply.content.startswith("Rejected")
 
@@ -196,29 +223,50 @@ async def test_invalid_section_is_a_tool_error_not_a_failed_review():
 async def test_media_sections_stay_closed_set():
     """QA can't introduce media the story never ingested; a candidate URL is kept and
     re-stamped with DB attribution (the model never writes attribution itself)."""
-    candidates = {"https://cdn.example.org/real.jpg": {
-        "kind": "image", "attribution": "Nature", "source_url": "https://nature.com/x"}}
+    candidates = {
+        "https://cdn.example.org/real.jpg": {
+            "kind": "image",
+            "attribution": "Nature",
+            "source_url": "https://nature.com/x",
+        }
+    }
     editor = _editor(candidates)
 
-    reply = await _call(editor, "replace_section", {
-        "index": 0, "section": {"type": "image", "url": "https://evil.example/fake.jpg",
-                                "caption": "no"}})
+    reply = await _call(
+        editor,
+        "replace_section",
+        {
+            "index": 0,
+            "section": {"type": "image", "url": "https://evil.example/fake.jpg", "caption": "no"},
+        },
+    )
     assert reply.content.startswith("Rejected")
     assert "https://cdn.example.org/real.jpg" in reply.content  # names what IS allowed
     assert editor.body[0] == _SECTIONS[0]
 
-    await _call(editor, "replace_section", {
-        "index": 0, "section": {"type": "image", "url": "https://cdn.example.org/real.jpg",
-                                "caption": "ok"}})
+    await _call(
+        editor,
+        "replace_section",
+        {
+            "index": 0,
+            "section": {
+                "type": "image",
+                "url": "https://cdn.example.org/real.jpg",
+                "caption": "ok",
+            },
+        },
+    )
     assert editor.body[0]["attribution"] == "Nature"
 
 
 @pytest.mark.parametrize(
     "name,args",
-    [("replace_section", {"index": 9, "section": {"type": "prose", "text": "x"}}),
-     ("delete_section", {"index": -1}),
-     ("insert_section", {"index": 4, "section": {"type": "prose", "text": "x"}}),
-     ("delete_section", {"index": "two"})],
+    [
+        ("replace_section", {"index": 9, "section": {"type": "prose", "text": "x"}}),
+        ("delete_section", {"index": -1}),
+        ("insert_section", {"index": 4, "section": {"type": "prose", "text": "x"}}),
+        ("delete_section", {"index": "two"}),
+    ],
 )
 async def test_out_of_range_indices_are_refused(name, args):
     editor = _editor()
@@ -230,10 +278,12 @@ async def test_out_of_range_indices_are_refused(name, args):
 async def test_edit_budget_is_enforced(monkeypatch):
     monkeypatch.setattr(settings, "qa_max_edits", 1)
     editor = _editor()
-    await _call(editor, "replace_section",
-                {"index": 0, "section": {"type": "prose", "text": "one"}})
-    reply = await _call(editor, "replace_section",
-                        {"index": 0, "section": {"type": "prose", "text": "two"}})
+    await _call(
+        editor, "replace_section", {"index": 0, "section": {"type": "prose", "text": "one"}}
+    )
+    reply = await _call(
+        editor, "replace_section", {"index": 0, "section": {"type": "prose", "text": "two"}}
+    )
     assert reply.refused  # a refusal, so the stuck-loop breaker can end the review
     assert editor.body[0]["text"] == "one"
 
@@ -242,8 +292,11 @@ async def test_edit_budget_is_enforced(monkeypatch):
 
 
 def _toolcall(name, args, call_id="c1"):
-    return {"role": "assistant", "content": None,
-            "tool_calls": [{"id": call_id, "function": {"name": name, "arguments": args}}]}
+    return {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [{"id": call_id, "function": {"name": name, "arguments": args}}],
+    }
 
 
 class ScriptedGateway:
@@ -251,19 +304,25 @@ class ScriptedGateway:
         self.script = list(script)
         self.turns = 0
 
-    async def chat_messages(self, role, messages, tools=None, response_schema=None,
-                            temperature=0.3):
+    async def chat_messages(
+        self, role, messages, tools=None, response_schema=None, temperature=0.3
+    ):
         self.turns += 1
         return self.script.pop(0) if self.script else {"role": "assistant", "content": "done"}
 
 
 async def test_loop_applies_edits_then_stops_on_finish_review(monkeypatch):
-    gw = ScriptedGateway([
-        _toolcall("replace_section",
-                  '{"index": 0, "section": {"type": "prose", "text": "grounded"}}', "c1"),
-        _toolcall("finish_review", '{"note": "fixed the lede"}', "c2"),
-        _toolcall("delete_section", '{"index": 0}', "c3"),  # never reached
-    ])
+    gw = ScriptedGateway(
+        [
+            _toolcall(
+                "replace_section",
+                '{"index": 0, "section": {"type": "prose", "text": "grounded"}}',
+                "c1",
+            ),
+            _toolcall("finish_review", '{"note": "fixed the lede"}', "c2"),
+            _toolcall("delete_section", '{"index": 0}', "c3"),  # never reached
+        ]
+    )
     monkeypatch.setattr(agent, "gateway", gw)
     editor = _editor()
     messages = [{"role": "system", "content": "sys"}]
@@ -280,8 +339,9 @@ async def test_rerender_flushes_first_then_returns_a_fresh_screenshot():
     rendering — the worker screenshots the post through the real web app."""
     session, renderer = FakeSession(), FakeRenderer()
     editor = _editor(session=session, renderer=renderer, visual=True)
-    await _call(editor, "replace_section",
-                {"index": 0, "section": {"type": "prose", "text": "fixed"}})
+    await _call(
+        editor, "replace_section", {"index": 0, "section": {"type": "prose", "text": "fixed"}}
+    )
     reply = await _call(editor, "rerender", {})
 
     assert session.commits == 1 and not editor.dirty
@@ -315,8 +375,7 @@ def test_qa_tools_constrain_the_section_argument():
 def test_qa_has_no_network_tools():
     """QA's grounding set is fixed at write time; a reviewer that can fetch reopens
     the injection surface for no reviewing benefit (decided 2026-08-02)."""
-    editing = {"replace_section", "insert_section", "delete_section",
-               "set_title", "finish_review"}
+    editing = {"replace_section", "insert_section", "delete_section", "set_title", "finish_review"}
     assert set(_names(_editor())) == editing
     assert set(_names(_editor(visual=True))) == editing | {"rerender"}
 
@@ -350,10 +409,11 @@ _CHART = {
     "type": "chart",
     "spec": {
         "mark": "bar",
-        "data": {"values": [{"city": "Boston", "pct": 16.0},
-                            {"city": "Chicago", "pct": 0.1}]},
-        "encoding": {"x": {"field": "city", "type": "nominal"},
-                     "y": {"field": "pct", "type": "quantitative"}},
+        "data": {"values": [{"city": "Boston", "pct": 16.0}, {"city": "Chicago", "pct": 0.1}]},
+        "encoding": {
+            "x": {"field": "city", "type": "nominal"},
+            "y": {"field": "pct", "type": "quantitative"},
+        },
     },
     "caption": "obscuration",
 }
@@ -376,8 +436,9 @@ async def test_inserting_a_chart_escalates_a_text_only_review_to_visual():
 
 async def test_editing_prose_does_not_escalate():
     editor = _editor()
-    await _call(editor, "replace_section",
-                {"index": 0, "section": {"type": "prose", "text": "fixed"}})
+    await _call(
+        editor, "replace_section", {"index": 0, "section": {"type": "prose", "text": "fixed"}}
+    )
     assert "rerender" not in _names(editor)
 
 

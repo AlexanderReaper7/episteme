@@ -112,9 +112,7 @@ async def test_a_run_that_cannot_be_planned_is_still_stamped(scenario, monkeypat
     so the run sat at `queued`, which the page reads as LIVE: a cancel button
     resolving to nothing and a progress stream that never sends `done`."""
     recorded: list[tuple[str, dict]] = []
-    run = runner.BenchmarkRun(
-        id=7, scenario=scenario, models=["m"], params={}, executor="worker"
-    )
+    run = runner.BenchmarkRun(id=7, scenario=scenario, models=["m"], params={}, executor="worker")
 
     async def _load(session, run_id):
         return run, None  # the fixture every one of these scenarios needs, absent
@@ -172,9 +170,7 @@ def test_the_poll_url_carries_the_digest_of_what_is_on_screen():
     """Without it the fragment answered 200 every 10 s forever and re-swapped a
     byte-identical table, which is the churn `_admin_queue.html` exists not to
     do. `hx-target` is named because .admin-main's is otherwise inherited."""
-    html = templates.env.get_template("admin/_bench_runs.html").render(
-        **_runs_context([_row()])
-    )
+    html = templates.env.get_template("admin/_bench_runs.html").render(**_runs_context([_row()]))
     root = re.search(r'<div id="bench-runs"[^>]*>', html).group(0)
     assert "/admin/benchmarks/partials/runs?v=" in root
     assert 'hx-target="this"' in root

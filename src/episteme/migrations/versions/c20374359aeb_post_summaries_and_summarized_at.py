@@ -33,40 +33,36 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = 'c20374359aeb'
-down_revision = 'bbe93808d5dc'
+revision = "c20374359aeb"
+down_revision = "bbe93808d5dc"
 branch_labels = None
 depends_on = None
 
 
 def upgrade() -> None:
     op.create_table(
-        'post_summaries',
-        sa.Column('id', sa.Integer(), nullable=False),
-        sa.Column('post_id', sa.Integer(), nullable=False),
-        sa.Column('summary', sa.Text(), nullable=False),
-        sa.Column('summarized_at', sa.DateTime(timezone=True), nullable=True),
+        "post_summaries",
+        sa.Column("id", sa.Integer(), nullable=False),
+        sa.Column("post_id", sa.Integer(), nullable=False),
+        sa.Column("summary", sa.Text(), nullable=False),
+        sa.Column("summarized_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column(
-            'replaced_at',
+            "replaced_at",
             sa.DateTime(timezone=True),
-            server_default=sa.text('now()'),
+            server_default=sa.text("now()"),
             nullable=False,
         ),
-        sa.ForeignKeyConstraint(['post_id'], ['posts.id'], ondelete='CASCADE'),
-        sa.PrimaryKeyConstraint('id'),
+        sa.ForeignKeyConstraint(["post_id"], ["posts.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index(
-        op.f('ix_post_summaries_post_id'), 'post_summaries', ['post_id'], unique=False
-    )
-    op.add_column(
-        'posts', sa.Column('summarized_at', sa.DateTime(timezone=True), nullable=True)
-    )
+    op.create_index(op.f("ix_post_summaries_post_id"), "post_summaries", ["post_id"], unique=False)
+    op.add_column("posts", sa.Column("summarized_at", sa.DateTime(timezone=True), nullable=True))
 
 
 def downgrade() -> None:
     # Dropping `post_summaries` destroys every superseded summary. That is the
     # honest downgrade: the table IS the history, and there is nowhere else to
     # put it.
-    op.drop_column('posts', 'summarized_at')
-    op.drop_index(op.f('ix_post_summaries_post_id'), table_name='post_summaries')
-    op.drop_table('post_summaries')
+    op.drop_column("posts", "summarized_at")
+    op.drop_index(op.f("ix_post_summaries_post_id"), table_name="post_summaries")
+    op.drop_table("post_summaries")

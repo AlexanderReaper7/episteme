@@ -43,8 +43,16 @@ TYPE_NAME = "matsedel"
 #: change once a week has been filed under it.
 RESTAURANTS = (
     {"site": "koppargrillen", "name": "Koppargrillen", "url": "https://koppargrillen.se/lunch/"},
-    {"site": "italia", "name": "Restaurang Italia", "url": "https://www.restaurangitalia.com/menu-1"},
-    {"site": "vanerparken", "name": "Restaurang Vänerparken", "url": "https://www.vanerparken.com/matsedel/"},
+    {
+        "site": "italia",
+        "name": "Restaurang Italia",
+        "url": "https://www.restaurangitalia.com/menu-1",
+    },
+    {
+        "site": "vanerparken",
+        "name": "Restaurang Vänerparken",
+        "url": "https://www.vanerparken.com/matsedel/",
+    },
     {"site": "kalasboden", "name": "Kalasboden", "url": "https://www.kalasboden.se/"},
 )
 

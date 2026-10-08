@@ -160,9 +160,7 @@ class BenchClient:
                 "POST",
                 f"{self.base_url}/chat/completions",
                 json=payload,
-                timeout=httpx.Timeout(
-                    settings.bench_request_timeout_seconds, connect=30.0
-                ),
+                timeout=httpx.Timeout(settings.bench_request_timeout_seconds, connect=30.0),
             ) as response:
                 if response.status_code >= 400:
                     body = (await response.aread()).decode("utf-8", "replace")

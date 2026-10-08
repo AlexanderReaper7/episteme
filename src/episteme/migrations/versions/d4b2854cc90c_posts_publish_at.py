@@ -26,16 +26,14 @@ Create Date: 2026-08-28 20:22:11.000000
 import sqlalchemy as sa
 from alembic import op
 
-revision = 'd4b2854cc90c'
-down_revision = '499afada00fa'
+revision = "d4b2854cc90c"
+down_revision = "499afada00fa"
 branch_labels = None
 depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "posts", sa.Column("publish_at", sa.DateTime(timezone=True), nullable=True)
-    )
+    op.add_column("posts", sa.Column("publish_at", sa.DateTime(timezone=True), nullable=True))
 
 
 def downgrade() -> None:

@@ -27,8 +27,8 @@ Create Date: 2026-07-20 13:23:32.023383
 import sqlalchemy as sa
 from alembic import op
 
-revision = '3daf6dbaefc3'
-down_revision = '794b362d6e01'
+revision = "3daf6dbaefc3"
+down_revision = "794b362d6e01"
 branch_labels = None
 depends_on = None
 
@@ -38,29 +38,47 @@ depends_on = None
 
 def upgrade() -> None:
     op.alter_column(
-        "posts", "kind", server_default=None,
-        existing_type=sa.String(length=20), existing_nullable=False,
+        "posts",
+        "kind",
+        server_default=None,
+        existing_type=sa.String(length=20),
+        existing_nullable=False,
     )
     op.alter_column(
-        "posts", "pinned", server_default=None,
-        existing_type=sa.Boolean(), existing_nullable=False,
+        "posts",
+        "pinned",
+        server_default=None,
+        existing_type=sa.Boolean(),
+        existing_nullable=False,
     )
     op.alter_column(
-        "llm_calls", "pinned", server_default=None,
-        existing_type=sa.Boolean(), existing_nullable=False,
+        "llm_calls",
+        "pinned",
+        server_default=None,
+        existing_type=sa.Boolean(),
+        existing_nullable=False,
     )
 
 
 def downgrade() -> None:
     op.alter_column(
-        "posts", "kind", server_default=sa.text("'feature'::character varying"),
-        existing_type=sa.String(length=20), existing_nullable=False,
+        "posts",
+        "kind",
+        server_default=sa.text("'feature'::character varying"),
+        existing_type=sa.String(length=20),
+        existing_nullable=False,
     )
     op.alter_column(
-        "posts", "pinned", server_default=sa.text("false"),
-        existing_type=sa.Boolean(), existing_nullable=False,
+        "posts",
+        "pinned",
+        server_default=sa.text("false"),
+        existing_type=sa.Boolean(),
+        existing_nullable=False,
     )
     op.alter_column(
-        "llm_calls", "pinned", server_default=sa.text("false"),
-        existing_type=sa.Boolean(), existing_nullable=False,
+        "llm_calls",
+        "pinned",
+        server_default=sa.text("false"),
+        existing_type=sa.Boolean(),
+        existing_nullable=False,
     )

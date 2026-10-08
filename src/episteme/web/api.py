@@ -99,9 +99,7 @@ def defer_args(task: str, **params: int | None) -> tuple[str, dict]:
     try:
         task_name, allowed = DEFERRABLE_TASKS[task]
     except KeyError:
-        raise KeyError(
-            f"Unknown task {task!r}; deferrable: {sorted(DEFERRABLE_TASKS)}"
-        ) from None
+        raise KeyError(f"Unknown task {task!r}; deferrable: {sorted(DEFERRABLE_TASKS)}") from None
     provided = {key: value for key, value in params.items() if value is not None}
     if stray := set(provided) - set(allowed):
         raise ValueError(
@@ -274,7 +272,9 @@ async def api_status():
         story_counts = dict(
             (await session.execute(select(Story.status, func.count()).group_by(Story.status))).all()
         )
-        item_total = (await session.execute(select(func.count()).select_from(SourceItem))).scalar_one()
+        item_total = (
+            await session.execute(select(func.count()).select_from(SourceItem))
+        ).scalar_one()
         unembedded = (
             await session.execute(
                 select(func.count()).select_from(SourceItem).where(SourceItem.embedding.is_(None))
@@ -340,9 +340,7 @@ async def api_sources_stats():
     now = datetime.now(UTC)
     fetched = [s for s in sources if s["last_fetched_at"]]
     most_recent = max(fetched, key=lambda s: s["last_fetched_at"]) if fetched else None
-    active_cooldowns = [
-        s for s in sources if s["cooldown_until"] and s["cooldown_until"] > now
-    ]
+    active_cooldowns = [s for s in sources if s["cooldown_until"] and s["cooldown_until"] > now]
     return {
         "source_count": len(sources),
         "enabled_count": sum(1 for s in sources if s["enabled"]),
@@ -369,7 +367,11 @@ def next_cron_fire(expr: str) -> datetime | None:
 async def api_runs(limit: Annotated[int, Query(ge=1, le=200)] = 20):
     async with SessionLocal() as session:
         runs = (
-            (await session.execute(select(PipelineRun).order_by(PipelineRun.id.desc()).limit(limit)))
+            (
+                await session.execute(
+                    select(PipelineRun).order_by(PipelineRun.id.desc()).limit(limit)
+                )
+            )
             .scalars()
             .all()
         )
@@ -505,12 +507,7 @@ async def api_jobs(
             if c not in JOB_PLUMBING_CLASSES
         )
     params["limit"] = limit if wanted is None else min(limit * 40, 4000)
-    query = (
-        _JOB_SELECT
-        + " WHERE "
-        + " AND ".join(where)
-        + " ORDER BY j.id DESC LIMIT :limit"
-    )
+    query = _JOB_SELECT + " WHERE " + " AND ".join(where) + " ORDER BY j.id DESC LIMIT :limit"
     async with SessionLocal() as session:
         rows = (await session.execute(text(query), params)).mappings().all()
     jobs = [job_presentation(dict(row)) for row in rows]
@@ -528,26 +525,36 @@ async def api_jobs_summary():
     work."""
     async with SessionLocal() as session:
         running = (
-            await session.execute(
-                text(f"{_JOB_SELECT} WHERE j.status = 'doing' ORDER BY j.id DESC LIMIT 5")
-            )
-        ).mappings().all()
-        upcoming = (
-            await session.execute(
-                text(
-                    f"{_JOB_SELECT} WHERE j.status = 'todo' "
-                    "ORDER BY j.scheduled_at ASC NULLS FIRST, j.id ASC LIMIT 1"
+            (
+                await session.execute(
+                    text(f"{_JOB_SELECT} WHERE j.status = 'doing' ORDER BY j.id DESC LIMIT 5")
                 )
             )
-        ).mappings().first()
-        recent = (
-            await session.execute(
-                text(
-                    f"{_JOB_SELECT} WHERE j.status <> ALL(:live) ORDER BY j.id DESC LIMIT 1"
-                ),
-                {"live": list(LIVE_STATUSES)},
+            .mappings()
+            .all()
+        )
+        upcoming = (
+            (
+                await session.execute(
+                    text(
+                        f"{_JOB_SELECT} WHERE j.status = 'todo' "
+                        "ORDER BY j.scheduled_at ASC NULLS FIRST, j.id ASC LIMIT 1"
+                    )
+                )
             )
-        ).mappings().first()
+            .mappings()
+            .first()
+        )
+        recent = (
+            (
+                await session.execute(
+                    text(f"{_JOB_SELECT} WHERE j.status <> ALL(:live) ORDER BY j.id DESC LIMIT 1"),
+                    {"live": list(LIVE_STATUSES)},
+                )
+            )
+            .mappings()
+            .first()
+        )
     return {
         "running": [job_presentation(dict(r)) for r in running],
         "upcoming": job_presentation(dict(upcoming)) if upcoming else None,
@@ -606,9 +613,7 @@ async def api_defer(
     except ValueError as exc:
         raise HTTPException(422, str(exc))
     async with SessionLocal() as session:
-        await _check_targets(
-            session, story_id=story_id, post_id=post_id, source_id=source_id
-        )
+        await _check_targets(session, story_id=story_id, post_id=post_id, source_id=source_id)
     from ..worker.app import app as job_app
 
     async with job_app.open_async():
@@ -975,9 +980,7 @@ async def api_story(story_id: int):
         if story is None:
             raise HTTPException(404)
         posts = (
-            (await session.execute(select(Post).where(Post.story_id == story_id)))
-            .scalars()
-            .all()
+            (await session.execute(select(Post).where(Post.story_id == story_id))).scalars().all()
         )
     return {
         **_story_dict(story),
@@ -1091,9 +1094,7 @@ async def api_post_audio(post_id: int, voice: str | None = None):
         voice = await default_voice_id(session, voice)
         row = (
             await session.execute(
-                select(PostAudio).where(
-                    PostAudio.post_id == post_id, PostAudio.voice == voice
-                )
+                select(PostAudio).where(PostAudio.post_id == post_id, PostAudio.voice == voice)
             )
         ).scalar_one_or_none()
     if row is None:
@@ -1142,9 +1143,7 @@ async def api_post_audio_stream(post_id: int, request: Request, voice: str | Non
         digest = script_hash(script)
         row = (
             await session.execute(
-                select(PostAudio).where(
-                    PostAudio.post_id == post_id, PostAudio.voice == voice_id
-                )
+                select(PostAudio).where(PostAudio.post_id == post_id, PostAudio.voice == voice_id)
             )
         ).scalar_one_or_none()
 
@@ -1182,8 +1181,14 @@ async def api_post_audio_stream(post_id: int, request: Request, voice: str | Non
     async def on_success(result) -> None:
         async with SessionLocal() as session:
             await upsert_post_audio(
-                session, post_id, voice_id, status="ready",
-                path=result.path.name, model=settings.tts_model, error=None, **common,
+                session,
+                post_id,
+                voice_id,
+                status="ready",
+                path=result.path.name,
+                model=settings.tts_model,
+                error=None,
+                **common,
             )
             await session.commit()
 
@@ -1273,9 +1278,7 @@ async def api_post_narrate(post_id: int, voice: str | None = None):
 @router.get("/posts/{post_id}")
 async def api_post(post_id: int):
     async with SessionLocal() as session:
-        post = (
-            await session.execute(select(Post).where(Post.id == post_id))
-        ).scalar_one_or_none()
+        post = (await session.execute(select(Post).where(Post.id == post_id))).scalar_one_or_none()
     if post is None:
         raise HTTPException(404)
     return _post_dict(post, with_sections=True)

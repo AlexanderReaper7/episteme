@@ -13,7 +13,15 @@ Five modules, split by what is testable without a GPU:
 
 from .chart import Chart, Line, line_chart
 from .client import BenchClient, BenchError, Cancelled
-from .runner import SCENARIOS, BenchRefused, contaminated, create_run, gate, plan_items, run_benchmark
+from .runner import (
+    SCENARIOS,
+    BenchRefused,
+    contaminated,
+    create_run,
+    gate,
+    plan_items,
+    run_benchmark,
+)
 from .series import StreamSeries, decode_rate, reduce_stream, summarize, tok_s
 
 __all__ = [

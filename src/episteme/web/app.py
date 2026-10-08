@@ -224,9 +224,7 @@ async def _correspondent_labels(session, posts: list[Post]) -> dict[str, str]:
         return {}
     rows = (
         await session.execute(
-            select(Correspondent.slug, Correspondent.label).where(
-                Correspondent.slug.in_(slugs)
-            )
+            select(Correspondent.slug, Correspondent.label).where(Correspondent.slug.in_(slugs))
         )
     ).all()
     return {slug: label for slug, label in rows}
@@ -307,18 +305,14 @@ async def _feed_page(session, cursor: tuple[float, int] | None = None) -> dict:
         .where(
             Post.status == "published",
             *_visible_now(),
-            *blocks.filters(
-                profile_state, Post.story_id, text_columns=(Post.title, Post.summary)
-            ),
+            *blocks.filters(profile_state, Post.story_id, text_columns=(Post.title, Post.summary)),
         )
         .order_by(rank.desc(), Post.id.desc())
         .limit(size + 1)
     )
     if cursor is not None:
         cur_rank, cur_id = cursor
-        stmt = stmt.where(
-            or_(rank < cur_rank, and_(rank == cur_rank, Post.id < cur_id))
-        )
+        stmt = stmt.where(or_(rank < cur_rank, and_(rank == cur_rank, Post.id < cur_id)))
     rows = (await session.execute(stmt)).all()
     has_more = len(rows) > size
     rows = rows[:size]
@@ -364,9 +358,7 @@ async def _items_page(session, cursor: tuple[datetime | None, int] | None = None
                 )
             )
         else:
-            stmt = stmt.where(
-                and_(SourceItem.published_at.is_(None), SourceItem.id < cur_id)
-            )
+            stmt = stmt.where(and_(SourceItem.published_at.is_(None), SourceItem.id < cur_id))
     items = (await session.execute(stmt)).scalars().all()
     has_more = len(items) > size
     items = items[:size]
@@ -488,8 +480,7 @@ def _feedback_sig(page: dict) -> list:
         context = contexts.get(post_id) or {}
         kinds = sorted((context.get("signals") or {}).items())
         topics = sorted(
-            (str(key), value)
-            for key, value in (context.get("topic_signals") or {}).items()
+            (str(key), value) for key, value in (context.get("topic_signals") or {}).items()
         )
         # Only entries with actual signals: a post whose last signal was undone is
         # indistinguishable from one that never had any, so both must hash alike or
@@ -601,9 +592,7 @@ def _conditional_response(
     return None
 
 
-def _apply_validators(
-    response: Response, etag: str, vary: str | None = _HTML_VARY
-) -> Response:
+def _apply_validators(response: Response, etag: str, vary: str | None = _HTML_VARY) -> Response:
     response.headers["ETag"] = etag
     response.headers["Cache-Control"] = _HTML_CACHE_CONTROL
     if vary:
@@ -680,7 +669,9 @@ def _post_page_etag(
         # full control set, not just like/dislike/save.
         "feedback": [
             sorted(feedback_ctx.get("signals", {}).items()),
-            sorted((str(key), value) for key, value in feedback_ctx.get("topic_signals", {}).items()),
+            sorted(
+                (str(key), value) for key, value in feedback_ctx.get("topic_signals", {}).items()
+            ),
             sorted(feedback_ctx.get("source_signals", {}).items()),
             feedback_ctx.get("post_topics"),
             feedback_ctx.get("post_sources"),
@@ -795,9 +786,7 @@ async def post_provenance(request: Request, post_id: int):
     # Conditional GET for both representations. The page is near-immutable (a
     # completed post's calls never change), so the etag holds across sessions and the
     # feed's hover-prefetch of the `provenance` link becomes a real cache hit.
-    etag = _provenance_etag(
-        post, calls, block=fragment_block(request, "post_provenance.html")
-    )
+    etag = _provenance_etag(post, calls, block=fragment_block(request, "post_provenance.html"))
     not_modified = _conditional_response(request, etag)
     if not_modified is not None:
         return not_modified

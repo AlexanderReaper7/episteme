@@ -60,7 +60,9 @@ def test_find_video_embeds_captures_players_not_links():
 
 
 def test_find_video_embeds_respects_limit():
-    html = " ".join(f'<iframe src="https://www.youtube.com/embed/video{i:03d}xx">' for i in range(9))
+    html = " ".join(
+        f'<iframe src="https://www.youtube.com/embed/video{i:03d}xx">' for i in range(9)
+    )
     assert len(find_video_embeds(html, limit=3)) == 3
 
 
@@ -84,10 +86,12 @@ def test_fetch_interval_gates_scheduled_ingest_only():
     from episteme.worker.tasks import _due_for_scheduled_fetch
 
     now = datetime.now(UTC)
-    fresh = Source(config={"fetch_interval_minutes": 120},
-                   last_fetched_at=now - timedelta(minutes=30))
-    due = Source(config={"fetch_interval_minutes": 120},
-                 last_fetched_at=now - timedelta(minutes=121))
+    fresh = Source(
+        config={"fetch_interval_minutes": 120}, last_fetched_at=now - timedelta(minutes=30)
+    )
+    due = Source(
+        config={"fetch_interval_minutes": 120}, last_fetched_at=now - timedelta(minutes=121)
+    )
     never_fetched = Source(config={"fetch_interval_minutes": 120}, last_fetched_at=None)
     no_interval = Source(config={}, last_fetched_at=now)
 

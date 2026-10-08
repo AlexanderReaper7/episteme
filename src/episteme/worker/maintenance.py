@@ -39,9 +39,7 @@ async def sweep_stalled_jobs(
 
     Takes the manager as an argument (not `app.job_manager` directly) so the
     logic is unit-testable against a fake without a live queue."""
-    stalled = list(
-        await manager.get_stalled_jobs(seconds_since_heartbeat=heartbeat_seconds)
-    )
+    stalled = list(await manager.get_stalled_jobs(seconds_since_heartbeat=heartbeat_seconds))
     for job in stalled:
         await manager.retry_job_by_id_async(job_id=job.id, retry_at=now)
         log.warning(
@@ -51,9 +49,7 @@ async def sweep_stalled_jobs(
         )
     # Graceful shutdown unregisters a worker; a SIGKILL does not — clear those
     # stale registry rows so procrastinate_workers doesn't accumulate them.
-    pruned = list(
-        await manager.prune_stalled_workers(seconds_since_heartbeat=heartbeat_seconds)
-    )
+    pruned = list(await manager.prune_stalled_workers(seconds_since_heartbeat=heartbeat_seconds))
     return [job.id for job in stalled], pruned
 
 

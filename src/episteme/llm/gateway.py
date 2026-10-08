@@ -196,7 +196,9 @@ def grammar_safe(schema: object) -> object:
         return {
             key: grammar_safe(value)
             for key, value in schema.items()
-            if not (key == "maxLength" and isinstance(value, int) and value > GRAMMAR_MAX_STRING_LENGTH)
+            if not (
+                key == "maxLength" and isinstance(value, int) and value > GRAMMAR_MAX_STRING_LENGTH
+            )
         }
     if isinstance(schema, list):
         return [grammar_safe(item) for item in schema]
@@ -423,7 +425,10 @@ class LLMGateway:
                 model=payload["model"],
                 kind="chat",
                 duration_ms=int((time.monotonic() - start) * 1000),
-                request={"messages": payload["messages"], "constrained": response_schema is not None},
+                request={
+                    "messages": payload["messages"],
+                    "constrained": response_schema is not None,
+                },
                 error=str(exc),
             )
             raise _as_llm_error(exc) from exc
@@ -627,9 +632,7 @@ class LLMGateway:
                 return schema.model_validate_json(content)
             except ValidationError as exc:
                 last_error = exc
-                log.warning(
-                    "Invalid %s output (attempt %d): %s", schema.__name__, attempt + 1, exc
-                )
+                log.warning("Invalid %s output (attempt %d): %s", schema.__name__, attempt + 1, exc)
                 prompt = (
                     f"{user}\n\nYour previous response failed validation with:\n{exc}\n"
                     "Respond again with ONLY valid JSON matching the schema."

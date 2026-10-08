@@ -78,8 +78,10 @@ async def manual_source(session: AsyncSession) -> Source:
     that works on both a fresh install and a year-old one.
     """
     source = (
-        await session.execute(select(Source).where(Source.type_name == "manual"))
-    ).scalars().first()
+        (await session.execute(select(Source).where(Source.type_name == "manual")))
+        .scalars()
+        .first()
+    )
     if source is not None:
         return source
     source = Source(
@@ -136,8 +138,10 @@ async def ingest_url(session: AsyncSession, url: str) -> Story:
     final_url = page.get("url") or url
     item_hash = content_hash(final_url)
     existing = (
-        await session.execute(select(SourceItem).where(SourceItem.hash == item_hash))
-    ).scalars().first()
+        (await session.execute(select(SourceItem).where(SourceItem.hash == item_hash)))
+        .scalars()
+        .first()
+    )
     if existing is not None and existing.story_id is not None:
         raise ManualIngestError(
             f"Already have that page, as story {existing.story_id}. "

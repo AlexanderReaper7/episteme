@@ -104,6 +104,7 @@ def test_deferred_topics_failing_leaves_the_known_labels_alone():
     """A partial topic list is fine — `propose_topics` and a rescore rebuild from it.
     Losing the labels that DID resolve, or failing the write stage after the posts are
     already committed, is not."""
+
     async def boom(session, labels, **kwargs):
         raise LLMError("embed endpoint down")
 
@@ -186,14 +187,25 @@ def test_further_reading_empty_selection_means_no_section():
 
 def test_reading_time_counts_rich_section_text():
     sections = [
-        {"type": "quiz", "questions": [
-            {"question": "one two", "choices": ["three", "four five"],
-             "answer_index": 0, "explanation": "six " * 100}]},
+        {
+            "type": "quiz",
+            "questions": [
+                {
+                    "question": "one two",
+                    "choices": ["three", "four five"],
+                    "answer_index": 0,
+                    "explanation": "six " * 100,
+                }
+            ],
+        },
         {"type": "glossary", "terms": [{"term": "seven", "definition": "eight " * 100}]},
         {"type": "timeline", "events": [{"date": "2026", "label": "nine " * 15}]},
         # Chart specs are looked at, not read: only the caption counts.
-        {"type": "chart", "spec": {"data": {"values": [{"x": "many words here"} for _ in range(200)]}},
-         "caption": "ten"},
+        {
+            "type": "chart",
+            "spec": {"data": {"values": [{"x": "many words here"} for _ in range(200)]}},
+            "caption": "ten",
+        },
     ]
     # ~226 words -> 1 min; the chart's 600 spec words must NOT push it to 3+.
     assert _reading_time(sections) == 1
@@ -201,10 +213,14 @@ def test_reading_time_counts_rich_section_text():
 
 _CANDIDATES = {
     "https://cdn.example.org/webb.jpg": {
-        "kind": "image", "attribution": "ESA Webb", "source_url": "https://esa.int/a1"
+        "kind": "image",
+        "attribution": "ESA Webb",
+        "source_url": "https://esa.int/a1",
     },
     "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ": {
-        "kind": "video", "attribution": "NASA", "source_url": "https://nasa.gov/a2"
+        "kind": "video",
+        "attribution": "NASA",
+        "source_url": "https://nasa.gov/a2",
     },
 }
 
@@ -235,10 +251,16 @@ def test_sanitize_media_stamps_attribution_from_db():
 def test_sanitize_media_enforces_kind_match():
     """An image section pointing at a video candidate (or vice versa) is dropped."""
     sections = [
-        {"type": "image", "url": "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ",
-         "caption": "c"},
-        {"type": "video", "url": "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ",
-         "caption": "c"},
+        {
+            "type": "image",
+            "url": "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ",
+            "caption": "c",
+        },
+        {
+            "type": "video",
+            "url": "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ",
+            "caption": "c",
+        },
     ]
     result = sanitize_media_sections(sections, _CANDIDATES)
     assert [s["type"] for s in result] == ["video"]
@@ -260,11 +282,13 @@ def test_media_candidates_collects_refs_with_attribution():
     candidates = media_candidates([item])
     assert candidates == {
         "https://cdn.phys.org/1.jpg": {
-            "kind": "image", "attribution": "Phys.org",
+            "kind": "image",
+            "attribution": "Phys.org",
             "source_url": "https://phys.org/news/1.html",
         },
         "https://www.youtube-nocookie.com/embed/abc123": {
-            "kind": "video", "attribution": "Phys.org",
+            "kind": "video",
+            "attribution": "Phys.org",
             "source_url": "https://phys.org/news/1.html",
         },
     }

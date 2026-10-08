@@ -198,15 +198,11 @@ def _context(request: Request, status: int, exc: BaseException | None) -> dict:
         "status": status,
         "reason": reason,
         "summary": "" if summary == reason else summary,
-        "exc_type": (
-            f"{type(exc).__module__}.{type(exc).__qualname__}" if exc else ""
-        ),
+        "exc_type": (f"{type(exc).__module__}.{type(exc).__qualname__}" if exc else ""),
         "origin": _origin(frames),
         "frames": frames,
         "facts": _request_facts(request),
-        "raw": (
-            "".join(traceback.format_exception(exc)).rstrip() if exc is not None else ""
-        ),
+        "raw": ("".join(traceback.format_exception(exc)).rstrip() if exc is not None else ""),
     }
 
 
@@ -234,9 +230,7 @@ def _render(request: Request, status: int, exc: BaseException | None) -> HTMLRes
     try:
         context = {"request": request, **_context(request, status, exc)}
         if not fragment:
-            return templates.TemplateResponse(
-                request, "error.html", context, status_code=status
-            )
+            return templates.TemplateResponse(request, "error.html", context, status_code=status)
         title = render_block(templates.env, "error.html", "title", **context)
         body = render_block(templates.env, "error.html", "content", **context)
         return HTMLResponse(
@@ -261,9 +255,7 @@ async def _unhandled(request: Request, exc: Exception):
     uvicorn still logs the traceback — the page is in addition to the log, not
     instead of it."""
     if _wants_json(request):
-        return await http_exception_handler(
-            request, HTTPException(500, "Internal Server Error")
-        )
+        return await http_exception_handler(request, HTTPException(500, "Internal Server Error"))
     return _render(request, 500, exc)
 
 

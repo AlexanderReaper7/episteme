@@ -147,7 +147,5 @@ async def stage_backlog(session: AsyncSession, profile: ProfileState) -> dict[st
     }
     return {
         stage: {"due": counts.get(stage), "blocked": blocked.get(stage)}
-        for stage in (
-            "embed", "cluster", "triage", "write", "qa", "summarize", "narrate", "score"
-        )
+        for stage in ("embed", "cluster", "triage", "write", "qa", "summarize", "narrate", "score")
     }

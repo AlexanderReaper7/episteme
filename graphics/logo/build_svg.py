@@ -149,7 +149,9 @@ class Scene:
 
         self.cam: Vec = (0.0, k.cam_y, k.cam_dist)
         target: Vec = (0.0, 0.02, 0.0)
-        self.fwd = _norm((target[0] - self.cam[0], target[1] - self.cam[1], target[2] - self.cam[2]))
+        self.fwd = _norm(
+            (target[0] - self.cam[0], target[1] - self.cam[1], target[2] - self.cam[2])
+        )
         self.rgt = _norm(_cross(self.fwd, (0.0, 1.0, 0.0)))
         self.upv = _cross(self.rgt, self.fwd)
         self.focal = (h * 0.5) / math.tan(k.fov * math.pi / 360.0)
@@ -174,12 +176,7 @@ class Scene:
         return (self.cxs + (xc / d) * self.focal, self.cys - (yc / d) * self.focal, d)
 
     def sdf(self, p: Vec) -> float:
-        f = (
-            abs(p[0]) / self.wx
-            + abs(p[1] - self.oy) / self.hy
-            + abs(p[2]) / self.wz
-            - 1.0
-        )
+        f = abs(p[0]) / self.wx + abs(p[1] - self.oy) / self.hy + abs(p[2]) / self.wz - 1.0
         g = math.hypot(1 / self.wx, 1 / self.hy, 1 / self.wz)
         return f / g
 
@@ -302,11 +299,17 @@ class Scene:
                             (c[0] - a[0], c[1] - a[1], c[2] - a[2]),
                         )
                     )
-                    cen = ((a[0] + b[0] + c[0]) / 3, (a[1] + b[1] + c[1]) / 3, (a[2] + b[2] + c[2]) / 3)
+                    cen = (
+                        (a[0] + b[0] + c[0]) / 3,
+                        (a[1] + b[1] + c[1]) / 3,
+                        (a[2] + b[2] + c[2]) / 3,
+                    )
                     rc = (cen[0], cen[1] - self.oy, cen[2])
                     if _dot(n, rc) < 0:
                         n = (-n[0], -n[1], -n[2])
-                    to_cam = _norm((self.cam[0] - cen[0], self.cam[1] - cen[1], self.cam[2] - cen[2]))
+                    to_cam = _norm(
+                        (self.cam[0] - cen[0], self.cam[1] - cen[1], self.cam[2] - cen[2])
+                    )
                     if _dot(n, to_cam) <= 0:
                         continue
                     nl = max(0.0, _dot(n, lv))
@@ -430,7 +433,7 @@ class Svg:
             self.defs.append(
                 f'<linearGradient id="{gid}" gradientUnits="userSpaceOnUse" '
                 f'x1="{_fmt(x1)}" y1="{_fmt(y1)}" x2="{_fmt(x2)}" y2="{_fmt(y2)}" '
-                f'>{body}</linearGradient>'
+                f">{body}</linearGradient>"
             )
             paint = f"url(#{gid})"
             opacity = ""
@@ -473,7 +476,11 @@ def _strand_runs(scene: Scene) -> list[list[Sample | None]]:
         x = (j + k.grid_phase) * k.cell
         a = scene.project((x, 0.0, zn))
         b = scene.project((x, 0.0, k.zf))
-        if a and b and ((a[0] < -20 and b[0] < -20) or (a[0] > scene.w + 20 and b[0] > scene.w + 20)):
+        if (
+            a
+            and b
+            and ((a[0] < -20 and b[0] < -20) or (a[0] > scene.w + 20 and b[0] > scene.w + 20))
+        ):
             continue
         n = k.samples_col
         lines.append([scene.fabric(x, k.zf + ((zn - k.zf) * q) / n) for q in range(n + 1)])

@@ -80,15 +80,16 @@ async def run_backup() -> Path:
         # Don't leave a truncated dump on disk masquerading as a good backup.
         dest.unlink(missing_ok=True)
         raise RuntimeError(
-            f"pg_dump failed (exit {proc.returncode}): "
-            f"{stderr.decode(errors='replace').strip()}"
+            f"pg_dump failed (exit {proc.returncode}): {stderr.decode(errors='replace').strip()}"
         )
 
     size_mib = dest.stat().st_size / 1048576
     removed = prune_old_backups(directory, settings.backup_retention_days)
     log.info(
         "Backup complete: %s (%.1f MiB); pruned %d old dump(s)",
-        dest.name, size_mib, removed,
+        dest.name,
+        size_mib,
+        removed,
     )
     return dest
 

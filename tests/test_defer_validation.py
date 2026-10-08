@@ -31,7 +31,7 @@ def test_a_blank_target_is_absent_not_zero():
 
 
 def test_a_typo_is_refused_by_the_name_the_reader_typed_it_under():
-    """"Targets must be whole numbers" beside four fields is a puzzle. The message
+    """ "Targets must be whole numbers" beside four fields is a puzzle. The message
     has to say which one, and show back what it read."""
     with pytest.raises(ValueError) as caught:
         parse_target("limit", "1o")
