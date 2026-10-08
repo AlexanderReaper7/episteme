@@ -32,4 +32,4 @@ The router stalled a 600s timeout swapping the fast model in. The raw `httpx.Rea
 
 Moving any role onto its own llama-server is an environment change, not a code change. Health (`unavailable_endpoints`), the admin role table and `unload_models` all derive from the resolved URLs, so there is one topology, not three.
 
-Model swaps are measured at ~100s typical and up to 600s worst case (see [handoff-llama-control.md](../../handoff-llama-control.md) §7). Timeouts against a single-GPU box that loads on demand are ordinary. Design for them.
+Model swaps are measured at ~100s typical and up to 600s worst case (see [model-swap-cost.md](../model-swap-cost.md)). Timeouts against a single-GPU box that loads on demand are ordinary. Design for them.

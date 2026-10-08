@@ -10,7 +10,7 @@
 
 llama.cpp runs on the host; Episteme runs in Docker. Starting, stopping and measuring the backend needs host privileges, and the thing that starts Episteme's dependency cannot share Episteme's lifecycle.
 
-Two separately-specified features wanted the same privileges on the same box: the lifecycle controller of handoff-llama-control.md §4b, and the idle monitor of spec §7. They are one service.
+Two separately-specified features wanted the same privileges on the same box: the lifecycle controller of the llama.cpp control design (2026-07-30), and the idle monitor of spec §7. They are one service.
 
 ## Decision
 

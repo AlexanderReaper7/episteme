@@ -1,6 +1,6 @@
 # Should llama.cpp run in Docker instead of on the host?
 
-**Measured 2026-08-01** on the production box (RTX 3080 10 GB, 96 GB RAM, Windows 11, Docker Desktop / WSL2). Supersedes the assumption in [handoff-llama-control.md](../handoff-llama-control.md) §3, which rejected containerizing llama.cpp on reasoning alone.
+**Measured 2026-08-01** on the production box (RTX 3080 10 GB, 96 GB RAM, Windows 11, Docker Desktop / WSL2). Supersedes the assumption in the llama.cpp control design of 2026-07-30, which rejected containerizing llama.cpp on reasoning alone.
 
 **The decision is still the user's.** This document is the evidence, not the ruling.
 

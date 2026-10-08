@@ -1,6 +1,6 @@
 # Model LOAD time: host NTFS vs container bind-mount vs container named volume.
 #
-# This is the measurement that decides the question. handoff-llama-control.md §7
+# This is the measurement that decides the question. docs/model-swap-cost.md
 # calls the cold model swap (100-600s) "the single largest performance lever in
 # the system"; a container reading GGUFs over Docker Desktop's 9p boundary to the
 # Windows filesystem is the one thing that could make it materially worse. The
