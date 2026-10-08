@@ -1,7 +1,7 @@
 # 0055. A dead endpoint stops the batch, and the run says so
 
 - Date: 2026-09-10
-- Status: built, unit-tested; not yet watched against a real llama-server death (see CLAUDE-TODO)
+- Status: built, unit-tested; not yet watched against a real llama-server death (see [verification.md](../verification.md))
 - Rule: `LLMUnavailable` is an `LLMError` raised when the connection was never established. No stage loop may swallow it. A pipeline run that hits one stops there and is recorded `skipped`, never `succeeded`.
 
 ## Context

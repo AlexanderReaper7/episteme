@@ -1,7 +1,7 @@
 # 0056. The phone is told twice a day, and never by the pipeline
 
 - Date: 2026-09-10
-- Status: live-verified 2026-09-10, both messages seen arriving on the phone; the tap and the home screen icon are still unwatched (see CLAUDE-TODO)
+- Status: live-verified 2026-09-10, both messages seen arriving on the phone; the tap and the home screen icon are still unwatched (see [verification.md](../verification.md))
 - Rule: outbound notification goes through `notify.publish` and nowhere else, and **a notification never fails the work it reports on**. Two events, both on their own cron: the digest at 06:00 UTC and lunch at 09:00 UTC on weekdays. The home screen icon is a manifest, not an app.
 
 ## Context

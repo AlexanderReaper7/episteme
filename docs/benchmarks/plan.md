@@ -1,7 +1,7 @@
 # Plan: benchmarking as an admin page
 
 - Date: 2026-08-15, revised 2026-08-15 after measuring the prefill claim
-- Status: **built and live-verified 2026-08-15** for the worker-side scenarios (`quick`), including live progress, cancellation and the charts. The host-agent path (`sweep`, preset editing) is built and unit-tested but not yet watched running; the agent was down during verification, which is itself how the "no sensor, no opinion" degradation got exercised. See [CLAUDE-TODO.md](../../CLAUDE-TODO.md).
+- Status: **built and live-verified 2026-08-15** for the worker-side scenarios (`quick`), including live progress, cancellation and the charts. The host-agent path (`sweep`, preset editing) is built and unit-tested but not yet watched running; the agent was down during verification, which is itself how the "no sensor, no opinion" degradation got exercised. See [verification.md](../verification.md).
 - Renamed by [0057](../decisions/0057-the-gpu-decision-leaves-episteme.md), 2026-09-13: the "host agent" throughout this document is now **llama-warden**, its own project at `C:\selfhosting\llama-warden`. The split changed one thing here, the contamination threshold, noted in its own section below. Everything else reads the same with the new name.
 - Supersedes: the loose PowerShell in this directory and `C:\selfhosting\llama-cpp\bench-server.ps1`
 - Decisions this produced: [0039](../decisions/0039-benchmarking-sits-outside-the-gateway.md), [0040](../decisions/0040-prefill-is-measured-from-the-stream.md), [0041](../decisions/0041-the-host-agent-applies-a-configuration-it-is-handed.md)

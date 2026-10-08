@@ -7,7 +7,7 @@ This file is rules and navigation only. The other four:
 - [episteme-architecture.md](episteme-architecture.md) is the spec: data model, pipeline stages, feed-composition rules, roadmap.
 - [GLOSSARY.md](GLOSSARY.md) is what every load-bearing word means. Renaming a concept means editing it in the same commit.
 - [docs/decisions/](docs/decisions/README.md) is why anything is the way it is, and what it was measured against. **`(0017)` below means `docs/decisions/0017-*.md`.** Grep it before changing something that looks arbitrary; add to it when we decide something new.
-- [CLAUDE-TODO.md](CLAUDE-TODO.md) is what is built but not yet watched running. Mine to maintain. `TODO.md` is the user's, do not write to it.
+- [docs/verification.md](docs/verification.md) is what is built but not yet watched running. The agent maintains it. `TODO.md` is the user's, do not write to it.
 
 ## Current state
 
@@ -29,7 +29,7 @@ Phases 1 to 4 are built and live. "Live" and "tested" are different claims:
 | card layout: a third picture, measured clamp (0052); header burger (0053) | live-verified 2026-08-31 in Firefox at 2560x1400, 900x600 and 390x844 |
 | notifications over ntfy (0056) | live-verified 2026-09-10: both jobs published to the real server under token auth, the menu's `ä å ö` survived the round trip, and both messages were seen on the phone's lock screen. Nobody has tapped one, and the home screen icon has never been on a phone |
 
-**Read [CLAUDE-TODO.md](CLAUDE-TODO.md) before claiming a path works.** It holds the paths that were rewritten but not yet observed running, and the open content-quality gaps.
+**Read [docs/verification.md](docs/verification.md) before claiming a path works.** It holds the paths that were rewritten but not yet observed running, and the open content-quality gaps.
 
 Operational facts with no other home:
 
