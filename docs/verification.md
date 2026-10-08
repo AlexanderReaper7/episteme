@@ -123,17 +123,6 @@ Watch the next pipeline run rather than assuming these.
 
 - **Chart, diagram, timeline, glossary and video sections** emitted on a suitable story. The write path was verified 2026-07-19, but not every section type has been seen in output.
 
-- **A pipeline stage running after an agent-driven backend start** (0023).
-
-- **The warden-driven resume** (0057). Everything else on the announcement path was watched on 2026-09-13 with a game on the card, and 0057 records it:
-
-  - the pause landing;
-  - the 300 s repeat moving `contended_at` and not `since`;
-  - the warden killed mid-pause, leaving Episteme correctly paused with a frozen clock;
-  - a restarted warden re-announcing into that pause without re-authoring it.
-
-  Nobody has seen the warden decide the GPU is quiet and send `resume` itself. The hand-driven `resume` works (`applied: true`, job 128142 deferred and succeeded), so the untested part is the warden's 300 s quiet window, not Episteme's handling of the message.
-
 - **A pause arriving while a stage is mid-story** (0057, 0024). Every pause observed so far found `worker_running: false`, so `unloaded_models` was `[]` every time. The guard that keeps VRAM under a running generation has never had anything to guard. Watching it means starting `write?limit=1` and contending the GPU while it runs.
 
 - **`contended_at` is not drawn anywhere** (0057). The freshness clock is what tells a stranded pause apart from a busy GPU, and `_pipeline_status.html` shows only `since`. Today the distinction exists in `/api/status` and in nothing a person looks at. Showing "last heard from the warden N ago" and marking a pause stale is a design call, not a bug fix.
