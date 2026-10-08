@@ -82,6 +82,10 @@ services:
       --reload --reload-dir src --timeout-graceful-shutdown 5
     init: true
     environment: *env
+    # Docker on Linux defines host.docker.internal only when asked, and every
+    # host service this talks to (InferMux, ntfy) is addressed by that name.
+    extra_hosts:
+      - host.docker.internal:host-gateway
     # Bind-mount source over the baked-in copy so edits reload without a rebuild.
     volumes:
       - ./src:/app/src
@@ -118,6 +122,10 @@ services:
     # (Playwright in the QA stage); the python worker as PID 1 won't.
     init: true
     environment: *env
+    # Docker on Linux defines host.docker.internal only when asked, and every
+    # host service this talks to (InferMux, ntfy) is addressed by that name.
+    extra_hosts:
+      - host.docker.internal:host-gateway
     # Nightly pg_dump (--compress=zstd) lands here; bind-mounted to the host so the
     # dumps survive the pgdata volume and can be copied offsite. Point BACKUP_DIR at
     # the location of your choice.
@@ -142,6 +150,14 @@ services:
 
 volumes:
   pgdata:
+
+networks:
+  default:
+    # A fixed bridge name, so a host firewall can open a port to these
+    # containers alone. The NixOS host opens InferMux's :5001 on it (nixcfg,
+    # modules/nixos/llm.nix).
+    driver_opts:
+      com.docker.network.bridge.name: br-episteme
 
 # sops-nix decrypts these on the NixOS host (nixcfg, modules/nixos/llm.nix).
 secrets:
