@@ -207,7 +207,9 @@ uv run tools/build_icon_sprite.py
 # So is the logo SVG: a port of the canvas prototype, which stays the authority on
 # the geometry. graphics/logo/README.md is the spec for what the mark MEANS. The
 # sibling mark left with llama-warden and the generator was split, not copied
-# (0057): this one renders `episteme` and contains no other mark's code.
+# (0057): this one renders `episteme` and contains no other mark's code. That
+# sibling came back unused on 2026-10-08 with its own generator, when InferMux took
+# a mark of its own: graphics/obelisk-net/README.md.
 # The Episteme mark is generated into web/static/logo/, NOT into graphics/ - the
 # image copies src only. It is the tab icon (base.html) and nothing else: still
 # WIP, so the header is the wordmark alone.
