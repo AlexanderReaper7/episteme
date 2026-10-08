@@ -104,15 +104,15 @@ What callers ask for, never a model name or a URL (0003): `main` is the large mo
 
 ### Router
 
-The llama-server on port 5001, holding at most one decode model.
+InferMux on port 5001, llama-swap's router with the warden inside, holding at most one decode model. A llama-server in router mode until 2026-10-03.
 
 ### Embed server
 
-The llama-server on port 5002, a separate process from the router and always resident.
+The CPU-only llama-server for the `embed` role, a separate process from the router and always resident. InferMux lists it as a peer named `embed`, so the role reaches it through InferMux (0059).
 
 ### llama-warden
 
-The process on the host that starts, stops and senses llama-server, and decides when the GPU is contended. Its own project at `C:\selfhosting\llama-warden`, not a part of Episteme (0057). Formerly the *host agent*, which was a sensor and an actuator and never a decision maker (0023); that is the half the split reversed.
+The process on the host that started, stopped and sensed llama-server, and decided when the GPU is contended. Its own project after 0057, not a part of Episteme, and since 2026-10-03 part of InferMux (0058). `llm/warden.py` still speaks llama-warden's API, which InferMux does not serve. Formerly the *host agent*, which was a sensor and an actuator and never a decision maker (0023); that is the half the split reversed.
 
 ### Announcement
 

@@ -112,17 +112,18 @@ class Settings(BaseSettings):
     llm_log_enabled: bool = True
     llm_log_retention_days: int = 30
 
-    # --- llama-warden (C:\selfhosting\llama-warden; llm/warden.py is the client) ---
-    # Episteme is in Docker, llama.cpp is on the Windows host: a container cannot
-    # start a host process or read its console. This URL is that crossing — a
-    # loopback service on the host exposing lifecycle, logs and GPU measurements.
-    # EMPTY DISABLES THE WHOLE FEATURE: every route and panel becomes a no-op and
-    # Episteme behaves exactly as it did before the warden existed. It is optional
-    # infrastructure, never a dependency (0057).
+    # --- llama-warden's API (llm/warden.py is the client) ---
+    # Episteme is in Docker and llama.cpp is on the host, so a container cannot
+    # start a host process or read its console. This URL is that crossing: a
+    # service on the host exposing lifecycle, logs and GPU measurements.
+    # llama-warden became InferMux, which does not serve this API (0058), so
+    # against InferMux it stays empty until the client is ported.
+    # EMPTY DISABLES THE WHOLE FEATURE: every route and panel becomes a no-op. It
+    # is optional infrastructure, never a dependency (0057).
     #
     # Nothing here decides when to yield the GPU. The warden measures and decides;
     # what reaches us is an announcement on POST /api/pipeline/announce, applied by
-    # worker/contention.py. The thresholds live in the warden's own warden.toml.
+    # worker/contention.py. The thresholds live in the warden's own configuration.
     llm_warden_url: str = ""  # e.g. http://host.docker.internal:5003
     # Three timeouts, because reads and actions want opposite things (see
     # llm/warden.py). Reads are on the dashboard's critical path — /status rides

@@ -30,8 +30,8 @@
      need the warden to serve requests, only to be started and watched. #}
   {% if not backend.status %}
   <p class="muted">llama-warden unreachable at <code class="mono">{{ backend.url }}</code>.
-     Inference is unaffected; lifecycle and logs are unavailable until it is running:
-     <code class="mono">uv run python -m warden</code> in C:\selfhosting\llama-warden</p>
+     Inference is unaffected; lifecycle and logs are unavailable until it answers.
+     InferMux does not serve this API, so with InferMux leave <code class="mono">LLM_WARDEN_URL</code> empty.</p>
   {% else %}
   <ul class="endpoint-list">
     {% for name, srv in backend.status.servers.items() %}

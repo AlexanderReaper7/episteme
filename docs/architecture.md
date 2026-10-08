@@ -19,7 +19,7 @@ but curated for your curiosity and growth rather than your compulsion.
 
 ### Nomenclature
 
-Every term this document uses in a load-bearing way is defined in [GLOSSARY.md](GLOSSARY.md).
+Every term this document uses in a load-bearing way is defined in [GLOSSARY.md](../GLOSSARY.md).
 Extracted from this section on 2026-08-28; a name changing there must also change here in the same commit.
 
 ### Design principles

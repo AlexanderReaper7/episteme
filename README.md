@@ -1,33 +1,50 @@
 # Episteme
 
-Self-hosted, LLM-powered personalized newsfeed. Ingests news from many
-sources, processes it overnight with a local LLM, and produces a healthy, finite,
-learning-focused feed of newly written articles.
+A self-hosted, single-user newsfeed. It reads RSS feeds and a few scraped sites around the clock, and every night a local LLM groups what came in into stories, decides which ones deserve an article, researches and writes them, and reviews its own rendered output before publishing. The feed is one column: the written articles and short cards for everything else, ranked by the reader's interests and decayed by age.
 
-Full design: [episteme-architecture.md](episteme-architecture.md).
-**Current state: Phases 1–2 live-verified; Phase 2.5 built.** Phase 1 = ingestion
-(RSS + full-article extraction) and the feed UI; Phase 2 = the overnight LLM
-pipeline producing generated posts above an aggregation stream, verified end-to-end
-against a local llama-server. Phase 2.5 makes the write agentic: the pipeline is now
-embed → cluster → triage → write (one main-model tool loop per story — SearXNG
-search + guarded page fetches + editorial authority to demote — ending in a
-schema-constrained draft) → qa (the post is rendered and screenshotted with headless
-Chromium, and the vision-capable main model critiques and revises it in bounded
-rounds). Full observability throughout: every LLM call logged to the database, a
-JSON API under `/api/*`, and an admin dashboard at `/admin` with per-story
-provenance. Next: Phase 3 (personalization — see spec §12). See CLAUDE.md for the
-live operational state and how to run the pipeline.
+Everything runs on one machine. The models are served by an OpenAI-compatible endpoint on the host (llama.cpp behind [InferMux](https://github.com/AlexanderReaper7/InferMux) here), so no reading habit or source text leaves the house except the fetches themselves.
+
+## What it does
+
+- **Ingests** RSS and Atom feeds and extracts the full article text with trafilatura. Every request goes through one function, `ingest/http.py:polite_get`, which applies one global throttle, per-host spacing, conditional GET and 429 cooldowns.
+- **Clusters** items into stories by embedding similarity in Postgres with pgvector, so ten reports of one event become one story.
+- **Triages** each story with a small model: write an article, keep it as an aggregate card, or drop it.
+- **Writes** an article per approved story in an agentic tool loop. The writer can search through SearXNG, fetch pages through an SSRF guard, and demote a story it finds too thin. Its output is a schema-constrained draft of typed sections (prose, quiz, chart, diagram, timeline, glossary, video), never markup. Sources and further reading come from the database, never from model text.
+- **Reviews** the result: headless Chromium renders and screenshots the post, and the vision-capable model critiques and edits it in bounded rounds.
+- **Ranks** the feed against the reader's feedback (topic weights, liked and disliked embedding centroids, source weights) with hard blocks applied first.
+- **Yields the GPU.** A warden on the host watches the card, and when a game starts it tells Episteme to pause. Episteme stops at the next unit of work and hands the VRAM back.
+
+Around that sit an assistant panel that can search the archive and propose new stories (every write it proposes needs the reader's approval), narration through Fish Audio, push notifications through ntfy, and an admin dashboard showing every LLM call, job and pipeline run with per-story provenance.
+
+## How it is built
+
+| Layer | Choice |
+|---|---|
+| Web | FastAPI, Jinja2 templates and htmx; no SPA |
+| Data | Postgres with pgvector, SQLAlchemy 2 async, Alembic |
+| Jobs | Procrastinate, on the same Postgres, so there is no broker |
+| LLM | Any OpenAI-compatible endpoint, reached by role (`main`, `fast`, `embed`, `chat`) through one gateway module |
+| Browser | Playwright, for the QA screenshots |
+| Deploy | Docker Compose: `db`, a one-shot `migrate`, `web` and `worker` |
+
+The code is about 23k lines of Python with 14k lines of tests (`uv run pytest`, no database needed).
+
+## Where to read further
+
+- [docs/architecture.md](docs/architecture.md) is the original specification: data model, pipeline stages, feed composition and roadmap.
+- [docs/decisions/](docs/decisions/README.md) holds about sixty decision records. Each one states the rule, what was measured, and what was rejected and why. Read these to find out why something is the way it is.
+- [GLOSSARY.md](GLOSSARY.md) defines every term the code and the documents rely on.
+- [docs/verification.md](docs/verification.md) lists what is built and tested but has not yet been watched running, and the known gaps in output quality.
+- [CLAUDE.md](CLAUDE.md) is the map for coding agents working in the repository: commands, operational facts and the rules that span files.
 
 ## Quickstart
 
 ```sh
-cp .env.example .env      # set POSTGRES_PASSWORD
+cp .env.example .env      # set POSTGRES_PASSWORD, and LLM_BASE_URL if the models are not on :5001
 docker compose up --build
 ```
 
-Open <http://127.0.0.1:8200> (feed) and <http://127.0.0.1:8200/admin> (dashboard).
-The worker ingests all seeded feeds every 30 minutes (`INGEST_CRON` to change) and
-runs the LLM pipeline nightly (`PIPELINE_CRON`). To trigger either immediately:
+Open <http://127.0.0.1:8200> for the feed and <http://127.0.0.1:8200/admin> for the dashboard. The worker ingests every seeded feed every 30 minutes (`INGEST_CRON`) and runs the pipeline nightly (`PIPELINE_CRON`). To start either now:
 
 ```sh
 curl -X POST http://127.0.0.1:8200/api/jobs/defer/ingest_all    # or run_pipeline
@@ -37,43 +54,44 @@ curl -X POST http://127.0.0.1:8200/api/jobs/defer/ingest_all    # or run_pipelin
 
 ```text
 src/episteme/
-├── config.py        settings (env / .env)
-├── models.py        SQLAlchemy models (Source, SourceItem, Story, Post,
-│                    LlmCall, PipelineRun)
-├── db.py            engine + init
-├── seeds.py         initial source list
-├── bootstrap.py     one-shot schema/seed (compose `migrate` service)
-├── ingest/          source adapters (base protocol, registry, rss) + polite HTTP
-│                    (two transport modes: polite / TLS-impersonate)
-├── llm/             gateway (role→model), structured-output schemas, the writer's
-│                    agentic tool loop (llm/agent.py), call logging (llm/observe.py)
-├── research/        writer tools: SearXNG search + SSRF-guarded page fetch
-├── worker/          procrastinate app, ingestion + pipeline tasks, vision QA stage
-└── web/             FastAPI app: feed UI (Jinja2 + htmx), /api/* JSON routes,
-                     /admin dashboard + per-story provenance
+├── config.py        settings, from the environment or .env
+├── models.py        SQLAlchemy models
+├── bootstrap.py     schema upgrade and seeding (the compose `migrate` service)
+├── migrations/      Alembic
+├── ingest/          source adapters, and polite HTTP in two transport modes
+├── llm/             the gateway, structured-output schemas, the agent tool loop,
+│                    the assistant, call logging
+├── research/        the writer's tools: SearXNG search, SSRF-guarded page fetch
+├── recommend/       topic vocabulary, interest profile, scoring, blocks
+├── correspondents/  plugins that file finished posts (Matsedel: lunch menus)
+├── worker/          Procrastinate tasks, the pipeline, the QA stage
+├── tts/             narration
+├── bench/           LLM benchmarks run from the dashboard
+└── web/             feed, article pages, /api/* JSON, /admin
 ```
 
-Adding a source type: implement the `SourceAdapter` protocol in a new module under
-`ingest/`, decorate with `@register`, import it in `ingest/__init__.py`, and add a
-`Source` row with that `type_name`.
+Adding a source type: implement the `SourceAdapter` protocol in a new module under `ingest/`, decorate it with `@register`, import it in `ingest/__init__.py`, and add a `Source` row with that `type_name`.
 
 ## Development
 
-Dependencies are managed with [uv](https://docs.astral.sh/uv/); `uv.lock` is
-committed for reproducible installs.
+Dependencies are managed with [uv](https://docs.astral.sh/uv/), and `uv.lock` is committed.
 
 ```sh
-uv sync              # create .venv from uv.lock (dev tooling included)
+uv sync
 uv run pytest
 uv run ruff check .
+uv run ruff format --check .
 ```
 
-Run the web app locally against the compose database:
+To run the web app outside Docker against the compose database:
 
 ```sh
 docker compose up -d db migrate
-DATABASE_URL=postgresql://episteme:<password>@localhost:5433/episteme uvicorn episteme.web.app:app --reload --port 8200
+DATABASE_URL=postgresql://episteme:<password>@localhost:5433/episteme uv run uvicorn episteme.web.app:app --reload --port 8200
 ```
 
-(The compose `db` service is published to the host at `127.0.0.1:5433` for direct
-access, e.g. from pgAdmin — credentials in `.env`.)
+The compose `db` service is published on `127.0.0.1:5433` for direct access, for example from pgAdmin, with the credentials from `.env`.
+
+## License
+
+[AGPL-3.0-only](LICENSE).

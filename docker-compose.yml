@@ -41,10 +41,10 @@ services:
       TTS_ENABLED: ${TTS_ENABLED:-false}
       TTS_DEFAULT_VOICE: ${TTS_DEFAULT_VOICE:-}
       TTS_OPUS_BITRATE: ${TTS_OPUS_BITRATE:-64000}
-      # llama-warden (C:\selfhosting\llama-warden, run on the host outside
-      # compose: it is what starts llama.cpp, so it cannot share this lifecycle).
-      # Empty disables the backend panel, and leaves nothing able to pause the
-      # pipeline for a game. The thresholds are the warden's, not ours (0057).
+      # llama-warden's API (run on the host outside compose: it is what starts
+      # llama.cpp, so it cannot share this lifecycle). Empty disables the backend
+      # panel and the sweep. InferMux does not serve this API (0058). The pause
+      # needs no URL here: the warden pushes it to /api/pipeline/announce (0057).
       LLM_WARDEN_URL: ${LLM_WARDEN_URL:-}
       # The key InferMux knows each process by (0058). web and worker mount
       # different keys here, and InferMux reads the class from the key.
