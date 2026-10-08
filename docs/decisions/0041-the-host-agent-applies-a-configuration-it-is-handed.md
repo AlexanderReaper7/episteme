@@ -1,7 +1,7 @@
 # 0041. The host agent applies a configuration it is handed, and never decides one
 
 - Date: 2026-08-15
-- Status: accepted
+- Status: superseded by [0060](0060-the-warden-client-reads-infermux.md), 2026-10-08. InferMux keeps model flags in its own files, and the sweep that edited them from here is removed.
 - Amends: [0023](0023-the-host-agent-is-a-sensor-not-a-decision-maker.md), which said sensor and actuator. Editing a config file is an actuator's job; this record draws the line.
 - Rule: the desired configuration lives in Episteme. `/preset` reads, `/preset/apply` writes what it is handed, `/restart` takes explicit `extra_args`. The agent chooses nothing and remembers nothing.
 

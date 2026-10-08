@@ -188,7 +188,7 @@ async def _write_article_from_url(ctx: ChatContext, args: dict) -> str:
 
     # A pause no longer holds this story — `pipeline._pause_stops` exempts
     # `origin="user"`, so the job just deferred writes through it. It is still
-    # worth saying, because the usual author is llama-warden and the usual reason
+    # worth saying, because the usual author is the warden and the usual reason
     # is GPU contention, which means slow rather than never: the same contention
     # took a write turn from 35 to 1.3 tokens per second on 2026-08-12. A reader
     # who is told "starting now" and waits forty minutes should have been told why.

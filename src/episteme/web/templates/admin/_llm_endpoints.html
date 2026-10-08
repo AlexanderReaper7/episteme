@@ -1,18 +1,18 @@
 {# Endpoint health, loaded models, and the role table.
 
-   Has no clock of its own. It rides back on the backend panel's 5s poll as an
+   Has no clock of its own. It rides back on the InferMux panel's 5s poll as an
    out-of-band swap (`oob_llm`, set only by admin.backend_partial), because this
-   card and the process card below it describe the SAME llama-server: on separate
-   timers they would disagree for seconds at a stretch, showing "router:5001
-   listening" beside "endpoint down", which is the exact confusion a live panel
-   exists to remove. One probe, one digest, one answer.
+   card and the InferMux card below it describe the SAME server: on separate
+   timers they would disagree for seconds at a stretch, showing a model "ready"
+   beside "endpoint down", which is the exact confusion a live panel exists to
+   remove. One probe, one digest, one answer.
 
    htmx applies an out-of-band swap by id from anywhere in the response, so this
    only has to be a TOP-LEVEL element of the fragment it rides in - which is why
    it is included at the end of _backend_state.html and not inside it. On a full
    page render `oob_llm` is absent and this is a plain section.
 
-   KNOWN LIMIT: the poll it rides on belongs to the backend panel, which
+   KNOWN LIMIT: the poll it rides on belongs to the InferMux panel, which
    admin.html renders only when a warden is configured. With
    LLM_WARDEN_URL empty this card is a page-load snapshot again - no worse
    than it was, but not live either. Giving it a clock of its own is the fix, and

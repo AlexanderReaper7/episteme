@@ -1,18 +1,16 @@
-{# llama.cpp process state + lifecycle buttons. Returned on its own by the
-   start/stop/restart handlers (hx-target="#backend"), so an action swaps just
-   this block rather than reloading the dashboard.
+{# InferMux's loaded models + the unload button. Returned on its own by the
+   unload handler (hx-target="#backend"), so an action swaps just this block
+   rather than reloading the dashboard.
 
    Two layers, and the seam is what each one is ABOUT. #backend-state is the
-   backend as it is right now, so it polls (_backend_state.html). The message
+   models as they are right now, so it polls (_backend_state.html). The message
    below it is the result of the last button press, so it does not: it is
    written by an action and stays until the next one, because a sentence that
    erased itself four seconds after appearing is a sentence nobody read.
 
-   Only the process view lives here. GPU measurements and the log are separate
-   fragments on their own clocks: /resources costs ~3.5s on the host (per-process
-   GPU counters have an irreducible sampling floor) and must never sit on the
-   critical path of anything a click waits for, while the log renders once and is
-   then streamed into (_backend_log.html). #}
+   The GPU measurement is a separate fragment on its own clock
+   (_backend_resources.html): it takes a fresh sample on the host and must never
+   sit on the critical path of anything a click waits for. #}
 <div id="backend">
   {% include "admin/_backend_state.html" with context %}
   {% if message %}

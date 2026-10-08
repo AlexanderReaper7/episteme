@@ -64,7 +64,7 @@ def _updates(recorded: list[tuple[str, dict]], table: str) -> list[dict]:
 
 
 async def test_an_absent_warden_is_not_asked_twice_at_a_run_boundary(monkeypatch):
-    """A run boundary needs two things from llama-warden, the sweep and the
+    """A run boundary needs two things from the warden, the sweep and the
     threshold to read it by, and when the warden is down BOTH are a connect
     timeout. Asking for the second one anyway put 15s of dead wait on each end of
     every run, for an answer that is `DEFAULT_BUSY_PERCENT` either way. `gate`
@@ -104,8 +104,16 @@ async def test_the_threshold_that_judges_a_sweep_is_the_wardens(monkeypatch):
 # --- every exit path stamps the run ------------------------------------------------
 
 
-@pytest.mark.parametrize("scenario", ["longctx", "ladder", "sweep"])
-async def test_a_run_that_cannot_be_planned_is_still_stamped(scenario, monkeypatch):
+@pytest.mark.parametrize(
+    ("scenario", "error"),
+    [
+        ("longctx", "needs a fixture"),
+        ("ladder", "needs a fixture"),
+        # A sweep queued before 0060 removed the scenario.
+        ("sweep", "Unknown scenario"),
+    ],
+)
+async def test_a_run_that_cannot_be_planned_is_still_stamped(scenario, error, monkeypatch):
     """`plan_items` used to be called above the guard, so the ordinary mistake -
     a longctx launched with the fixture select left on "none" - raised before
     anything could stamp the row. `worker/bench.py` catches only `BenchRefused`,
@@ -115,7 +123,7 @@ async def test_a_run_that_cannot_be_planned_is_still_stamped(scenario, monkeypat
     run = runner.BenchmarkRun(id=7, scenario=scenario, models=["m"], params={}, executor="worker")
 
     async def _load(session, run_id):
-        return run, None  # the fixture every one of these scenarios needs, absent
+        return run, None  # the fixture longctx and ladder need, absent
 
     monkeypatch.setattr(runner, "SessionLocal", lambda: _FakeSession(recorded))
     monkeypatch.setattr(runner, "_load_run", _load)
@@ -127,7 +135,7 @@ async def test_a_run_that_cannot_be_planned_is_still_stamped(scenario, monkeypat
     assert result["status"] == "failed"
     final = _updates(recorded, "benchmark_run")[-1]
     assert final["status"] == "failed"
-    assert "needs a fixture" in final["error"]
+    assert error in final["error"]
     assert final["finished_at"] is not None
 
 

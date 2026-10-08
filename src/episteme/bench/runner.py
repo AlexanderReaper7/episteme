@@ -26,7 +26,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from sqlalchemy import select, update
@@ -43,7 +43,10 @@ from .series import summarize
 
 log = logging.getLogger("episteme.bench.runner")
 
-SCENARIOS = ("quick", "longctx", "ladder", "sweep")
+# `sweep` was a fourth, until 0060: it rewrote llama-server's preset through
+# llama-warden, and InferMux keeps model configuration in its own files. Old
+# sweep runs still render, from their samples' `variant` labels.
+SCENARIOS = ("quick", "longctx", "ladder")
 
 
 class BenchRefused(Exception):
@@ -61,19 +64,8 @@ class Item:
     messages: list[dict]
     predict: int
     rep: int = 0
-    variant: str = ""
     rung: int | None = None
     warmup: bool = False
-
-
-@dataclass
-class Variant:
-    """One point of a `sweep`: a named configuration the warden applies before
-    the samples under it are measured."""
-
-    label: str
-    sections: dict[str, dict] = field(default_factory=dict)  # preset overrides per model
-    extra_args: list[str] = field(default_factory=list)  # appended to llama-server's argv
 
 
 # --- planning (pure) ---------------------------------------------------------------
@@ -97,50 +89,46 @@ def plan_items(
         raise ValueError(f"Unknown scenario {scenario!r}; known: {list(SCENARIOS)}")
     reps = max(1, int(params.get("reps") or 1))
     predict = max(1, int(params.get("predict") or settings.bench_predict_tokens))
-    variants = [Variant(**v) for v in params.get("variants") or []] or [Variant(label="")]
 
-    if scenario in ("longctx", "ladder", "sweep") and fixture is None:
+    if scenario in ("longctx", "ladder") and fixture is None:
         raise ValueError(f"Scenario {scenario!r} needs a fixture")
 
     items: list[Item] = []
-    for variant in variants:
-        for model in models:
-            if scenario == "ladder":
-                # One cold prefill per rung, and only a token or two of decode:
-                # the ladder measures how prefill scales with total prompt
-                # length, and generating 256 tokens per rung would spend most of
-                # the GPU time on the half not being measured.
-                for rung in params.get("rungs") or settings.bench_ladder_rungs:
-                    items.append(
-                        Item(
-                            model=model,
-                            messages=truncate(fixture.messages, int(rung), fixture.prompt_tokens),
-                            predict=int(params.get("ladder_predict") or 8),
-                            rung=int(rung),
-                            variant=variant.label,
-                        )
-                    )
-                continue
-            messages = (
-                synthetic_messages(int(params.get("synthetic_tokens") or 4096))
-                if scenario == "quick"
-                else list(fixture.messages)
-            )
-            # The warmup exists because the first request after a load pays for
-            # cold caches and, on a swapped model, for the load itself. It is a
-            # sample like any other so the cost stays visible, and `warmup` is
-            # what keeps it out of the comparison averages.
-            for rep in range(reps + (1 if params.get("warmup", True) else 0)):
+    for model in models:
+        if scenario == "ladder":
+            # One cold prefill per rung, and only a token or two of decode:
+            # the ladder measures how prefill scales with total prompt
+            # length, and generating 256 tokens per rung would spend most of
+            # the GPU time on the half not being measured.
+            for rung in params.get("rungs") or settings.bench_ladder_rungs:
                 items.append(
                     Item(
                         model=model,
-                        messages=messages,
-                        predict=predict,
-                        rep=rep,
-                        variant=variant.label,
-                        warmup=bool(params.get("warmup", True)) and rep == 0,
+                        messages=truncate(fixture.messages, int(rung), fixture.prompt_tokens),
+                        predict=int(params.get("ladder_predict") or 8),
+                        rung=int(rung),
                     )
                 )
+            continue
+        messages = (
+            synthetic_messages(int(params.get("synthetic_tokens") or 4096))
+            if scenario == "quick"
+            else list(fixture.messages)
+        )
+        # The warmup exists because the first request after a load pays for
+        # cold caches and, on a swapped model, for the load itself. It is a
+        # sample like any other so the cost stays visible, and `warmup` is
+        # what keeps it out of the comparison averages.
+        for rep in range(reps + (1 if params.get("warmup", True) else 0)):
+            items.append(
+                Item(
+                    model=model,
+                    messages=messages,
+                    predict=predict,
+                    rep=rep,
+                    warmup=bool(params.get("warmup", True)) and rep == 0,
+                )
+            )
     return items
 
 
@@ -349,8 +337,6 @@ async def run_benchmark(run_id: int) -> dict:
     status, error = "succeeded", None
     items: list[Item] = []
     done = 0
-    variant_applied: str | None = None
-    preset_backup: str | None = None
 
     try:
         items = plan_items(scenario, models, params, fixture)
@@ -369,20 +355,12 @@ async def run_benchmark(run_id: int) -> dict:
                 if await _cancel_requested(run_id):
                     status = "cancelled"
                     break
-                if item.variant != variant_applied:
-                    # Applying a variant restarts llama-server, so it can only
-                    # happen at an item boundary and every model's residency is
-                    # gone afterwards.
-                    preset_backup = await _apply_variant(params, item.variant, preset_backup)
-                    variant_applied = item.variant
-                    loaded.clear()
                 await _set_progress(
                     run_id,
                     {
                         "item": index,
                         "items": len(items),
                         "model": item.model,
-                        "variant": item.variant,
                         "rep": item.rep,
                         "rung": item.rung,
                         "phase": "starting",
@@ -402,10 +380,6 @@ async def run_benchmark(run_id: int) -> dict:
         status, error = "failed", f"{type(exc).__name__}: {exc}"
         log.exception("Benchmark run %d crashed", run_id)
     finally:
-        if preset_backup:
-            # Unconditional: a sweep that failed halfway must not leave the host
-            # holding an experimental preset that the next nightly run inherits.
-            await _restore_preset(preset_backup)
         await client.aclose()
 
     env_end, busy_percent = await _environment()
@@ -452,7 +426,6 @@ async def _run_item(
                 "item": index,
                 "items": total_items,
                 "model": item.model,
-                "variant": item.variant,
                 "rep": item.rep,
                 "rung": item.rung,
                 **snapshot,
@@ -462,7 +435,6 @@ async def _run_item(
     sample = BenchmarkSample(
         run_id=run_id,
         model=item.model,
-        variant=item.variant,
         rep=item.rep,
         rung=item.rung,
     )
@@ -497,47 +469,6 @@ async def _run_item(
         await session.commit()
 
 
-# --- the host executor: sweeps (0041) ----------------------------------------------
-
-
-async def _apply_variant(params: dict, label: str, backup: str | None) -> str | None:
-    """Put one sweep variant in place: edit the preset, restart llama-server.
-
-    Episteme decides WHAT the configuration is and the agent applies it, which is
-    the line 0023 actually draws (no policy on the host) and 0041 restates for
-    configuration. The backup path is threaded through so the first variant's
-    backup, taken against the operator's real preset, is the one restored at the
-    end, not the fourth variant's backup of the third variant's edit.
-    """
-    if not label:
-        return backup
-    variant = next(
-        (Variant(**v) for v in params.get("variants") or [] if v.get("label") == label), None
-    )
-    if variant is None:
-        raise BenchError(f"Sweep variant {label!r} vanished from the run parameters")
-    try:
-        result = await warden.apply_preset(variant.sections)
-        backup = backup or result.get("backup")
-        await warden.restart(extra_args=variant.extra_args)
-    except WardenError as exc:
-        raise BenchError(f"applying variant {label!r} failed: {exc}") from exc
-    # llama-server rebinds its port before it can serve, and the router lazily
-    # loads on first request, so there is nothing better to wait on than the
-    # agent's own port check, which /restart already did.
-    return backup
-
-
-async def _restore_preset(backup: str) -> None:
-    try:
-        await warden.restore_preset(backup)
-        await warden.restart()
-    except WardenError as exc:
-        # Loud, because the host is now running a configuration nobody chose and
-        # the next nightly pipeline run would inherit it.
-        log.error("FAILED to restore models-preset.ini from %s: %s", backup, exc)
-
-
 async def create_run(
     session: AsyncSession,
     *,
@@ -548,8 +479,8 @@ async def create_run(
 ) -> BenchmarkRun:
     """Persist the parameters, then hand the job a single integer.
 
-    The run row IS the parameter record. That is what lets a model list and a
-    sweep definition reach the worker at all: `defer_args` validates against four
+    The run row IS the parameter record. That is what lets a model list reach
+    the worker at all: `defer_args` validates against four
     integer parameters (`limit`, `story_id`, `post_id`, `source_id`), and a list
     of model names is not one of them. It also means a run can be read back
     afterwards and re-launched exactly.
@@ -570,13 +501,12 @@ async def create_run(
     if fixture_id and fixture is None:
         raise ValueError(f"No benchmark fixture {fixture_id}")
     plan_items(scenario, models, params, fixture)
-    executor = "host" if params.get("variants") else "worker"
     run = BenchmarkRun(
         scenario=scenario,
         models=models,
         params=params,
         fixture_id=fixture_id,
-        executor=executor,
+        executor="worker",
         status="queued",
     )
     session.add(run)

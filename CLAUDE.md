@@ -22,7 +22,7 @@ Phases 1 to 4 are built and live. "Live" and "tested" are different claims:
 | recommendation, feed ranking (4) | live since 2026-07-30 |
 | llama-warden, the pause it announces (0057) | split out of this repo 2026-09-13, part of InferMux since 2026-10-03 (0058). Live-verified the same day with a game on the card: the warden paused us, repeated at 300s moving `contended_at` and not `since`, was killed mid-pause and left us correctly paused with a frozen clock, and a restarted warden re-announced into it without re-authoring the pause. The warden-driven RESUME is still unwatched |
 | assistant rail, reader-requested articles (5) | built 2026-08-11, NOT yet watched running |
-| benchmarks (`quick`) | live-verified 2026-08-15; `ladder`/`longctx`/`sweep` built, not watched |
+| benchmarks (`quick`) | live-verified 2026-08-15; `ladder`/`longctx` built, not watched. `sweep` removed (0060) |
 | correspondents, Glance, Matsedel (0046) | live-verified 2026-08-29: two scrapes, four kitchens, five filed posts; a re-read that carries no menu keeps what is stored |
 | Matsedel reads until the week exists (0054) | live-verified 2026-09-05: week 36 repaired 2 of 4 -> 4 of 4 kitchens, 0 placeholders; the skip runs a whole week in 0.1s with no outbound request; all four live pages raise `NotPublishedYet` for next week. The daily CRON firing on its own is not yet watched |
 | feed cards written by `summarize` (0050) | live-verified 2026-08-30: full backfill of 683 posts in 78 minutes, all 688 published posts carry a card |
@@ -126,35 +126,29 @@ POST   /chat/turn  # form field `text`, ?post_id= for "the article I am reading"
 POST   /chat/proposal/{id}/resolve?approve=true  # the ONLY path to a write handler
 GET    /api/posts/search?q=deep-sea+biology&limit=5  # semantic + literal, merged
 
-# llama.cpp lifecycle, logs and GPU sensing via llama-warden's API (0023, 0057).
-# llama-warden became InferMux, which does NOT serve this API (0058), so these
-# routes 503 cleanly with LLM_WARDEN_URL empty until llm/warden.py is ported.
-# The warden itself lives in its own repository; do not reconstruct any of it here.
-GET    /api/llm/backend  # ports, PIDs, uptime
-POST   /api/llm/backend/start  # idempotent (locked)
-POST   /api/llm/backend/restart
-# stop is graceful: pauses, waits for the work unit, THEN kills. stopped:false if
-# it outlasts llm_graceful_stop_seconds. Nothing dies mid-generation unforced.
-POST   /api/llm/backend/stop  # ?force=true
-GET    /api/llm/logs?which=router&tail=200  # or which=embed
-GET    /api/llm/logs?which=router&since=40960  # delta (0034)
-GET    /api/llm/logs/stream?which=router  # what the pane uses (SSE; curl needs -N)
-GET    /api/llm/resources  # ~3.5s FRESH sweep: per-process GPU, VRAM, games
-# What the warden last decided, and the policy it decided with. Cheap - its watch
-# thread already paid for the sweep. The bench gate reads its threshold from here
-# rather than keeping a second copy of the number (0057).
-curl -s http://127.0.0.1:5003/verdict
+# InferMux's warden (0060): loaded models, GPU sensing, and one unload. All 503
+# cleanly with LLM_WARDEN_URL empty. llama.cpp's lifecycle, logs and model flags
+# are InferMux's, in its own UI; do not rebuild any of them here.
+GET    /api/llm/backend  # InferMux's /running: loaded models, state, ttl
+# unload is graceful: pauses, waits for the work unit, THEN asks InferMux.
+# unloaded:false if it outlasts llm_graceful_stop_seconds. Nothing is cut off
+# mid-generation unforced. InferMux itself refuses during an interactive request.
+POST   /api/llm/backend/unload  # ?force=true
+GET    /api/llm/resources  # a FRESH measurement: per-process GPU, VRAM, culprits
+# What the warden last decided, and the policy it decided with. Cheap - it is the
+# warden's cached state. The bench gate reads its threshold from here rather than
+# keeping a second copy of the number (0057). Any Episteme key will do.
+curl -s -H "Authorization: Bearer $(cat /run/secrets/episteme)" http://127.0.0.1:5001/warden/verdict
 
-# Benchmarks (0039, 0040, 0041; docs/benchmarks/plan.md). HTML routes, no /api.
+# Benchmarks (0039, 0040, 0060; docs/benchmarks/plan.md). HTML routes, no /api.
 # A fixture is a REAL conversation replayed from llm_calls: a synthetic 4k prompt
 # reports 3-4x the prefill a 19k writer call gets, so only `quick` may be synthetic.
 POST   /admin/benchmarks/fixtures/capture  # name, stage, percentile (1.0 = largest)
-POST   /admin/benchmarks/run  # scenario=quick|longctx|ladder|sweep, models, reps, predict
+POST   /admin/benchmarks/run  # scenario=quick|longctx|ladder, models, reps, predict
 POST   /admin/benchmarks/{id}/cancel  # a flag on the row, read between stream chunks
 GET    /admin/benchmarks/{id}/progress  # SSE; worker writes run.progress, web polls it
-# sweep restarts llama-server with different flags, so it 422s without the warden.
-# The gate refuses a contended card and is STRICTER than the warden about games:
-# the warden decides on load alone, and a benchmark next to a game is meaningless.
+# The gate refuses a contended card. Its games check reads `games_running`, which
+# InferMux does not send, so today it decides on load alone, as the warden does (0060).
 
 # Correspondents (0046, 0047). Matsedel is the only one: `/c/matsedel` is the
 # week, `/c/matsedel/stats` its history, `/glance` the dashboard of blocks. The
@@ -234,8 +228,8 @@ Names to navigate by. The reasoning is in the numbered decision.
 - **A post stores its destination** (0047, built 2026-08-28): `posts.href` is where a card and `/post/{id}` both go, NULL means the post renders itself, and `ck_posts_body_iff_self_rendering` ties a body to rendering yourself. `models.POST_KINDS` records the decision per kind and `Post.kind` **refuses a value that is not in it**. The primary item is `models.PRIMARY_ITEM_ORDER`, one expression shared by `Story.items` and `pipeline._primary_item`.
 - **Correspondents** (0046, GLOSSARY.md). A correspondent files finished posts, skipping triage and the writer, and owns a page under `/c/<slug>/` for standing content that never enters the feed. Plugins ship in-tree and run in-process, because only in-process code can be held to `polite_get`; external services keep their own database and are never copied into ours. **Filing is built** (`correspondents/filing.py`, 2026-08-28): one story per period, found through its items' hashes rather than a `period_key` column, upserted on a re-file. `posts.publish_at` is when a post becomes visible and `posts.expires_at` when it stops being, both NULL for no bound; the feed filters on both and sorts on the first, so a week of posts can come from one read and each leaves when it stops being true. **Registration and the routes are built too**: a `correspondents` row is the configuration, `correspondents/registry.py` resolves the slug to the plugin the way `get_adapter` resolves `Source.type_name`, and **core owns the `/c/<slug>/` prefix** (`web/correspondents.py`) so a plugin cannot declare a path that shadows a core route. The enabled flag is a `Depends` on the mount, not a check each view remembers. **Glance is built** (`web/glance.py`): core lays out one block per enabled correspondent and fetches each from that correspondent's own `GET /c/<slug>/glance`, required at registration so a missing block is a startup failure rather than a correspondent that looks down. A plugin's page goes through `templating.correspondent_page`, which renders `correspondent.html` and INCLUDES the plugin's template: inheritance breaks the boosted-fragment path, and importing the helper from `web/correspondents.py` is a circular import. **The filed card is built**: it names its correspondent by walking post -> story -> primary item -> `sources.type_name`, which IS the slug, and `filing._require_correspondent_source` is what keeps that true. **Matsedel is the first plugin** (`correspondents/matsedel/`): four restaurants' lunch menus, five weekday posts filed from them. Its reader works on the page's visible LINES, never on each site's markup, because a stale CSS selector yields an empty menu and an empty menu looks like a kitchen that posted nothing (0046). **`read_source` is told which week it is reading for** and raises `NotPublishedYet` for a page still showing an older one (0054): a stale page parses perfectly, and believing it lost two of four kitchens for a week. That is also the retry condition - the scrape runs every weekday and `store.kitchens_with_a_full_week` skips a kitchen whose five weekdays each carry a line `tag_of` does not call HIDDEN, so an ordinary week costs one read of each site and nothing after. **What a line IS comes from `tags.tag_of` and nowhere else** (label, dish, hidden): a hand-written `site -> exact line -> tag` table, falling back to `readers.is_label` for anything untagged. Tags are applied on read, so `matsedel_dishes` keeps what the restaurant wrote and a tag added today fixes every stored week. Its `tasks.py` is deliberately not imported by its `__init__.py`. `ingest_all` skips every source whose `type_name` is a correspondent slug (`worker/tasks.py:not_a_correspondents_source`), so the four rows keep their own `enabled` switch.
 - **Notifications** (`notify.py`, 0056). One function, `publish`, and one rule: **a notification never fails the work it reports on**, so every error is caught and the return value says whether it landed. The **JSON publishing format**, not the header format, because HTTP headers are ASCII and a menu says `pepparsås`. The wording of the digest is a pure function (`worker/digest.py:compose`) over the run row and the cards it produced, and **what counts as new is `summarized_at`** (0050), which also keeps filed lunch posts out of it. The reader chose two events and declined alerts on pipeline and ingest failure, so do not add one; the digest reports a bad run once, in the morning. `notify.link` needs `public_base_url`, never `web_internal_url`.
-- **Benchmarks** (`src/episteme/bench/`, 0039): a peer of `llm/`, never a caller. `BenchError` is its whole error contract and streaming is the only path, because prefill curves and cancellation both need the stream. **Never store or plot llama-server's aggregate rates** (0040): `prompt_progress` counters are CUMULATIVE, so `series.py` differences them, and `report.py` aggregates totals-over-totals, never means-of-ratios. `bench_run(run_id)` takes one int: the row is the parameter record. llama-warden applies preset edits it is handed and chooses nothing (0041). **The "GPU is busy" threshold is the warden's**, read off `/verdict` at a run boundary and never copied into settings (0057).
-- **Who stops the pipeline for a game is not decided here** (0057). The warden (InferMux's since 0058, llama-warden before) measures the card, decides, and POSTs `{action, reason}` to `/api/pipeline/announce`; `worker/contention.py:apply_announcement` is the whole receiving end and decides only what stopping MEANS (pause, and hand VRAM back if nothing is mid-story). **Idempotency is a cross-process contract**, because the warden repeats its verdict every 300s until it lands: a repeat re-stamps `contended_at` and never `since` or `reason`. **Nothing expires** - a warden that dies while we are paused leaves us paused, and the only thing that makes that visible is `contended_at` having stopped advancing. `llm/warden.py` is the client; `verdict()` is the cheap read, `resources()` the ~3.5s sweep.
+- **Benchmarks** (`src/episteme/bench/`, 0039): a peer of `llm/`, never a caller. `BenchError` is its whole error contract and streaming is the only path, because prefill curves and cancellation both need the stream. **Never store or plot llama-server's aggregate rates** (0040): `prompt_progress` counters are CUMULATIVE, so `series.py` differences them, and `report.py` aggregates totals-over-totals, never means-of-ratios. `bench_run(run_id)` takes one int: the row is the parameter record. **The "GPU is busy" threshold is the warden's**, read off `/verdict` at a run boundary and never copied into settings (0057).
+- **Who stops the pipeline for a game is not decided here** (0057). The warden (InferMux's since 0058, llama-warden before) measures the card, decides, and POSTs `{action, reason}` to `/api/pipeline/announce`; `worker/contention.py:apply_announcement` is the whole receiving end and decides only what stopping MEANS (pause, and hand VRAM back if nothing is mid-story). **Idempotency is a cross-process contract**, because the warden repeats its verdict every 300s until it lands: a repeat re-stamps `contended_at` and never `since` or `reason`. **Nothing expires** - a warden that dies while we are paused leaves us paused, and the only thing that makes that visible is `contended_at` having stopped advancing. `llm/warden.py` is the client (0060); `verdict()` is the cheap read, `resources()` a fresh measurement.
 - **Jobs**: procrastinate on Postgres, no broker. Worker and web are one image, two entrypoints; crons in settings. Stalls 0016, retention 0032.
 - **Schema is Alembic**, migrations inside the package so `COPY src ./src` ships them. **No `create_all` anywhere**, deliberately (0014). `bootstrap.py` adopts-or-upgrades, applies the procrastinate schema guarded (`schema --apply` is NOT idempotent), then seeds sources. Backup 0015.
 - **Politeness is a hard requirement** (spec §5, 0005, 0006). All source HTTP through `ingest/http.py:polite_get`, which new adapters MUST use. The browser is the other way a source gets hit without anyone writing a request: `<body preload="mouseover">` prefetches boosted links, so an off-site card link carries `preload="none"` (`_feed.html`). **Not `hx-boost="false"`**, which reads like the fix and starts the request it prevents - the extension sends a boosted link through `htmx.ajax`, where `selfRequestsOnly` blocks a cross-origin URL, and an unboosted one through a raw XHR that nothing guards. **Never `docker compose down -v` casually**: re-ingesting re-fetches every article from every source.

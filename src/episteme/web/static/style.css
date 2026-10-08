@@ -2749,7 +2749,7 @@ main {
   word-break: break-all;
 }
 
-/* --- llama.cpp backend panel (admin dashboard) ------------------------------ */
+/* --- InferMux panel (admin dashboard) --------------------------------------- */
 
 .backend-controls {
   display: flex;
@@ -2758,10 +2758,10 @@ main {
   margin: 0.75rem 0 0;
 }
 
-/* In-flight lifecycle actions. These are the slowest controls on the site by an
-   order of magnitude - the agent holds /start until both ports answer, and
-   /restart pays for a stop wait, a launcher run and a start wait in sequence, so
-   a click can legitimately be unanswered for a minute. `hx-disabled-elt` alone
+/* In-flight unloads. These are the slowest controls on the site by an order of
+   magnitude - a graceful unload waits up to two minutes for the pipeline's
+   current unit before InferMux stops anything, so a click can legitimately be
+   unanswered that long. `hx-disabled-elt` alone
    changes nothing visible (there is no global :disabled rule), which made a
    pressed button indistinguishable from one that never fired.
    htmx puts `htmx-request` on the requesting element for exactly the request's
@@ -2773,53 +2773,12 @@ main {
 .backend-controls .htmx-request .icon-idle { display: none; }
 .backend-controls .htmx-request { cursor: progress; }
 
-/* The siblings go inert too. Only the clicked button is disabled by htmx, so
-   "stop" stayed live during a 40s start - two lifecycle actions racing on one
-   pair of processes, from a panel that could not yet show the first had landed. */
+/* The siblings go inert too. htmx disables only the clicked button, which
+   would leave "force unload" live during a graceful one: two actions racing on
+   one set of models, from a panel that cannot yet show the first had landed. */
 .backend-controls:has(.htmx-request) button:not(.htmx-request) {
   opacity: 0.45;
   pointer-events: none;
-}
-
-.log-head {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin: 1rem 0 0.4rem;
-}
-
-.log-head button {
-  padding: 0.15rem 0.6rem;
-  font-size: 0.78rem;
-}
-
-/* Stream health, not log content: empty while lines are arriving. */
-.log-status {
-  font-size: 0.74rem;
-  margin-left: auto;
-}
-
-/* column-reverse pins the view to the newest line with no JS and no scroll
-   bookkeeping - appended lines grow away from scrollTop 0, so the tail stays
-   put while a reader who scrolled up stays where they were. */
-.log-pane {
-  display: flex;
-  flex-direction: column-reverse;
-  max-height: 22rem;
-  overflow-y: auto;
-  background: var(--card-hover);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 0.6rem 0.8rem;
-}
-
-.log-pane pre {
-  margin: 0;
-  font-size: 0.74rem;
-  line-height: 1.45;
-  white-space: pre-wrap;
-  word-break: break-word;
-  color: var(--muted);
 }
 
 /* --- The assistant rail ----------------------------------------------------

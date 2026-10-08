@@ -805,13 +805,13 @@ class BenchmarkRun(Base):
         String(20), default="running"
     )  # running|succeeded|failed|cancelled
     executor: Mapped[str] = mapped_column(String(10), default="worker")  # worker | host
-    scenario: Mapped[str] = mapped_column(String(20))  # quick|longctx|ladder|sweep
+    scenario: Mapped[str] = mapped_column(String(20))  # quick|longctx|ladder; sweep until 0060
     fixture_id: Mapped[int | None] = mapped_column(
         ForeignKey("benchmark_fixture.id", ondelete="SET NULL")
     )
     models: Mapped[list[Any]] = mapped_column(JSONB, default=list)
-    # Everything the launch form chose: reps, predict, ladder rungs, sweep
-    # variants. The run row IS the parameter record, which is what lets the job
+    # Everything the launch form chose: reps, predict, ladder rungs, and sweep
+    # variants on a run from before 0060. The run row IS the parameter record, which is what lets the job
     # take a single int and stay inside procrastinate's argument conventions.
     params: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     llama_build: Mapped[str | None] = mapped_column(Text)

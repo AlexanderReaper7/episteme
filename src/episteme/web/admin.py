@@ -67,8 +67,8 @@ async def admin_home(request: Request):
             "runs_summary": await api_runs_summary(),
             "jobs_summary": await api_jobs_summary(),
             "sources_stats": await api_sources_stats(),
-            # Both llama.cpp cards' context, built from what /api/status already
-            # fetched rather than probing the warden and every endpoint a
+            # Both cards' context (InferMux and endpoints), built from what
+            # /api/status already fetched rather than probing the warden and every endpoint a
             # second time. It carries the digest the poll URL needs, so the pair
             # is self-timing from the first paint.
             **await backend_context(status["llm"]["warden"], status["pipeline"], status["llm"]),
@@ -773,15 +773,13 @@ async def queue_partial(request: Request, view: str = DEFAULT_QUEUE_VIEW, v: str
     )
 
 
-# --- llama.cpp backend panel ------------------------------------------------------
+# --- InferMux panel (0060) --------------------------------------------------------
 #
-# Three fragments on three different clocks, because they cost three very
-# different amounts: process status is ~1ms and polls every 5s, the GPU probe is
-# ~3.5s and polls every 30s, and the log is not on a clock here at all — it
-# renders once and is then pushed to over SSE (api.api_llm_logs_stream), which is
-# the only one of the three where re-fetching the whole answer would destroy
-# something the reader was doing. Splitting them keeps a slow sensor off the
-# critical path.
+# Two fragments on two clocks, because they cost different amounts: the loaded
+# models are llama-swap's own table and poll every 5s, while the GPU probe takes
+# a fresh measurement and polls every 30s. Splitting them keeps the slow sensor
+# off the critical path. Logs and configuration are InferMux's UI's, linked from
+# the panel.
 
 
 async def backend_context(
@@ -794,13 +792,14 @@ async def backend_context(
     failed: bool = False,
     oob_llm: bool = False,
 ) -> dict:
-    """Everything the two llama.cpp cards render, from all three of their entry
-    points: the dashboard render, an action's response, and the status poll.
+    """Everything the InferMux card and the endpoint card render, from all three
+    of their entry points: the dashboard render, an action's response, and the
+    status poll.
 
     The endpoint card is in here rather than on a timer of its own because it and
-    the process card are two views of one llama-server: probed separately they
-    would disagree with each other for seconds at a time, which is the confusion a
-    live panel exists to remove.
+    the InferMux card are two views of one server: probed separately they would
+    disagree with each other for seconds at a time, which is the confusion a live
+    panel exists to remove.
 
     All three reads are accepted pre-fetched, because the dashboard has already
     paid for every one of them inside `/api/status` and asking the warden and
@@ -825,11 +824,11 @@ async def backend_context(
         "oob_llm": oob_llm,
         # Over exactly what the two cards render, per state_hash's rule — NOT over
         # `pipeline` whole, whose `contended_at` a re-announcement rewrites on its own
-        # schedule and which nothing here displays. `endpoints` carries each
-        # server's health and its loaded models, so a router swapping main for
-        # fast moves the digest and the card follows it.
+        # schedule and which nothing here displays. `running` is InferMux's
+        # loaded models with their state, so a swap from main to fast moves the
+        # digest and the card follows it.
         "backend_hash": state_hash(
-            backend.get("status"),
+            backend.get("running"),
             [pipeline.get("paused"), pipeline.get("reason"), pipeline.get("since")],
             llm.get("endpoints"),
             llm.get("roles"),
@@ -840,16 +839,16 @@ async def backend_context(
 
 @router.get("/partials/backend", response_class=HTMLResponse)
 async def backend_partial(request: Request, v: str | None = None, offer_force: bool = False):
-    """The status poll, for both llama.cpp cards: the process block replaces
-    itself and the endpoint card rides back beside it as an out-of-band swap.
+    """The status poll, for both cards: the InferMux block replaces itself and
+    the endpoint card rides back beside it as an out-of-band swap.
 
     Answers 204 while nothing has moved (0033), so the pair sits still for hours
-    and then updates within 5s of llama-server going up or down — including when
-    it went down without anyone here asking it to.
+    and then updates within 5s of a model loading or unloading — including when
+    InferMux did it without anyone here asking.
 
     `offer_force` is carried by the fragment rather than re-derived: it means "a
-    graceful stop has already been tried and timed out", which is a fact about
-    the last action, not about the processes."""
+    graceful unload has already been tried and timed out", which is a fact about
+    the last action, not about the models."""
     context = await backend_context(offer_force=offer_force, oob_llm=True)
     if unchanged(context["backend_hash"], v):
         return Response(status_code=204, headers=POLL_HEADERS)
@@ -860,8 +859,8 @@ async def backend_partial(request: Request, v: str | None = None, offer_force: b
 
 @router.get("/partials/backend-resources", response_class=HTMLResponse)
 async def backend_resources_partial(request: Request):
-    """A fresh ~3.5s sweep, which is why this is its own fragment and not part of
-    the page load (0023).
+    """A fresh GPU measurement, which is why this is its own fragment and not
+    part of the page load (0023).
 
     `busy_percent` is the number the panel colours against, and it is the
     WARDEN's: it comes back on `/verdict` beside the sweep rather than out of our
@@ -880,65 +879,26 @@ async def backend_resources_partial(request: Request):
     )
 
 
-@router.get("/partials/backend-log", response_class=HTMLResponse)
-async def backend_log_partial(request: Request, which: str = "router"):
-    log = await warden.logs(which)
-    return templates.TemplateResponse(
-        request,
-        "admin/_backend_log.html",
-        {
-            # A snapshot, rendered once. The pane is kept current by the SSE
-            # stream from here on, resuming at this snapshot's `next_offset` so
-            # nothing is re-sent and nothing flashes — see api.api_llm_logs_stream.
-            "log": log,
-            # Resolved HERE, not in the template, so that a missing offset is one
-            # absent query parameter rather than an empty one. The agent runs on
-            # the host and this runs in a container: they are deployed separately,
-            # so an agent predating the offset protocol is a normal state, and
-            # `?since=` (empty) is a 422 that an EventSource then retries forever.
-            "since": (log or {}).get("next_offset"),
-            "which": which,
-            "logs_available": ["router", "embed"],
-            # The stream is only offered when there is an agent to stream from;
-            # an EventSource against a permanently-503 route would reconnect
-            # forever. Unreachable is different from unconfigured: the stream
-            # rides out an agent restart, which is exactly when the log matters.
-            "agent_enabled": warden.enabled,
-        },
-    )
+@router.post("/backend/unload", response_class=HTMLResponse)
+async def admin_backend_unload(request: Request, force: bool = False):
+    """Failures render into the panel rather than 500-ing: an unreachable
+    InferMux, a refusal, or an unload that timed out waiting for a work unit are
+    all things the operator needs to *read*, not stack traces.
 
-
-@router.post("/backend/{action}", response_class=HTMLResponse)
-async def admin_backend_action(request: Request, action: str, force: bool = False):
-    """start / stop / restart. Failures render into the panel rather than
-    500-ing: an unreachable agent or a stop that timed out waiting for a work
-    unit are both things the operator needs to *read*, not stack traces.
-
-    The pause state is re-read afterwards and rendered into the panel: a stop
+    The pause state is re-read afterwards and rendered into the panel: an unload
     pauses the pipeline, and the pause controls are on a different page."""
-    from .api import (
-        api_llm_backend_restart,
-        api_llm_backend_start,
-        api_llm_backend_stop,
-    )
+    from .api import api_llm_backend_unload
 
     message, failed, offer_force = None, False, False
     try:
-        if action == "start":
-            await api_llm_backend_start()
-        elif action == "restart":
-            await api_llm_backend_restart()
-        elif action == "stop":
-            result = await api_llm_backend_stop(force=force)
-            if not result["stopped"]:
-                # The graceful path did its job: it waited, the work unit is
-                # still going, and nothing was killed. Offer the explicit escape.
-                message, failed, offer_force = result["reason"], True, True
+        result = await api_llm_backend_unload(force=force)
+        if result["unloaded"]:
+            message = "unloaded " + (", ".join(result["models"]) or "nothing, none was loaded")
         else:
-            raise HTTPException(404, f"Unknown action {action!r}")
+            # The graceful path did its job: it waited, the work unit is still
+            # going, and nothing was cut off. Offer the explicit escape.
+            message, failed, offer_force = result["reason"], True, True
     except HTTPException as exc:
-        if exc.status_code == 404:
-            raise
         message, failed = str(exc.detail), True
 
     return templates.TemplateResponse(

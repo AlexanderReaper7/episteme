@@ -34,7 +34,6 @@ from ..bench.fixtures import capture
 from ..bench.runner import SCENARIOS, create_run
 from ..config import settings
 from ..db import SessionLocal
-from ..llm.warden import warden
 from ..models import BenchmarkFixture, BenchmarkRun, BenchmarkSample
 from .templating import POLL_HEADERS, render, state_hash, templates, unchanged
 
@@ -152,7 +151,6 @@ async def _index_context() -> dict:
             "fixtures": await _fixtures(session),
             "models": await _available_models(),
             "scenarios": SCENARIOS,
-            "agent_enabled": warden.enabled,
             "defaults": {
                 "predict": settings.bench_predict_tokens,
                 "rungs": ", ".join(str(rung) for rung in settings.bench_ladder_rungs),
@@ -242,21 +240,6 @@ def build_params(form: dict) -> dict:
     if scenario == "ladder":
         params["rungs"] = _ints(form.get("rungs")) or list(settings.bench_ladder_rungs)
         params["ladder_predict"] = max(1, int(form.get("ladder_predict") or 8))
-    if scenario == "sweep":
-        raw = (form.get("variants") or "").strip()
-        try:
-            variants = json.loads(raw) if raw else []
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"variants is not valid JSON: {exc}") from exc
-        if not isinstance(variants, list) or not variants:
-            raise ValueError("A sweep needs a non-empty JSON list of variants")
-        for variant in variants:
-            if not isinstance(variant, dict) or not variant.get("label"):
-                raise ValueError("Every sweep variant needs a label")
-            stray = set(variant) - {"label", "sections", "extra_args"}
-            if stray:
-                raise ValueError(f"Unknown variant keys: {sorted(stray)}")
-        params["variants"] = variants
     return params
 
 
@@ -278,10 +261,6 @@ async def benchmarks_run(request: Request):
         params = build_params(dict(form))
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
-    if scenario == "sweep" and not warden.enabled:
-        raise HTTPException(
-            422, "A sweep restarts llama-server, which needs llama-warden (LLM_WARDEN_URL)"
-        )
 
     async with SessionLocal() as session:
         try:

@@ -112,7 +112,7 @@ The CPU-only llama-server for the `embed` role, a separate process from the rout
 
 ### llama-warden
 
-The process on the host that started, stopped and sensed llama-server, and decided when the GPU is contended. Its own project after 0057, not a part of Episteme, and since 2026-10-03 part of InferMux (0058). `llm/warden.py` still speaks llama-warden's API, which InferMux does not serve. Formerly the *host agent*, which was a sensor and an actuator and never a decision maker (0023); that is the half the split reversed.
+The process on the host that started, stopped and sensed llama-server, and decided when the GPU is contended. Its own project after 0057, not a part of Episteme, and since 2026-10-03 part of InferMux (0058). `llm/warden.py` speaks InferMux's warden API since 0060. Formerly the *host agent*, which was a sensor and an actuator and never a decision maker (0023); that is the half the split reversed.
 
 ### Announcement
 

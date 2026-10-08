@@ -1,7 +1,7 @@
 # 0058. InferMux knows the web from the worker by their keys
 
 - Date: 2026-10-03
-- Status: built and unit-tested 2026-10-03, not watched running; Episteme does not run on the NixOS host yet
+- Status: the worker side watched 2026-10-08: during a pipeline run, InferMux's `/warden/verdict` listed the worker's `/v1/embeddings` as `batch`. The web side is not watched yet.
 - Rule: The web process and the worker send different InferMux keys, `episteme` (interactive) and `episteme-batch` (batch), from the file `LLM_API_KEY_FILE` names. Compose mounts one or the other at `/run/secrets/infermux-key`. Every worker job is batch, including the ones the reader deferred from the web.
 
 ## Context
@@ -24,4 +24,4 @@ The key is read when an HTTP client is built, and a configured file that does no
 ## Consequences
 
 - The embed role still points at the separate embed server on :5002, which ignores the header. When the embedder moves under InferMux, the same key goes with it.
-- `llm/warden.py` still talks to llama-warden's own API (`/status`, `/start`, `/logs`), which InferMux does not serve. That migration is separate.
+- `llm/warden.py` still talks to llama-warden's own API (`/status`, `/start`, `/logs`), which InferMux does not serve. That migration is separate, and is 0060.

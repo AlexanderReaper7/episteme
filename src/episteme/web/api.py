@@ -7,7 +7,6 @@ plain dict builders — the ORM models are the schema."""
 from __future__ import annotations
 
 import asyncio
-import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
@@ -298,14 +297,10 @@ async def api_status():
             "base_url": settings.llm_base_url,
             "available": all(e["available"] for e in llm["endpoints"]),
             **llm,
-            # Lifecycle/process facts, not inference facts — and cheap: the agent
-            # skips its subprocess entirely when nothing is listening. `/resources`
-            # is deliberately NOT here; it costs ~3.5s and has its own route.
-            "warden": {
-                "enabled": warden.enabled,
-                "url": settings.llm_warden_url,
-                "status": await warden.status(),
-            },
+            # Which models InferMux has loaded: cheap, it is llama-swap's own
+            # table. `/resources` is deliberately NOT here; it takes a fresh GPU
+            # measurement and has its own route.
+            "warden": await api_llm_backend(),
         },
         # `reason` is what lets the UI distinguish "you paused this" from "the
         # warden paused this because the GPU was busy".
@@ -720,17 +715,16 @@ async def api_llm_unload(force: bool = Query(False)):
     return {"unloaded_models": await gateway.unload_models()}
 
 
-# --- llama.cpp backend lifecycle (via the host control agent) ----------------------
+# --- InferMux's warden (0060) ---------------------------------------------------------
 #
-# Every route here is a thin pass-through to llama-warden's own service, except the
-# stop, which is composed from parts that already exist. All of them 503 rather
-# than 500 when the agent is absent: an optional component being absent is a
-# service state, not a server error.
+# Reads from InferMux, and one action composed from parts that already exist. All
+# of them 503 rather than 500 when the warden is absent: an optional component
+# being absent is a service state, not a server error.
 
 
 async def _agent_call(coro):
-    """Turn WardenError into a 503. One helper so every lifecycle route
-    reports an unreachable agent the same way."""
+    """Turn WardenError into a 503. One helper so every route reports an
+    unreachable warden the same way."""
     try:
         return await coro
     except WardenError as exc:
@@ -739,182 +733,61 @@ async def _agent_call(coro):
 
 @router.get("/llm/backend")
 async def api_llm_backend():
-    """Process-level view of the backend: which servers are listening, their PIDs
-    and uptime. Complements /api/status's endpoint probes, which answer the
-    different question of whether the HTTP API responds."""
+    """The models InferMux has loaded. Complements /api/status's endpoint
+    probes, which answer the different question of whether the HTTP API
+    responds."""
+    running = await warden.running()
     return {
         "enabled": warden.enabled,
         "url": settings.llm_warden_url,
-        "status": await warden.status(),
+        "ui_url": settings.llm_warden_ui_url,
+        # None when InferMux did not answer, [] when it has nothing loaded.
+        "running": None if running is None else running.get("running") or [],
     }
 
 
 @router.get("/llm/resources")
 async def api_llm_resources():
-    """GPU contention measurements from the host. Its own route because it costs
-    ~3.5s (the per-process GPU counter has an irreducible sampling floor), so it
-    must never sit on the critical path of a page load."""
+    """A fresh GPU measurement from the host. Its own route so it never sits on
+    the critical path of a page load."""
     resources = await warden.resources()
     if resources is None:
-        raise HTTPException(status_code=503, detail="llama-warden unavailable")
+        raise HTTPException(status_code=503, detail="InferMux's warden unavailable")
     return resources
 
 
-@router.get("/llm/logs")
-async def api_llm_logs(
-    which: str = Query("router"),
-    tail: int | None = Query(None),
-    since: int | None = Query(None, ge=0),
-):
-    """A snapshot. `since` (a previous `next_offset`) asks for only what was
-    written after it — the same delta the stream below is built on, for scripts
-    that would rather poll than hold a connection open."""
-    logs = await warden.logs(which, tail, since)
-    if logs is None:
-        raise HTTPException(status_code=503, detail="llama-warden unavailable")
-    return logs
-
-
-def _sse(event: str, payload: dict) -> str:
-    return f"event: {event}\ndata: {json.dumps(payload)}\n\n"
-
-
-@router.get("/llm/logs/stream")
-async def api_llm_logs_stream(
-    request: Request,
-    which: str = Query("router"),
-    since: int | None = Query(None, ge=0),
-):
-    """The log pane's transport: server-sent events carrying only the lines
-    written since the last offset.
-
-    It replaces a 3s htmx poll that re-fetched and re-swapped the entire 300-line
-    tail. Two things were wrong with that beyond the bytes: swapping the pane
-    destroyed any text selection the operator had made in it, and reset their
-    scrollback — precisely while they were reading the thing they came for.
-
-    **The browser is pushed to; only the container→host leg polls.** A `tail -f`
-    held open across the Docker boundary would put a long-lived connection on
-    the optional, restartable warden and give it a tailing loop in a
-    threadpool worker, to save a delta read that is a file seek. The offset
-    protocol makes that leg stateless and idempotent instead, and it is the same
-    one `GET /llm/logs?since=` exposes.
-
-    Pass `since` to continue an already-rendered tail without re-sending it: the
-    admin fragment renders a snapshot server-side and hands us its `next_offset`,
-    so the pane never flashes. Events:
-
-    * `reset` — replace the pane's contents (first payload, a restart-truncated
-      log, or a backlog past the window; `gap_bytes` says what was skipped)
-    * `lines` — append these
-    * `unavailable` — the agent is unreachable; the stream keeps trying, because
-      an agent restart is a normal thing to be watching the log for
-
-    Failure is an event rather than a closed connection for that last reason:
-    the stream must outlive the process it reports on. It is NOT named `error`,
-    which SSE dispatches onto the same handler as EventSource's own transport
-    error — one of which carries `data` and one of which does not.
-    """
-    if not warden.enabled:
-        raise HTTPException(status_code=503, detail="llama-warden unavailable")
-
-    interval = settings.llm_log_stream_interval_seconds
-
-    async def events():
-        offset = since
-        # First payload replaces whatever the pane holds unless the caller told
-        # us where its snapshot ended.
-        replace = since is None
-        silent = 0.0
-        while not await request.is_disconnected():
-            payload = await warden.logs(which, since=offset)
-            if payload is None:
-                yield _sse(
-                    "unavailable",
-                    {"detail": f"Control agent unreachable at {settings.llm_warden_url}"},
-                )
-                silent = 0.0
-            else:
-                offset = payload.get("next_offset", offset)
-                # No `next_offset` at all means an agent from before the offset
-                # protocol — it runs on the host and is deployed separately from
-                # this container, so that skew is a normal state. Every answer is
-                # then a full tail, and treating it as a replace degrades exactly
-                # to the poll this stream came from instead of appending the same
-                # 300 lines once a second.
-                reset = replace or payload.get("reset") or "next_offset" not in payload
-                if reset or payload.get("lines"):
-                    yield _sse(
-                        "reset" if reset else "lines",
-                        {
-                            "lines": payload.get("lines", []),
-                            "size_bytes": payload.get("size_bytes", 0),
-                            "gap_bytes": payload.get("gap_bytes", 0),
-                            "exists": payload.get("exists", False),
-                            "path": payload.get("path"),
-                        },
-                    )
-                    silent = 0.0
-                replace = False
-            # A quiet log is the normal state (llama-server logs on request), so
-            # the connection has to prove it is alive on its own.
-            silent += interval
-            if silent >= 15:
-                yield ": keep-alive\n\n"
-                silent = 0.0
-            await asyncio.sleep(interval)
-
-    return StreamingResponse(
-        events(),
-        media_type="text/event-stream",
-        # no-store because a cached event stream is a lie about liveness;
-        # X-Accel-Buffering for any reverse proxy that would otherwise buffer.
-        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
-    )
-
-
-@router.post("/llm/backend/start")
-async def api_llm_backend_start():
-    """Start llama.cpp. Idempotent at the agent — two rapid clicks cannot produce
-    two routers."""
-    return await _agent_call(warden.start())
-
-
-@router.post("/llm/backend/restart")
-async def api_llm_backend_restart():
-    return await _agent_call(warden.restart())
-
-
-@router.post("/llm/backend/stop")
-async def api_llm_backend_stop(force: bool = Query(False)):
-    """Stop llama.cpp **without losing work**.
+@router.post("/llm/backend/unload")
+async def api_llm_backend_unload(force: bool = Query(False)):
+    """Unload InferMux's models **without losing work**.
 
     Composed rather than new: pause the pipeline (the existing flag), wait for
     the worker to finish its current unit — one story/post/batch, which is what
-    makes a pause non-destructive in the first place — and only then ask the
-    agent to kill the processes.
+    makes a pause non-destructive in the first place — and only then ask
+    InferMux to unload, which would otherwise close the worker's batch session
+    mid-generation.
 
-    If the unit outlasts `llm_graceful_stop_seconds` this returns `stopped:
-    false` and leaves everything running, including the pause. Nothing is ever
-    killed mid-generation without `force=true`, which is a second deliberate act
-    by the caller. The pause is intentionally left set on the timeout path: the
+    If the unit outlasts `llm_graceful_stop_seconds` this returns `unloaded:
+    false` and leaves everything running, including the pause. Nothing is cut
+    off mid-generation without `force=true`, which is a second deliberate act by
+    the caller. The pause is intentionally left set on the timeout path: the
     worker is on its way to a boundary and re-clearing it would send it straight
-    back into main-model work.
+    back into main-model work, and reload the models.
 
-    **The pause is a side effect, so it is only taken once the stop can plausibly
-    happen and it is undone if it doesn't.** The agent is optional and often
-    absent; pausing first meant an unreachable agent 503'd *after* leaving the
-    pipeline paused as MANUAL — which the warden is forbidden to lift — with
-    nothing stopped and no llama.cpp problem to explain it. So: pre-flight the
-    agent before writing anything, and roll the flag back to exactly what it was
-    if the kill itself fails. Only the timeout path deliberately keeps it.
+    **The pause is a side effect, so it is only taken once the unload can
+    plausibly happen and it is undone if it doesn't.** Pausing first and then
+    finding InferMux unreachable would leave the pipeline paused as MANUAL —
+    which the warden is forbidden to lift — with nothing unloaded. So:
+    pre-flight the warden before writing anything, and roll the flag back to
+    exactly what it was if the unload itself fails (InferMux refuses while an
+    interactive request is in flight). Only the timeout path deliberately keeps
+    it.
     """
     from ..worker.control import pause_state, restore_pause, set_paused
 
     if not warden.enabled:
         raise HTTPException(status_code=503, detail="No warden configured")
-    if await warden.status() is None:
-        raise HTTPException(status_code=503, detail="llama-warden unavailable")
+    if await warden.running() is None:
+        raise HTTPException(status_code=503, detail="InferMux unavailable")
 
     async with SessionLocal() as session:
         before = await pause_state(session)
@@ -929,11 +802,11 @@ async def api_llm_backend_stop(force: bool = Query(False)):
     while not force and await _pipeline_job_running():
         if waited >= deadline:
             return {
-                "stopped": False,
+                "unloaded": False,
                 "paused": True,
                 "reason": (
                     f"pipeline still running after {waited:.0f}s; it will stop at the "
-                    "next unit boundary. Retry, or pass force=true to kill it now."
+                    "next unit boundary. Retry, or pass force=true to unload now."
                 ),
                 "waited_seconds": waited,
             }
@@ -941,11 +814,16 @@ async def api_llm_backend_stop(force: bool = Query(False)):
         waited += 2.0
 
     try:
-        result = await _agent_call(warden.stop())
+        result = await _agent_call(warden.unload())
     except HTTPException:
         await _rollback()
         raise
-    return {"stopped": True, "paused": True, "waited_seconds": waited, **result}
+    return {
+        "unloaded": True,
+        "paused": True,
+        "waited_seconds": waited,
+        "models": result.get("unloaded") or [],
+    }
 
 
 # --- Stories ----------------------------------------------------------------------

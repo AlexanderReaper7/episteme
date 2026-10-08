@@ -1,7 +1,7 @@
 # 0034. Logs stream as byte-offset deltas, and only the container-to-host leg polls
 
 - Date: 2026-08-03
-- Status: accepted
+- Status: the llama.cpp log pane it served was removed by [0060](0060-the-warden-client-reads-infermux.md), 2026-10-08; InferMux shows its logs in its own UI.
 - Rule: `since=<byte offset>` in, `next_offset` out. The browser is pushed to.
 
 ## Context

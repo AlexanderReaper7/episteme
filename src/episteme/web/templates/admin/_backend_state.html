@@ -1,54 +1,46 @@
-{# Live process state + the lifecycle buttons. Polled.
+{# InferMux's loaded models + the unload button. Polled.
 
    Split out of _backend.html so that the ACTION RESULT is not polled: a message
    like "waited 120s, the work unit is still running" is the answer to a button
-   press, not a fact about the backend, and a fragment that re-renders every few
+   press, not a fact about the models, and a fragment that re-renders every few
    seconds would wipe it while the operator was reading it. The message and the
-   force-stop offer it unlocks therefore live in the outer #backend, and only this
+   force offer it unlocks therefore live in the outer #backend, and only this
    inner block is on a clock. `offer_force` rides in the poll URL for the same
    reason `v` does: the fragment tells the server what it is currently showing.
 
-   `hx-target="this"`: .admin-main sets an inherited hx-target, see _backend_log.html.
+   `hx-target="this"`: .admin-main sets an inherited hx-target, see
+   _backend_resources.html.
 
-   5s, because llama-server's start is not instantaneous and its end is not
-   announced - the warden can be killed from the host, a driver reset can take the
-   router down, and until this polled the panel went on claiming "up since 09:12"
-   until somebody reloaded. Cheap: /status costs ~1ms and skips its PowerShell
-   subprocess entirely when nothing is listening, which is the case it is most
-   often asked about.
+   5s, because InferMux loads and unloads models on its own: on demand, on a
+   TTL, and when its warden yields the GPU. Cheap: /running is llama-swap's own
+   table.
 
-   hx-sync pairs with the `replace` on each button: while an action is in flight
-   the poll DROPS rather than queues, so a start that takes 40s cannot have its
-   own spinner swapped out from under it by the next tick. #}
+   hx-sync pairs with the `replace` on each button: while the unload is in
+   flight the poll DROPS rather than queues, so its spinner cannot be swapped out
+   from under it by the next tick. #}
 <div id="backend-state"
      hx-get="/admin/partials/backend?v={{ backend_hash }}{% if offer_force %}&amp;offer_force=true{% endif %}"
      hx-trigger="every 5s"
      hx-target="this" hx-swap="outerHTML"
      hx-sync="closest #backend:drop">
-  {# The warden is optional infrastructure: it being down must degrade this panel,
-     not the dashboard. Inference is unaffected either way - llama.cpp does not
-     need the warden to serve requests, only to be started and watched. #}
-  {% if not backend.status %}
-  <p class="muted">llama-warden unreachable at <code class="mono">{{ backend.url }}</code>.
-     Inference is unaffected; lifecycle and logs are unavailable until it answers.
-     InferMux does not serve this API, so with InferMux leave <code class="mono">LLM_WARDEN_URL</code> empty.</p>
+  {# The warden is optional infrastructure: it being down must degrade this
+     panel, not the dashboard. #}
+  {% if backend.running is none %}
+  <p class="muted">InferMux unreachable at <code class="mono">{{ backend.url }}</code>.</p>
   {% else %}
   <ul class="endpoint-list">
-    {% for name, srv in backend.status.servers.items() %}
+    {% for m in backend.running %}
     <li class="endpoint-row">
-      <span class="status-dot {{ 'up' if srv.listening else 'down' }}"
-            title="{{ 'listening' if srv.listening else 'down' }}"></span>
-      <code>{{ name }}:{{ srv.port }}</code>
-      {% if srv.listening %}
-      <span class="endpoint-roles">pid {{ srv.pid or '?' }}{% if srv.started_at %} · up since {{ srv.started_at | dt }}{% endif %}</span>
-      {% else %}
-      <span class="endpoint-roles bad">not running</span>
-      {% endif %}
+      <span class="status-dot {{ 'up' if m.state == 'ready' else 'down' }}" title="{{ m.state }}"></span>
+      <code>{{ m.model }}</code>
+      <span class="endpoint-roles">{{ m.state }}{% if m.ttl %} · unloads after {{ m.ttl }}s idle{% endif %}</span>
     </li>
+    {% else %}
+    <li class="endpoint-row muted">no model loaded</li>
     {% endfor %}
   </ul>
 
-  {# The stop button pauses the pipeline as a side effect, and the pause controls
+  {# The unload pauses the pipeline as a side effect, and the pause controls
      live on /admin/jobs - a different page. Without this line the operator gets
      no indication whatsoever, on the page they are standing on, that the
      pipeline is now held. Rendered from the same flag /admin/jobs reads, so the
@@ -56,45 +48,37 @@
   {% if pipeline and pipeline.paused %}
   <p class="muted" style="font-size: 0.82rem;">
     <span class="bad">pipeline paused</span>
-    {%- if pipeline.reason == 'resource' %} - GPU busy (llama-warden)
+    {%- if pipeline.reason == 'resource' %} - GPU busy (InferMux's warden)
     {%- else %} - manual{% endif %}
     {%- if pipeline.since %} · since {{ pipeline.since | dt }}{% endif %}
     · resume it on <a href="/admin/jobs">jobs</a>
   </p>
   {% endif %}
 
-  {# Every button here blocks on the host for as long as the host takes: the
-     warden holds /start until both ports answer, and /restart is a stop and a
-     start in sequence. So each carries a busy glyph that CSS swaps in while the
-     request is in flight (.backend-controls in style.css) - `hx-disabled-elt`
-     alone greys nothing, and a dead-looking button is indistinguishable from one
-     that did not fire. `hx-sync=replace` lets a click abort the status poll
-     rather than be dropped by it. #}
+  {# The unload blocks until InferMux has stopped every llama-server, so it
+     carries a busy glyph that CSS swaps in while the request is in flight
+     (.backend-controls in style.css) - `hx-disabled-elt` alone greys nothing,
+     and a dead-looking button is indistinguishable from one that did not fire.
+     `hx-sync=replace` lets a click abort the status poll rather than be dropped
+     by it. #}
+  {% if backend.running %}
   <p class="backend-controls">
-    {% if backend.status.servers.values() | selectattr('listening') | list | length < 2 %}
-    <button class="primary" hx-post="/admin/backend/start" hx-target="#backend" hx-swap="outerHTML"
-            hx-disabled-elt="this" hx-sync="closest #backend:replace"
-            >{{ ico.icon("power", "icon-idle") }}{{ ico.icon("running", "icon-busy icon-spin") }} start</button>
-    {% endif %}
-    <button hx-post="/admin/backend/restart" hx-target="#backend" hx-swap="outerHTML"
-            hx-disabled-elt="this" hx-sync="closest #backend:replace"
-            hx-confirm="Restart llama.cpp? Any generation in flight is lost."
-            >{{ ico.icon("restart", "icon-idle") }}{{ ico.icon("running", "icon-busy icon-spin") }} restart</button>
     {# Graceful: pauses the pipeline and waits for the current story to finish
-       before killing anything. It can come back saying it waited and gave up -
-       that is a success of the design, not a failure, and the force button only
-       appears once you have seen that answer. #}
-    <button class="danger" hx-post="/admin/backend/stop" hx-target="#backend" hx-swap="outerHTML"
+       before unloading. It can come back saying it waited and gave up - that is
+       a success of the design, not a failure, and the force button only appears
+       once you have seen that answer. #}
+    <button class="danger" hx-post="/admin/backend/unload" hx-target="#backend" hx-swap="outerHTML"
             hx-disabled-elt="this" hx-sync="closest #backend:replace"
-            hx-confirm="Pause the pipeline, wait for the current work unit to finish, then stop llama.cpp?"
-            >{{ ico.icon("stop", "icon-idle") }}{{ ico.icon("running", "icon-busy icon-spin") }} stop</button>
+            hx-confirm="Pause the pipeline, wait for the current work unit to finish, then unload every model?"
+            >{{ ico.icon("stop", "icon-idle") }}{{ ico.icon("running", "icon-busy icon-spin") }} unload</button>
     {% if offer_force %}
-    <button class="danger" hx-post="/admin/backend/stop?force=true" hx-target="#backend" hx-swap="outerHTML"
+    <button class="danger" hx-post="/admin/backend/unload?force=true" hx-target="#backend" hx-swap="outerHTML"
             hx-disabled-elt="this" hx-sync="closest #backend:replace"
-            hx-confirm="Kill llama.cpp NOW, discarding the generation in flight?"
-            >{{ ico.icon("power", "icon-idle") }}{{ ico.icon("running", "icon-busy icon-spin") }} force stop</button>
+            hx-confirm="Unload NOW, cutting off the generation in flight?"
+            >{{ ico.icon("power", "icon-idle") }}{{ ico.icon("running", "icon-busy icon-spin") }} force unload</button>
     {% endif %}
   </p>
+  {% endif %}
   {% endif %}
 </div>
 {# The endpoint card rides back on this poll rather than running a clock of its
@@ -102,7 +86,6 @@
    locates an out-of-band element among the fragment's own children, so nesting
    it inside #backend-state above would both hide it from the swap and leave a
    duplicate id in the page. `oob_llm` is set only by admin.backend_partial, so
-   the full-page render and the action responses are unaffected: after a start or
-   a restart llama-server needs seconds to answer anyway, and the next tick
-   reports what it settled on rather than what it looked like mid-load. #}
+   the full-page render and the action response are unaffected, and the next tick
+   reports what the unload settled on. #}
 {% if oob_llm %}{% include "admin/_llm_endpoints.html" %}{% endif %}

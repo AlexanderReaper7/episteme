@@ -55,25 +55,10 @@ def test_the_ladder_generates_almost_nothing():
     )
 
 
-def test_a_sweep_repeats_every_model_under_every_variant():
-    items = plan_items(
-        "sweep",
-        ["a", "b"],
-        {"reps": 1, "warmup": False, "variants": [{"label": "x"}, {"label": "y"}]},
-        _fixture(),
-    )
-    assert [(item.variant, item.model) for item in items] == [
-        ("x", "a"),
-        ("x", "b"),
-        ("y", "a"),
-        ("y", "b"),
-    ]
-
-
 def test_scenarios_that_predict_wall_time_require_a_real_fixture():
     """A synthetic 4k prompt reports 192.5 tok/s of prefill where a real 18.7k
     writer call gets 54.4. Only `quick` is allowed to be synthetic."""
-    for scenario in ("longctx", "ladder", "sweep"):
+    for scenario in ("longctx", "ladder"):
         with pytest.raises(ValueError, match="needs a fixture"):
             plan_items(scenario, ["m"], {}, None)
     assert plan_items("quick", ["m"], {}, None)
@@ -137,14 +122,3 @@ def test_an_unchecked_warmup_box_is_absent_not_false():
     presence. Reading it as a value would make the box impossible to clear."""
     assert build_params({"scenario": "quick"})["warmup"] is False
     assert build_params({"scenario": "quick", "warmup": "on"})["warmup"] is True
-
-
-def test_a_sweep_variant_is_validated_before_the_run_row_exists():
-    with pytest.raises(ValueError, match="not valid JSON"):
-        build_params({"scenario": "sweep", "variants": "{oops"})
-    with pytest.raises(ValueError, match="needs a label"):
-        build_params({"scenario": "sweep", "variants": '[{"sections": {}}]'})
-    with pytest.raises(ValueError, match="Unknown variant keys"):
-        build_params({"scenario": "sweep", "variants": '[{"label": "a", "secitons": {}}]'})
-    ok = build_params({"scenario": "sweep", "variants": '[{"label": "fit-on", "sections": {}}]'})
-    assert ok["variants"] == [{"label": "fit-on", "sections": {}}]

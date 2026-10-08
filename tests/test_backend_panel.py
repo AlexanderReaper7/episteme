@@ -1,13 +1,14 @@
-"""The llama.cpp panel on /admin (templates/admin/_backend*.html).
+"""The InferMux panel on /admin (templates/admin/_backend*.html).
 
 Both claims here are about a panel that told the operator nothing while doing
 something:
 
-- a lifecycle click can be unanswered for a minute (the agent holds /start until
-  both ports answer), and the button has to say so for that whole minute;
+- an unload can be unanswered for two minutes (it waits for the pipeline's
+  current unit), and the button has to say so for that whole time;
 - the panel used to be a snapshot taken at page load, so a backend that went down
   on its own - or came up from the host - left it asserting the opposite until
-  somebody pressed F5.
+  somebody pressed F5. InferMux loads and unloads models on its own, so this
+  matters more now, not less.
 
 The digest tests are the mechanical part: "polls" is worth nothing if the digest
 never moves, and worth negative if it moves on its own.
@@ -23,13 +24,9 @@ from episteme.web.templating import templates
 
 UP = {
     "enabled": True,
-    "url": "http://host.docker.internal:5003",
-    "status": {
-        "servers": {
-            "router": {"port": 5001, "listening": True, "pid": 4242, "started_at": None},
-            "embed": {"port": 5002, "listening": True, "pid": 4243, "started_at": None},
-        }
-    },
+    "url": "http://host.docker.internal:5001",
+    "ui_url": "",
+    "running": [{"model": "Qwopus-35B", "state": "ready", "ttl": 1800}],
 }
 RUNNING = {"paused": False, "reason": None, "since": None, "contended_at": None}
 LLM = {
@@ -59,21 +56,16 @@ LLM = {
 }
 
 
-def _down(**servers):
-    """UP with some servers knocked over. `_down(router=False)` is the state the
-    panel could not previously reach without a reload."""
-    status = {
-        "servers": {
-            name: {**row, "listening": servers.get(name, row["listening"])}
-            for name, row in UP["status"]["servers"].items()
-        }
-    }
-    return {**UP, "status": status}
+def _running(*models):
+    """UP with these models loaded, each one ready. `_running()` is InferMux
+    with nothing loaded, the state the panel could not previously reach without
+    a reload."""
+    return {**UP, "running": [{"model": m, "state": "ready", "ttl": 1800} for m in models]}
 
 
 def _context(backend=None, pipeline=None, llm=None, **kwargs):
-    """backend_context with every read pre-supplied, so nothing touches the host
-    agent, the endpoints or the database - the same path the dashboard render
+    """backend_context with every read pre-supplied, so nothing touches InferMux,
+    the endpoints or the database - the same path the dashboard render
     takes."""
     return asyncio.run(backend_context(backend or UP, pipeline or RUNNING, llm or LLM, **kwargs))
 
@@ -89,7 +81,7 @@ def _buttons(html):
     return re.findall(r"<button[^>]*>.*?</button>", html, re.S)
 
 
-def test_every_lifecycle_button_carries_a_busy_glyph():
+def test_every_unload_button_carries_a_busy_glyph():
     """`hx-disabled-elt` greys nothing on its own - there is no global :disabled
     rule - so without the swapped glyph a pressed button is indistinguishable
     from one whose request never fired. The pair must both be present: CSS shows
@@ -102,7 +94,7 @@ def test_every_lifecycle_button_carries_a_busy_glyph():
 def test_a_click_outranks_the_poll_and_the_poll_never_interrupts_a_click():
     """One sync group over #backend. Without it the 5s tick would swap the very
     button whose request is in flight, taking its spinner with it; and two
-    lifecycle actions could race on one pair of processes."""
+    unloads could race on one set of models."""
     panel = _panel(offer_force=True)
     for button in _buttons(panel):
         assert 'hx-sync="closest #backend:replace"' in button, button
@@ -117,7 +109,7 @@ def test_the_polled_block_names_its_own_target():
     """.admin-main sets hx-target="#admin-main" and htmx INHERITS hx-target, so a
     self-replacing fragment that relies on the default swallows the whole
     dashboard and then polls against an element it just deleted. This bit the
-    backend log pane once already."""
+    old llama.cpp log pane once already."""
     root = re.search(r'<div id="backend-state"[^>]*>', _panel()).group(0)
     assert 'hx-target="this"' in root
     assert 'hx-swap="outerHTML"' in root
@@ -131,13 +123,13 @@ def test_the_poll_url_carries_the_digest_of_what_is_on_screen():
 
 
 def test_the_force_offer_rides_in_the_poll_url():
-    """It means "a graceful stop was already tried and timed out" - a fact about
-    the last action, not about the processes, so the server cannot re-derive it.
+    """It means "a graceful unload was already tried and timed out" - a fact
+    about the last action, not about the models, so the server cannot re-derive it.
     Carried by the fragment, like `v`, or the next tick would delete the button
     the operator was reaching for."""
     root = re.search(r'<div id="backend-state"[^>]*>', _panel(offer_force=True)).group(0)
     assert "offer_force=true" in root
-    assert "force stop" in _panel(offer_force=True)
+    assert "force unload" in _panel(offer_force=True)
     assert "offer_force" not in re.search(r'<div id="backend-state"[^>]*>', _panel()).group(0)
 
 
@@ -164,8 +156,8 @@ def _polled(**kwargs):
 
 def test_the_endpoint_card_rides_back_on_the_poll():
     """It has no clock of its own: separately timed, the endpoint card and the
-    process card would show "router:5001 listening" beside "endpoint down" for
-    seconds at a stretch."""
+    InferMux card would show a model "ready" beside "endpoint down" for seconds
+    at a stretch."""
     polled = _polled()
     assert 'id="llm-endpoints"' in polled
     assert 'hx-swap-oob="true"' in polled
@@ -194,12 +186,21 @@ def test_a_full_page_render_gets_a_plain_section():
 # --- the digest: it has to move on state, and only on state -----------------
 
 
-def test_the_digest_moves_when_a_server_goes_down():
-    assert _context()["backend_hash"] != _context(_down(router=False))["backend_hash"]
+def test_the_digest_moves_when_a_model_unloads():
+    assert _context()["backend_hash"] != _context(_running())["backend_hash"]
 
 
-def test_the_digest_moves_when_the_agent_becomes_unreachable():
-    unreachable = {**UP, "status": None}
+def test_the_digest_moves_when_infermux_swaps_models():
+    assert _context()["backend_hash"] != _context(_running("Qwopus-Fast"))["backend_hash"]
+
+
+def test_the_digest_moves_when_a_model_finishes_loading():
+    loading = {**UP, "running": [{**UP["running"][0], "state": "starting"}]}
+    assert _context()["backend_hash"] != _context(loading)["backend_hash"]
+
+
+def test_the_digest_moves_when_the_warden_becomes_unreachable():
+    unreachable = {**UP, "running": None}
     assert _context()["backend_hash"] != _context(unreachable)["backend_hash"]
 
 
@@ -222,9 +223,9 @@ def test_the_digest_moves_when_an_endpoint_stops_answering():
     assert _context()["backend_hash"] != _context(UP, RUNNING, down)["backend_hash"]
 
 
-def test_the_digest_moves_when_the_router_swaps_which_model_is_loaded():
-    """main↔fast is the state change with no process-level trace at all: same
-    PIDs, same ports, same uptime. Only the endpoint inventory says it happened."""
+def test_the_digest_moves_when_the_endpoint_inventory_changes():
+    """The endpoint card shows the inventory /v1/models reports, which can move
+    without /running moving (a model added to InferMux's configuration)."""
     swapped = {
         **LLM,
         "endpoints": [
@@ -235,7 +236,7 @@ def test_the_digest_moves_when_the_router_swaps_which_model_is_loaded():
     assert _context()["backend_hash"] != _context(UP, RUNNING, swapped)["backend_hash"]
 
 
-def _resources_card(busy_percent):
+def _resources_card(busy_percent, culprits=()):
     return templates.env.get_template("admin/_backend_resources.html").render(
         resources={
             "foreign_gpu_percent": 40.0,
@@ -243,7 +244,8 @@ def _resources_card(busy_percent):
             "vram_used_mb": 900,
             "vram_total_mb": 10240,
             "vram_free_mb": 9340,
-            "games_running": [],
+            "culprits": culprits,
+            "processes": [],
         },
         busy_percent=busy_percent,
     )
@@ -269,8 +271,35 @@ def test_a_warden_that_did_not_say_where_the_line_is_gets_no_line_drawn():
     assert "bad" not in card
 
 
+def test_a_reading_infermux_could_not_take_is_not_contention():
+    """InferMux sends null for a measurement it did not get. `None >= 25` is a
+    TypeError, a 500 on the panel that exists to show the GPU is fine."""
+    card = templates.env.get_template("admin/_backend_resources.html").render(
+        resources={
+            "foreign_gpu_percent": None,
+            "our_gpu_percent": 0.0,
+            "vram_used_mb": 900,
+            "vram_total_mb": 10240,
+            "vram_free_mb": None,
+            "culprits": [],
+            "processes": [],
+        },
+        busy_percent=25,
+    )
+    assert "?%" in card
+    assert "bad" not in card
+    assert "MB free" not in card
+
+
+def test_the_card_names_what_the_warden_is_yielding_to():
+    card = _resources_card(25.0, ["Warframe.x64.exe"])
+    assert "yielding to" in card
+    assert "Warframe.x64.exe" in card
+    assert "yielding to" not in _resources_card(25.0)
+
+
 def test_the_digest_ignores_pause_fields_the_panel_does_not_render():
-    """`contended_at` is re-stamped by every one of llama-warden's repeat
+    """`contended_at` is re-stamped by every one of the warden's repeat
     announcements and appears nowhere in this panel. Hashing `pipeline` whole
     would re-render the block, and destroy a text selection in it, on the
     warden's clock rather than on a change anybody can see."""
@@ -313,12 +342,22 @@ def test_an_unchanged_panel_answers_204(monkeypatch):
 
 
 def test_a_moved_panel_answers_the_new_block(monkeypatch):
-    _stub_context(monkeypatch, backend=_down(router=False))
+    _stub_context(monkeypatch, backend=_running())
     response = asyncio.run(backend_partial(_request(), v="a-stale-digest"))
     assert response.status_code == 200
     body = response.body.decode()
     assert 'id="backend-state"' in body
-    assert "not running" in body
+    assert "no model loaded" in body
+
+
+def test_nothing_loaded_offers_nothing_to_unload():
+    assert "unload" not in "".join(_buttons(_panel(backend=_running())))
+
+
+def test_an_unreachable_warden_degrades_the_panel_not_the_page():
+    panel = _panel(backend={**UP, "running": None})
+    assert "InferMux unreachable" in panel
+    assert not _buttons(panel)
 
 
 def test_a_first_poll_with_no_digest_gets_content(monkeypatch):

@@ -8,7 +8,6 @@ allowed to take away, and the idempotency the warden's repeat-until-it-lands
 delivery depends on.
 """
 
-import json
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -464,7 +463,7 @@ async def test_marking_contention_does_not_move_the_pause_start():
     assert unpaused.row.value == {"paused": False}
 
 
-# --- llama-warden client -----------------------------------------------------
+# --- InferMux's warden client (llm/warden.py) ---------------------------------
 
 
 @pytest.fixture
@@ -473,85 +472,113 @@ def agent_url(monkeypatch):
     return settings.llm_warden_url
 
 
-def _agent(handler) -> Warden:
+def _agent(handler, headers=None) -> Warden:
     agent = Warden()
     agent._client = httpx.AsyncClient(
         base_url=settings.llm_warden_url.rstrip("/"),
+        headers=headers or {},
         transport=httpx.MockTransport(handler),
     )
     agent._client_url = settings.llm_warden_url.rstrip("/")
     return agent
 
 
-async def test_reads_degrade_to_none_when_the_agent_is_down(agent_url):
-    """The panel must render a dead agent, not raise. Episteme is designed to run
-    without one at all."""
+async def test_reads_degrade_to_none_when_the_warden_is_down(agent_url):
+    """The panel must render a dead warden, not raise. Episteme is designed to
+    run without one at all."""
 
     def boom(request):
         raise httpx.ConnectError("refused")
 
     agent = _agent(boom)
-    assert await agent.status() is None
+    assert await agent.verdict() is None
     assert await agent.resources() is None
-    assert await agent.logs() is None
+    assert await agent.running() is None
 
 
-async def test_actions_raise_when_the_agent_is_down(agent_url):
-    """Opposite convention from reads, deliberately: a start button that silently
-    does nothing is worse than one that says why it failed."""
+async def test_the_unload_raises_when_the_warden_is_down(agent_url):
+    """Opposite convention from reads, deliberately: an unload button that
+    silently does nothing is worse than one that says why it failed."""
 
     def boom(request):
         raise httpx.ConnectError("refused")
 
     with pytest.raises(WardenError):
-        await _agent(boom).start()
+        await _agent(boom).unload()
 
 
-async def test_disabled_agent_is_inert(monkeypatch):
+async def test_a_refusal_says_what_infermux_said(agent_url):
+    """InferMux puts the reason in `detail`. "409 Conflict" alone would send the
+    operator to InferMux's logs for a sentence it already sent us."""
+
+    def refuse(request):
+        return httpx.Response(409, json={"detail": "1 interactive request(s) in flight"})
+
+    with pytest.raises(WardenError, match="1 interactive request"):
+        await _agent(refuse).unload()
+
+
+async def test_disabled_warden_is_inert(monkeypatch):
     """The empty URL is the off switch for the entire feature."""
     monkeypatch.setattr(settings, "llm_warden_url", "")
     agent = Warden()
     assert not agent.enabled
-    assert await agent.status() is None
+    assert await agent.running() is None
     with pytest.raises(WardenError, match="No warden configured"):
-        await agent.start()
+        await agent.unload()
 
 
-async def test_log_tail_defaults_to_the_configured_size(agent_url, monkeypatch):
-    monkeypatch.setattr(settings, "llm_log_tail_lines", 42)
+async def test_every_request_goes_to_infermux_s_own_paths(agent_url):
+    seen = []
+
+    def handler(request):
+        seen.append((request.method, request.url.path))
+        return httpx.Response(200, json={})
+
+    agent = _agent(handler)
+    await agent.verdict()
+    await agent.resources()
+    await agent.running()
+    await agent.unload()
+    assert seen == [
+        ("GET", "/warden/verdict"),
+        ("GET", "/warden/resources"),
+        ("GET", "/running"),
+        ("POST", "/warden/unload"),
+    ]
+
+
+async def test_the_unload_carries_the_header_infermux_requires(agent_url):
+    """InferMux refuses a write under /warden/ without X-InferMux, its guard
+    against a browser being steered into one (InferMux 0005)."""
     seen = {}
 
     def handler(request):
-        seen.update(dict(request.url.params))
-        return httpx.Response(200, json={"lines": []})
+        seen.update(request.headers)
+        return httpx.Response(200, json={"unloaded": []})
 
-    await _agent(handler).logs("embed")
-    # No `since` on a tail read: the parameter is what distinguishes "give me the
-    # last N lines" from "give me what came after byte N", so it must be absent
-    # rather than sent as some sentinel the agent has to interpret.
-    assert seen == {"which": "embed", "tail": "42"}
+    await _agent(handler).unload()
+    assert seen.get("x-infermux")
 
 
-async def test_a_delta_read_forwards_the_offset(agent_url):
-    seen = {}
+def test_the_client_sends_this_process_s_key(agent_url, monkeypatch, tmp_path):
+    """InferMux answers nothing without a key from keys.yaml. The warden client
+    sends the same one the gateway does, so the web asks as `episteme` and the
+    worker as `episteme-batch` (0058)."""
+    key = tmp_path / "key"
+    key.write_text("sk-test\n")
+    monkeypatch.setattr(settings, "llm_api_key_file", str(key))
+    assert Warden()._http().headers["authorization"] == "Bearer sk-test"
 
-    def handler(request):
-        seen.update(dict(request.url.params))
-        return httpx.Response(200, json={"lines": [], "next_offset": 900})
 
-    await _agent(handler).logs("router", since=900)
-    assert seen["since"] == "900"
-
-
-async def test_reads_and_actions_get_timeouts_sized_for_what_they_wait_on(agent_url, monkeypatch):
-    """One timeout for everything was wrong in both directions. Sized for /start
-    it made a hung agent block the dashboard — /status rides the page load and
-    /logs polls every 3s — for two minutes; sized for a read it would abandon a
-    restart that was still legitimately working and report a success as a
-    failure, with the processes running."""
+async def test_reads_and_the_unload_get_timeouts_sized_for_what_they_wait_on(
+    agent_url, monkeypatch
+):
+    """Reads are on the dashboard's critical path and must give up in seconds.
+    The unload stops every llama-server before it answers, and a ceiling sized
+    for a read would report a finished unload as a failure."""
     monkeypatch.setattr(settings, "llm_warden_read_timeout_seconds", 15.0)
-    monkeypatch.setattr(settings, "llm_warden_timeout_seconds", 240.0)
-    monkeypatch.setattr(settings, "llm_warden_restart_timeout_seconds", 360.0)
+    monkeypatch.setattr(settings, "llm_warden_timeout_seconds", 60.0)
     seen = {}
 
     def handler(request):
@@ -559,21 +586,15 @@ async def test_reads_and_actions_get_timeouts_sized_for_what_they_wait_on(agent_
         return httpx.Response(200, json={})
 
     agent = _agent(handler)
-    await agent.status()
+    await agent.running()
     await agent.resources()
-    await agent.start()
-    await agent.stop()
-    await agent.restart()
+    await agent.unload()
 
-    assert seen["/status"] == seen["/resources"] == 15.0
-    assert seen["/start"] == seen["/stop"] == 240.0
-    # A restart is a stop and a start inside one request, so it cannot inherit a
-    # ceiling sized for one leg.
-    assert seen["/restart"] == 360.0
-    assert settings.llm_warden_restart_timeout_seconds > (settings.llm_warden_timeout_seconds)
+    assert seen["/running"] == seen["/warden/resources"] == 15.0
+    assert seen["/warden/unload"] == 60.0
 
 
-# --- the graceful stop (web/api.py) -------------------------------------------
+# --- the graceful unload (web/api.py) -----------------------------------------
 
 
 def _record(entries, name):
@@ -583,11 +604,12 @@ def _record(entries, name):
     return _call
 
 
-async def test_graceful_stop_does_not_pause_when_it_cannot_stop_anything(monkeypatch):
+async def test_graceful_unload_does_not_pause_when_it_cannot_unload_anything(monkeypatch):
     """Regression: the pause was written first, so an absent or unreachable
     warden 503'd *after* leaving the pipeline paused, as MANUAL, which the warden
     is forbidden to lift, with nothing stopped and no llama.cpp problem left to
-    explain it. A side effect must not outlive the action it was taken for."""
+    explain it. The rule carried over from llama-warden's stop to InferMux's
+    unload. A side effect must not outlive the action it was taken for."""
     from episteme.web import api
     from episteme.worker import control
 
@@ -599,28 +621,28 @@ async def test_graceful_stop_does_not_pause_when_it_cannot_stop_anything(monkeyp
     monkeypatch.setattr(control, "set_paused", _record(entries, "set_paused"))
     monkeypatch.setattr(control, "restore_pause", _record(entries, "restore_pause"))
 
-    # 1. The agent never answers: nothing is written at all.
-    monkeypatch.setattr(api.warden, "status", _async(None))
+    # 1. InferMux never answers: nothing is written at all.
+    monkeypatch.setattr(api.warden, "running", _async(None))
     with pytest.raises(HTTPException) as exc:
-        await api.api_llm_backend_stop(force=False)
+        await api.api_llm_backend_unload(force=False)
     assert exc.value.status_code == 503
     assert entries == []
 
-    # 2. It answers /status and then refuses the kill: the flag goes back to the
-    #    snapshot taken before, not to a fresh pause nobody asked for.
+    # 2. It answers /running and then refuses the unload: the flag goes back to
+    #    the snapshot taken before, not to a fresh pause nobody asked for.
     async def refuse():
-        raise WardenError("ConnectError: refused")
+        raise WardenError("1 interactive request(s) in flight")
 
-    monkeypatch.setattr(api.warden, "status", _async({"servers": {}}))
-    monkeypatch.setattr(api.warden, "stop", refuse)
+    monkeypatch.setattr(api.warden, "running", _async({"running": []}))
+    monkeypatch.setattr(api.warden, "unload", refuse)
     with pytest.raises(HTTPException) as exc:
-        await api.api_llm_backend_stop(force=False)
+        await api.api_llm_backend_unload(force=False)
     assert exc.value.status_code == 503
     assert [name for name, _ in entries] == ["set_paused", "restore_pause"]
     assert entries[-1][1]["paused"] is False
 
 
-async def test_graceful_stop_restores_a_pause_it_found_rather_than_clearing_it(monkeypatch):
+async def test_graceful_unload_restores_a_pause_it_found_rather_than_clearing_it(monkeypatch):
     """Rolling back means *back*, including whose pause it was and when it
     started. Re-deriving it with set_paused would reset `since` and re-author a
     RESOURCE pause as a manual one, which is the one thing that stops the warden
@@ -636,195 +658,13 @@ async def test_graceful_stop_restores_a_pause_it_found_rather_than_clearing_it(m
     monkeypatch.setattr(control, "pause_state", _async(before))
     monkeypatch.setattr(control, "set_paused", _record(entries, "set_paused"))
     monkeypatch.setattr(control, "restore_pause", _record(entries, "restore_pause"))
-    monkeypatch.setattr(api.warden, "status", _async({"servers": {}}))
+    monkeypatch.setattr(api.warden, "running", _async({"running": []}))
 
     async def refuse():
-        raise WardenError("ConnectError: refused")
+        raise WardenError("1 interactive request(s) in flight")
 
-    monkeypatch.setattr(api.warden, "stop", refuse)
+    monkeypatch.setattr(api.warden, "unload", refuse)
     with pytest.raises(HTTPException):
-        await api.api_llm_backend_stop(force=False)
+        await api.api_llm_backend_unload(force=False)
 
     assert entries[-1] == ("restore_pause", before)
-
-
-# --- the log stream (web/api.py) ----------------------------------------------
-#
-# The pane used to re-fetch its entire 300-line tail every 3s over htmx and swap
-# it in. These cover what replaced it: a byte offset carried across calls, so the
-# browser is sent only what was appended.
-
-
-class _FakeStreamRequest:
-    """Only `is_disconnected` is touched by the handler. Disconnects after N
-    polls, which is how these tests terminate an otherwise endless generator."""
-
-    def __init__(self, polls):
-        self.polls = polls
-
-    async def is_disconnected(self):
-        self.polls -= 1
-        return self.polls < 0
-
-
-async def _drive(monkeypatch, payloads, since=None):
-    """Run the stream against a scripted agent and return (events, offsets asked
-    for)."""
-    from episteme.web import api
-
-    monkeypatch.setattr(settings, "llm_warden_url", "http://agent.test")
-    monkeypatch.setattr(settings, "llm_log_stream_interval_seconds", 0)
-    asked = []
-
-    async def fake_logs(which, since=None):
-        asked.append(since)
-        return payloads[min(len(asked) - 1, len(payloads) - 1)]
-
-    monkeypatch.setattr(api.warden, "logs", fake_logs)
-    response = await api.api_llm_logs_stream(
-        request=_FakeStreamRequest(len(payloads)), which="router", since=since
-    )
-    chunks = [chunk async for chunk in response.body_iterator]
-    events = []
-    for chunk in chunks:
-        if chunk.startswith(":"):
-            continue
-        name = chunk.split("\n", 1)[0].removeprefix("event: ")
-        events.append((name, json.loads(chunk.split("data: ", 1)[1])))
-    return events, asked
-
-
-async def test_the_stream_sends_a_tail_once_and_then_only_what_was_appended(monkeypatch):
-    """The bytes are the small part of it: re-swapping the whole pane also threw
-    away the operator's text selection and scrollback, every 3 seconds, while
-    they were reading it."""
-    events, asked = await _drive(
-        monkeypatch,
-        [
-            {"lines": ["a", "b"], "next_offset": 10, "exists": True, "size_bytes": 10},
-            {"lines": ["c"], "next_offset": 12, "exists": True, "size_bytes": 12},
-            {"lines": [], "next_offset": 12, "exists": True, "size_bytes": 12},
-        ],
-    )
-
-    assert [name for name, _ in events] == ["reset", "lines"]
-    assert events[0][1]["lines"] == ["a", "b"]
-    assert events[1][1]["lines"] == ["c"]
-    # Each poll resumes where the last one ended; a quiet log emits nothing at all.
-    assert asked == [None, 10, 12]
-
-
-async def test_the_stream_resumes_a_server_rendered_snapshot_without_resending_it(monkeypatch):
-    """The admin fragment renders a tail and hands over its `next_offset`, so the
-    handover neither re-sends those lines nor blanks the pane to redraw them."""
-    events, asked = await _drive(
-        monkeypatch,
-        [{"lines": ["new"], "next_offset": 90, "exists": True, "size_bytes": 90}],
-        since=42,
-    )
-    assert asked == [42]
-    assert [name for name, _ in events] == ["lines"]  # append, not replace
-
-
-async def test_a_truncated_log_reaches_the_browser_as_a_replace(monkeypatch):
-    """The launcher truncates the log on every start. Appending the new run onto
-    the old one is exactly the splice the reset flag exists to prevent."""
-    events, _ = await _drive(
-        monkeypatch,
-        [{"lines": ["fresh"], "next_offset": 6, "reset": True, "gap_bytes": 0, "exists": True}],
-        since=5000,
-    )
-    assert events[0][0] == "reset"
-
-
-async def test_an_unreachable_agent_does_not_close_the_stream(monkeypatch):
-    """Watching llama.cpp restart is a reason to have this pane open, so the
-    agent going away has to be an event, not the end of the connection — the
-    stream must outlive the process it reports on."""
-    events, _ = await _drive(
-        monkeypatch,
-        [
-            None,
-            {"lines": ["back"], "next_offset": 5, "exists": True, "size_bytes": 5},
-        ],
-    )
-    assert [name for name, _ in events] == ["unavailable", "reset"]
-    assert "unreachable" in events[0][1]["detail"]
-
-
-async def test_the_stream_is_refused_outright_when_no_agent_is_configured(monkeypatch):
-    """An EventSource retries forever. Against a feature that is switched off,
-    that is a reconnect loop with nothing to reconnect to — so the fragment does
-    not offer the stream, and the route says so if something asks anyway."""
-    from episteme.web import api
-
-    monkeypatch.setattr(settings, "llm_warden_url", "")
-    with pytest.raises(HTTPException) as exc:
-        await api.api_llm_logs_stream(request=_FakeStreamRequest(1), which="router", since=None)
-    assert exc.value.status_code == 503
-
-
-# --- the log fragment (admin/_backend_log.html) -------------------------------
-
-
-def _render_log(**ctx):
-    from episteme.web.templating import templates
-
-    base = dict(which="router", logs_available=["router", "embed"], agent_enabled=True, since=None)
-    return templates.env.get_template("admin/_backend_log.html").render(**{**base, **ctx})
-
-
-def test_the_log_fragment_does_not_poll():
-    """Regression: this fragment used to re-fetch and re-swap its entire tail
-    every 3s, which discarded the reader's selection and scrollback each tick.
-    The stream replaced the poll — it did not join it."""
-    html = _render_log(log={"exists": True, "size_bytes": 1024, "lines": ["x"]}, since=40)
-    assert "hx-trigger" not in html
-    assert "data-log-stream" in html
-
-
-def test_the_stream_url_resumes_where_the_rendered_snapshot_ended():
-    """The handover: without the offset the stream would re-send the lines that
-    are already on the page, and the pane would blink on every load."""
-    html = _render_log(log={"exists": True, "size_bytes": 1024, "lines": ["x"]}, since=40)
-    assert "since=40" in html
-
-
-def test_an_unreachable_agent_still_gets_a_pane_to_fill():
-    """The old poll recovered on its own when the agent came back. A fragment
-    that rendered only an error message would need a manual reload to ever show
-    anything — worse than what it replaced."""
-    html = _render_log(log=None)
-    assert "data-log-stream" in html and "since=" not in html
-
-
-def test_no_stream_is_offered_when_the_agent_is_switched_off():
-    """An EventSource retries forever, and `llm_warden_url` empty is the off
-    switch for the whole feature — there is nothing to reconnect to."""
-    assert "data-log-stream" not in _render_log(agent_enabled=False, log=None)
-
-
-async def test_an_agent_predating_the_offset_protocol_degrades_to_replacing(monkeypatch):
-    """The agent runs on the host and this runs in a container: they are deployed
-    separately, so an agent that answers without `next_offset` is a normal state,
-    not a bug. Appending its answers would re-append the whole tail every second;
-    treating them as replaces is exactly the poll this stream came from."""
-    events, asked = await _drive(
-        monkeypatch,
-        [
-            {"lines": ["a", "b"], "exists": True, "size_bytes": 10},
-            {"lines": ["a", "b"], "exists": True, "size_bytes": 10},
-        ],
-        since=None,
-    )
-
-    assert [name for name, _ in events] == ["reset", "reset"]
-    assert asked == [None, None]  # no offset to advance to, so none is claimed
-
-
-def test_a_snapshot_without_an_offset_omits_the_parameter_entirely():
-    """Regression, observed live as a 422 the browser then retried forever: an
-    empty `?since=` is not the same as no `since`, and FastAPI rejects it. The
-    old-agent case is exactly where the value goes missing."""
-    html = _render_log(log={"exists": True, "size_bytes": 8, "lines": ["x"]}, since=None)
-    assert "since" not in html

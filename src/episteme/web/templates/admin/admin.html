@@ -16,27 +16,29 @@
 
     {# Only rendered when a warden is configured. With LLM_WARDEN_URL
        empty the dashboard is exactly what it was before this feature existed -
-       the agent is optional infrastructure, not a dependency. #}
+       the warden is optional infrastructure, not a dependency. #}
     {% if status.llm.warden.enabled %}
     <section class="admin-card admin-card-wide">
       <div class="admin-card-head">
-        <h2>llama.cpp backend</h2>
+        <h2>InferMux</h2>
+        {# Logs, model configuration and the warden's own controls are InferMux's
+           UI's, so the panel links there rather than copying them (0060). #}
+        {% if status.llm.warden.ui_url %}
+        <a class="muted mono" href="{{ status.llm.warden.ui_url }}" target="_blank" rel="noopener">{{ status.llm.warden.ui_url }}</a>
+        {% else %}
         <span class="muted mono">{{ status.llm.warden.url }}</span>
+        {% endif %}
       </div>
       {# `backend`, `pipeline` and `backend_hash` come from admin.backend_context,
-         the same builder the action handlers and the status poll use - so the
+         the same builder the action handler and the status poll use - so the
          first paint carries a digest the poll can compare against. #}
       {% include "admin/_backend.html" with context %}
       {# hx-target="this" is load-bearing: .admin-main sets hx-target="#admin-main"
-         and htmx inherits it, so without this each placeholder replaces the whole
+         and htmx inherits it, so without this the placeholder replaces the whole
          page with its own fragment. #}
       <div hx-get="/admin/partials/backend-resources" hx-trigger="load"
            hx-target="this" hx-swap="outerHTML">
         <p class="muted" style="font-size: 0.82rem;">measuring GPU…</p>
-      </div>
-      <div hx-get="/admin/partials/backend-log" hx-trigger="load"
-           hx-target="this" hx-swap="outerHTML">
-        <p class="muted" style="font-size: 0.82rem;">loading log…</p>
       </div>
     </section>
     {% endif %}

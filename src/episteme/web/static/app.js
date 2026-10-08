@@ -672,106 +672,14 @@
   // touches only text nodes, so it neither reflows the table nor scrolls it.
   setInterval(function () { retimeAgo(document); }, 30000);
 
-  /* ==================== llama.cpp log stream (admin) ===================== */
-
-  // The pane is APPEND-ONLY. It used to re-fetch its whole 300-line tail every
-  // 3s and swap it in, which discarded the operator's text selection and reset
-  // their scrollback on every tick - while they were reading it. The server now
-  // pushes only the lines written since the last byte offset (see
-  // api.api_llm_logs_stream) and we append them as their own text node; existing
-  // nodes are never rewritten, so a selection spanning them survives.
-  //
-  // Exactly one stream can be open, because there is exactly one pane. Tracking
-  // the ELEMENT rather than a boolean is what makes this idempotent under
-  // htmx:load, which fires for every swap anywhere on the page: same element,
-  // nothing to do; different or gone, close the old one first - an htmx swap
-  // discards the node without telling us, and an orphaned EventSource would go
-  // on polling llama-warden for a pane nobody can see.
-  var LOG_MAX_LINES = 5000;
-  var logStream = null;
-  var logPane = null;
-
-  function logPart(pane, sel) {
-    var box = pane.closest("#backend-log");
-    return box ? box.querySelector(sel) : null;
-  }
-
-  function appendLog(pane, lines) {
-    if (!lines.length) return;
-    var node = document.createTextNode(lines.join("\n") + "\n");
-    node.lineCount = lines.length;
-    pane.appendChild(node);
-    var total = Number(pane.dataset.logLines || 0) + lines.length;
-    // Drop whole leading nodes rather than re-slicing text: not touching what is
-    // already rendered is the entire point of this pane.
-    while (total > LOG_MAX_LINES && pane.firstChild && pane.firstChild !== node) {
-      total -= pane.firstChild.lineCount || 0;
-      pane.removeChild(pane.firstChild);
-    }
-    pane.dataset.logLines = total;
-  }
-
-  function syncLogStream() {
-    var pane = document.querySelector("[data-log-stream]");
-    if (pane === logPane) return;
-    if (logStream) { logStream.close(); logStream = null; }
-    logPane = pane;
-    if (!pane) return;
-
-    // The server-rendered snapshot is one untracked node: give it its line count
-    // and a trailing newline so every later append is uniform.
-    if (pane.firstChild) {
-      pane.firstChild.lineCount = Number(pane.dataset.logLines || 0);
-      if (pane.textContent.slice(-1) !== "\n") pane.appendChild(document.createTextNode("\n"));
-    }
-
-    var stream = new EventSource(pane.dataset.logStream);
-    logStream = stream;
-
-    function paint(e, replace) {
-      if (stream !== logStream) return;  // a swap raced us; this stream is stale
-      var data = JSON.parse(e.data);
-      if (replace) {
-        pane.textContent = "";
-        pane.dataset.logLines = 0;
-        // A reset after a backlog overrun skipped bytes. Say so, rather than
-        // splicing two distant parts of the log into one continuous-looking pane.
-        if (data.gap_bytes) {
-          appendLog(pane, ["… " + Math.round(data.gap_bytes / 1024) + " KB skipped …"]);
-        }
-      }
-      appendLog(pane, data.lines || []);
-      var status = logPart(pane, "[data-log-status]");
-      if (status) status.textContent = "";
-      var note = logPart(pane, "[data-log-note]");
-      if (note && data.exists) note.remove();
-      var size = logPart(pane, "[data-log-size]");
-      if (size && data.exists) size.textContent = (data.size_bytes / 1024).toFixed(1) + " KB";
-    }
-
-    function say(text) {
-      if (stream !== logStream) return;
-      var status = logPart(pane, "[data-log-status]");
-      if (status) status.textContent = text;
-    }
-
-    stream.addEventListener("reset", function (e) { paint(e, true); });
-    stream.addEventListener("lines", function (e) { paint(e, false); });
-    // The agent being down is a normal state - it is optional infrastructure, and
-    // watching it restart is a reason to have this pane open - so neither failure
-    // closes anything: the server keeps polling through `unavailable`, and
-    // EventSource reconnects itself after a transport `error`. Only the status
-    // line changes. (Two events, not one: a server-sent `error` would land on the
-    // same handler as the transport's own, distinguishable only by `data`.)
-    stream.addEventListener("unavailable", function (e) { say(JSON.parse(e.data).detail); });
-    stream.addEventListener("error", function () { say("reconnecting…"); });
-  }
-
   /* ================== benchmark progress + form (admin) ================= */
 
-  // Same element-tracking idempotence as the log pane above, and for the same
-  // reason: an htmx swap discards the node without telling us, and an orphaned
-  // EventSource would keep a worker-side query running for a pane nobody sees.
+  // Exactly one stream can be open, because there is exactly one progress box.
+  // Tracking the ELEMENT rather than a boolean is what makes this idempotent
+  // under htmx:load, which fires for every swap anywhere on the page: same
+  // element, nothing to do; different or gone, close the old one first - an
+  // htmx swap discards the node without telling us, and an orphaned EventSource
+  // would keep a worker-side query running for a pane nobody sees.
   var benchStream = null;
   var benchBox = null;
 
@@ -795,7 +703,7 @@
       var d = JSON.parse(e.data);
       var item = (d.item || 0) + 1;
       var label = d.model
-        ? item + "/" + d.items + "  " + d.model + (d.variant ? " · " + d.variant : "")
+        ? item + "/" + d.items + "  " + d.model
         : d.status;
       benchText(box, "[data-bench-label]", label + (d.cancel_requested ? "  (cancelling)" : ""));
       // Two progress questions, and only one of them has a denominator: prefill
@@ -1229,7 +1137,6 @@
     markClampedText(root);
     // Queried from the document, not `root`: the pane may have been removed by a
     // swap somewhere else entirely, and that stream still needs closing.
-    syncLogStream();
     syncBenchProgress();
     if (document.querySelector(".admin-sidebar-nav")) syncNav();
   }

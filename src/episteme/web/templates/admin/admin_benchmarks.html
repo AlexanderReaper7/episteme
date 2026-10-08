@@ -21,7 +21,7 @@
       <label>scenario
         <select name="scenario" id="bench-scenario">
           {% for s in scenarios %}
-          <option value="{{ s }}"{% if s == 'sweep' and not agent_enabled %} disabled{% endif %}>{{ s }}</option>
+          <option value="{{ s }}">{{ s }}</option>
           {% endfor %}
         </select>
       </label>
@@ -79,22 +79,6 @@
       </p>
       <label>rungs <input name="rungs" value="{{ defaults.rungs }}" style="width:22rem"></label>
       <label>predict per rung <input name="ladder_predict" type="number" min="1" value="8"></label>
-    </fieldset>
-
-    <fieldset data-bench-when="sweep" hidden>
-      <legend>sweep <span class="muted">(host executor)</span></legend>
-      <p class="muted admin-form-hint">
-        Each variant edits <code>models-preset.ini</code> on the host and restarts
-        llama-server. The original file is backed up before the first edit and
-        restored unconditionally at the end, including after a failure. A key set
-        to <code>null</code> is commented out rather than deleted.
-      </p>
-      <textarea name="variants" rows="8" spellcheck="false" class="mono" style="width:100%"
-                placeholder='[{"label": "fit-on", "sections": {"Qwen3-35B-A3B.Q4_K_M": {"ngl": null}}},
- {"label": "ngl-999", "sections": {"Qwen3-35B-A3B.Q4_K_M": {"ngl": 999}}}]'></textarea>
-      {% if not agent_enabled %}
-      <p class="muted">llama-warden is not configured (<code>LLM_WARDEN_URL</code>), so a sweep cannot run.</p>
-      {% endif %}
     </fieldset>
 
     <div class="voice-form-actions">

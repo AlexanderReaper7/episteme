@@ -41,11 +41,11 @@ services:
       TTS_ENABLED: ${TTS_ENABLED:-false}
       TTS_DEFAULT_VOICE: ${TTS_DEFAULT_VOICE:-}
       TTS_OPUS_BITRATE: ${TTS_OPUS_BITRATE:-64000}
-      # llama-warden's API (run on the host outside compose: it is what starts
-      # llama.cpp, so it cannot share this lifecycle). Empty disables the backend
-      # panel and the sweep. InferMux does not serve this API (0058). The pause
-      # needs no URL here: the warden pushes it to /api/pipeline/announce (0057).
+      # InferMux's root, for the dashboard's InferMux panel (0060). Empty
+      # disables the panel. The pause needs no URL here: the warden pushes it to
+      # /api/pipeline/announce (0057).
       LLM_WARDEN_URL: ${LLM_WARDEN_URL:-}
+      LLM_WARDEN_UI_URL: ${LLM_WARDEN_UI_URL:-}
       # The key InferMux knows each process by (0058). web and worker mount
       # different keys here, and InferMux reads the class from the key.
       LLM_API_KEY_FILE: /run/secrets/infermux-key

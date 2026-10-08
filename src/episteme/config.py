@@ -112,37 +112,29 @@ class Settings(BaseSettings):
     llm_log_enabled: bool = True
     llm_log_retention_days: int = 30
 
-    # --- llama-warden's API (llm/warden.py is the client) ---
-    # Episteme is in Docker and llama.cpp is on the host, so a container cannot
-    # start a host process or read its console. This URL is that crossing: a
-    # service on the host exposing lifecycle, logs and GPU measurements.
-    # llama-warden became InferMux, which does not serve this API (0058), so
-    # against InferMux it stays empty until the client is ported.
+    # --- InferMux's warden (llm/warden.py is the client, 0060) ---
+    # InferMux's root URL, the same server as LLM_BASE_URL without /v1. Episteme
+    # reads the warden's verdict, a GPU measurement and the loaded models from
+    # it, and can ask it to unload. llama.cpp's lifecycle, logs and model
+    # configuration are InferMux's own, in its UI.
     # EMPTY DISABLES THE WHOLE FEATURE: every route and panel becomes a no-op. It
     # is optional infrastructure, never a dependency (0057).
     #
     # Nothing here decides when to yield the GPU. The warden measures and decides;
     # what reaches us is an announcement on POST /api/pipeline/announce, applied by
     # worker/contention.py. The thresholds live in the warden's own configuration.
-    llm_warden_url: str = ""  # e.g. http://host.docker.internal:5003
-    # Three timeouts, because reads and actions want opposite things (see
-    # llm/warden.py). Reads are on the dashboard's critical path — /status rides
-    # the page load, /logs is polled once a second behind the log stream — so a
-    # hung warden must give up in seconds rather than take the admin page down
-    # with it.
+    llm_warden_url: str = ""  # e.g. http://host.docker.internal:5001
+    # InferMux's UI, as the reader's browser reaches it (not as the container
+    # does). Empty hides the link on the dashboard.
+    llm_warden_ui_url: str = ""
+    # Reads are on the dashboard's critical path, so a hung warden must give up
+    # in seconds rather than take the admin page down with it. The unload gets
+    # longer: it stops every llama-server before it answers.
     llm_warden_read_timeout_seconds: float = 15.0
-    # Actions block until the host has finished: the agent holds /start until
-    # both ports answer (launcher 120s + port wait 60s worst case), so a ceiling
-    # sized like a read would report a successful start as a failure.
-    llm_warden_timeout_seconds: float = 240.0
-    # /restart is a stop and a start inside one request, so ~the sum of both.
-    llm_warden_restart_timeout_seconds: float = 360.0
-    llm_log_tail_lines: int = 300
-    # How often the log stream asks the agent for the bytes written since its
-    # last offset. This is the browser-invisible leg: the pane is pushed over
-    # SSE, and only this hop polls (a delta read is a file seek, no PowerShell).
+    llm_warden_timeout_seconds: float = 60.0
+    # How often a progress stream (web/bench.py) polls for what changed.
     llm_log_stream_interval_seconds: float = 1.0
-    # A graceful stop pauses the pipeline and waits for the worker to finish its
+    # A graceful unload pauses the pipeline and waits for the worker to finish its
     # current unit — one story, measured at up to ~570s for a main-model write —
     # so the wait is bounded and reports back rather than killing anything. The
     # caller (admin panel) then offers an explicit force.

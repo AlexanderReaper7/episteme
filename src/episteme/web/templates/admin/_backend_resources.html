@@ -1,8 +1,11 @@
 {# GPU contention, polled on its own timer. Separate from _backend.html because
-   this probe costs ~3.5s on the host - the per-process GPU counter has an
-   irreducible PDH sampling floor - so it loads after the page paints and never
-   blocks a click. #}
-{# hx-target="this": .admin-main sets an inherited hx-target, see _backend_log.html. #}
+   the probe takes a fresh sample on the host, so it loads after the page paints
+   and never blocks a click.
+
+   hx-target="this" is NOT redundant: .admin-main sets hx-target="#admin-main",
+   and htmx INHERITS hx-target down the tree - so a fragment that relies on the
+   default target silently swallows the whole page instead. Every partial in
+   this directory names its target for that reason. #}
 <div id="backend-resources"
      hx-get="/admin/partials/backend-resources"
      hx-trigger="every 30s"
@@ -17,8 +20,11 @@
       <dd class="mini-row-value">
         {# The number the warden actually decides on: total utilization minus
            our own llama-server processes. #}
-        <span class="{{ 'bad' if busy_percent and resources.foreign_gpu_percent >= busy_percent else 'ok' }}">
-          {{ resources.foreign_gpu_percent }}%
+        {# InferMux sends null for a reading it could not take, which is never
+           evidence of contention, so it is not coloured as one. #}
+        {% set foreign = resources.foreign_gpu_percent %}
+        <span class="{{ 'bad' if busy_percent and foreign is not none and foreign >= busy_percent else 'ok' }}">
+          {{ '?' if foreign is none else foreign }}%
         </span>
         {# The threshold is the warden's and arrives with its verdict (0057). A
            warden that answered the sweep but not the verdict leaves it unset,
@@ -30,16 +36,14 @@
       <dt class="mini-row-label">VRAM</dt>
       <dd class="mini-row-value">
         {{ resources.vram_used_mb }} / {{ resources.vram_total_mb }} MB
-        <span class="muted">· {{ resources.vram_free_mb }} MB free</span>
+        {% if resources.vram_free_mb is not none %}<span class="muted">· {{ resources.vram_free_mb }} MB free</span>{% endif %}
       </dd>
     </div>
-    {% if resources.games_running %}
+    {% if resources.culprits %}
     <div class="mini-row">
-      <dt class="mini-row-label">games running</dt>
-      {# From Windows' own Game Bar catalogue, so it needs no hand-maintained
-         list. Context for a human reading the panel - the warden decides on
-         measured load, not on this. #}
-      <dd class="mini-row-value">{{ resources.games_running | join(', ') }}</dd>
+      <dt class="mini-row-label">yielding to</dt>
+      {# The processes the warden counts against the threshold, by name. #}
+      <dd class="mini-row-value mono">{{ resources.culprits | join(', ') }}</dd>
     </div>
     {% endif %}
     {% if resources.processes %}
