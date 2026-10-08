@@ -32,6 +32,8 @@ services:
     command: python -m episteme.bootstrap
     environment: &env
       DATABASE_URL: postgresql://episteme:${POSTGRES_PASSWORD:-episteme}@db:5432/episteme
+      # Contact address sent in the crawler's User-Agent; empty sends none.
+      HTTP_CONTACT: ${HTTP_CONTACT:-}
       # Fish Audio TTS (narrate stage). Key + voice live in the host .env; empty
       # defaults keep the stage a safe no-op until configured. TTS_ENABLED gates
       # the nightly run — deferring narrate manually works regardless.

@@ -7,7 +7,7 @@ human-ish request pacing.
 
 Two transport *modes*, chosen per source (`http_mode` in the Source config):
 
-- ``polite`` (default): an honest httpx client identifying as `http_user_agent`.
+- ``polite`` (default): an honest httpx client identifying as `user_agent()`.
   Correct and truthful; the right choice for any source that accepts it.
 - ``impersonate``: curl_cffi presenting a real browser's TLS/JA3 fingerprint
   (`impersonate_profile`). For publishers whose bot-detector fingerprints the TLS
@@ -112,6 +112,13 @@ def escalate_mode(mode: str | None) -> HttpMode | None:
     return MODE_LADDER[i + 1] if i + 1 < len(MODE_LADDER) else None
 
 
+def user_agent() -> str:
+    """`http_user_agent`, with `+mailto:<http_contact>` when a contact is set."""
+    if settings.http_contact:
+        return f"{settings.http_user_agent} +mailto:{settings.http_contact}"
+    return settings.http_user_agent
+
+
 async def polite_get(
     url: str,
     *,
@@ -156,7 +163,7 @@ async def polite_get(
             httpx.Headers(resp_headers),
         )
 
-    headers = {"User-Agent": settings.http_user_agent}
+    headers = {"User-Agent": user_agent()}
     if extra_headers:
         headers.update(extra_headers)
     async with httpx.AsyncClient(

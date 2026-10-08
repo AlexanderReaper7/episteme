@@ -14,6 +14,7 @@ from episteme.ingest.http import (
     normalize_mode,
     parse_retry_after,
     polite_wait,
+    user_agent,
 )
 
 
@@ -36,6 +37,17 @@ def test_parse_retry_after_past_date_clamps_to_zero():
 def test_parse_retry_after_invalid():
     assert parse_retry_after(None) is None
     assert parse_retry_after("soonish") is None
+
+
+def test_user_agent_has_no_contact_by_default(monkeypatch):
+    monkeypatch.setattr(settings, "http_contact", "")
+    assert "mailto" not in user_agent()
+    assert user_agent() == settings.http_user_agent
+
+
+def test_user_agent_appends_contact_when_set(monkeypatch):
+    monkeypatch.setattr(settings, "http_contact", "ops@example.org")
+    assert user_agent() == f"{settings.http_user_agent} +mailto:ops@example.org"
 
 
 def test_normalize_mode_defaults_to_polite():

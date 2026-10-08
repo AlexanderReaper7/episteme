@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     display_timezone: str = "Europe/Stockholm"
     http_timeout_seconds: float = 20.0
     http_user_agent: str = "Episteme/0.1 (personal news aggregator)"
+    # Appended to the User-Agent as `+mailto:<address>`, so a publisher who sees
+    # the crawler in its logs can reach whoever runs it. Empty sends no address.
+    http_contact: str = ""
     # Some publishers put a bot-detector in front of feeds their robots.txt
     # permits, and it fingerprints the TLS handshake — an honest httpx client is
     # rejected no matter its User-Agent (Phys.org 429s every httpx request but
