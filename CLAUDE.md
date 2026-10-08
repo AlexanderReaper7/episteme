@@ -20,7 +20,7 @@ Phases 1 to 4 are built and live. "Live" and "tested" are different claims:
 | agentic writer, vision QA (2.5) | live |
 | rich content sections (3) | write path live-verified 2026-07-19 |
 | recommendation, feed ranking (4) | live since 2026-07-30 |
-| llama-warden, the pause it announces (0057) | split out of this repo 2026-09-13, part of InferMux since 2026-10-03 (0058). Live-verified the same day with a game on the card: the warden paused us, repeated at 300s moving `contended_at` and not `since`, was killed mid-pause and left us correctly paused with a frozen clock, and a restarted warden re-announced into it without re-authoring the pause. The warden-driven RESUME is still unwatched |
+| the warden, the pause it announces (0057) | split out of this repo 2026-09-13, part of InferMux since 2026-10-03 (0058). Live-verified 2026-09-13 with a game on the card: the warden paused us, repeated at 300s moving `contended_at` and not `since`, was killed mid-pause and left us correctly paused with a frozen clock, and a restarted warden re-announced into it without re-authoring the pause. InferMux's resume after its 300s quiet window watched 2026-10-08 |
 | assistant rail, reader-requested articles (5) | built 2026-08-11, NOT yet watched running |
 | benchmarks (`quick`) | live-verified 2026-08-15; `ladder`/`longctx` built, not watched. `sweep` removed (0060) |
 | correspondents, Glance, Matsedel (0046) | live-verified 2026-08-29: two scrapes, four kitchens, five filed posts; a re-read that carries no menu keeps what is stored |
