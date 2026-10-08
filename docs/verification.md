@@ -12,11 +12,11 @@ One exception is kept deliberately separate: a dated section for work a design s
 
 Watch the next pipeline run rather than assuming these.
 
-- **The InferMux keys** (0058, built 2026-10-03). Unit-tested: the gateway and the bench client send the file's key, send none without a file, and fail on a missing file. Never run against InferMux with either key.
+- **The web's InferMux key** (0058, built 2026-10-03). The worker's half was watched 2026-10-08, after the deployment gained its key mounts and a route to InferMux (compose `extra_hosts` and the `br-episteme` bridge, nixcfg `modules/nixos/episteme.nix`). During pipeline run 321, InferMux's `/warden/verdict` listed the worker's `/v1/embeddings` in flight as `batch`. When Firefox reached the warden's 25% threshold at 17:27 UTC, the warden yielded, the run ended `paused` with reason `resource`, and a batch call got `gpu_yielded`.
 
-  Checked 2026-10-08: Episteme now runs in docker on strix, but the deployment mounts no key file and sets only `LLM_WARDEN_URL=http://host.docker.internal:5003`. From inside the worker container, `host.docker.internal` ports 5001, 5002 and 5003 all refuse the connection, and every `pipeline_runs` row that day is `skipped` with `LLM endpoint(s) ... unavailable`. The last `llm_calls` row is from 2026-10-06 06:01 UTC. InferMux on the host listens on 127.0.0.1 and the tailnet address only, and answers `a key from keys.yaml is needed` without a key.
+  Not yet seen: an interactive request from the web, which a chat turn makes, going through while the worker's batch calls are refused.
 
-  Watch for InferMux's `/warden/verdict` listing an `episteme` request from a chat turn and an `episteme-batch` request from the pipeline. Then watch a batch call get refused under contention while a chat turn goes through.
+- **The InferMux panel's unload** (0060, built 2026-10-08). The reads were watched the same day against the live InferMux: `/api/llm/backend` listed the loaded embedder with its TTL, `/api/llm/resources` answered in 5 ms, and the dashboard rendered both cards and the link to InferMux's UI. Nobody has pressed unload: its pause is written as MANUAL, which the warden cannot lift, and it was not worth blocking a run to see it.
 
 - **Notifications on their own clock, and the icon on a phone** (0056, shipped 2026-09-10).
 
