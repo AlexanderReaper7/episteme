@@ -95,6 +95,7 @@ Nothing here is edited to reflect later changes. A decision that was replaced ge
 | [0058](0058-infermux-knows-the-web-from-the-worker.md) | InferMux knows the web from the worker by their keys; every worker job is batch | 2026-10-03 |
 | [0059](0059-embeds-go-through-infermux.md) | Embeds go through InferMux, where the CPU embedder is a peer | 2026-10-03 |
 | [0060](0060-the-warden-client-reads-infermux.md) | The warden client reads InferMux; lifecycle, logs and model flags stay there, and the sweep goes | 2026-10-08 |
+| [0061](0061-the-phone-gets-a-native-reader.md) | The phone gets a native reader, and the server decides what a card shows | 2026-10-10 |
 | [0034](0034-logs-stream-as-byte-offset-deltas.md) | Logs stream as byte-offset deltas | 2026-08-03 |
 | [0042](0042-the-agent-owns-one-console-hidden-behind-a-tray-icon.md) | The host agent owns one console, born hidden, behind a tray icon | 2026-08-15 |
 

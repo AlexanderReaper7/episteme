@@ -14,6 +14,7 @@ from types import SimpleNamespace
 from starlette.requests import Request
 
 from episteme.web.app import _HTML_VARY
+from episteme.web import cards
 from episteme.web.app import _feed_etag as _feed_etag_impl
 from episteme.web.app import _feed_partial_etag, _items_partial_etag, _provenance_etag
 from episteme.web.app import _post_page_etag as _post_etag_impl
@@ -79,6 +80,7 @@ def _article(**kw):
         kind="article",
         id=100,
         story=None,
+        href=None,
         status="published",
         generated_at=datetime(2026, 7, 21, 9, 0),
         quality_score=0.8,
@@ -105,6 +107,7 @@ def _aggregate(items=None, **kw):
         kind="aggregate",
         id=200,
         story=story,
+        href="https://example.org/a",
         status="published",
         generated_at=datetime(2026, 7, 21, 8, 0),
         quality_score=None,
@@ -124,7 +127,7 @@ def _page(posts, has_more=False, next_cursor=None, feedback=None):
     state — the shape web.feedback.feed_context returns for a page of cards."""
     empty = {"signals": {}, "topic_signals": {}}
     return {
-        "posts": posts,
+        "cards": cards.build_page(posts, {}),
         "has_more": has_more,
         "next_cursor": next_cursor,
         "feedback_contexts": {
@@ -174,6 +177,15 @@ def test_feed_etag_changes_when_the_primary_items_content_changes():
     base = _feed_etag(_page([_aggregate(items=[_item(id=1, title="T")])]))
     changed = _feed_etag(_page([_aggregate(items=[_item(id=1, title="T2")])]))
     assert changed != base
+
+
+def test_feed_etag_changes_when_an_aggregates_own_fields_change():
+    """`summarize` rewrites an aggregate's card text and `cluster_items` can
+    re-point its href, and neither touches a story item. The hand-written
+    signature these replaced (0061) hashed neither, so both answered a stale 304."""
+    base = _feed_etag(_page([_aggregate(summary="One.")]))
+    assert _feed_etag(_page([_aggregate(summary="Two.")])) != base
+    assert _feed_etag(_page([_aggregate(summary="One.", href="https://example.org/b")])) != base
 
 
 def test_feed_etag_changes_when_an_items_media_changes_the_banner():

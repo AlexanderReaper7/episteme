@@ -23,6 +23,7 @@ from starlette.requests import Request
 
 from episteme.models import POST_KINDS, Post, primary_item_key
 from episteme.web import app as web_app
+from episteme.web import cards
 from episteme.web.templating import _format_dt, templates
 
 AGGREGATE_HREF = "https://example.org/first"
@@ -73,8 +74,7 @@ def _card(**kw):
 def _render(post, labels=None) -> str:
     """One card, through the real template and the real context keys."""
     return templates.env.get_template("_feed.html").render(
-        posts=[post],
-        correspondent_labels=labels if labels is not None else {},
+        cards=cards.build_page([post], labels or {}),
         feedback_contexts={
             post.id: {
                 "post_id": post.id,
@@ -237,8 +237,8 @@ def test_renaming_a_correspondent_moves_the_feed_validator():
     it change. Without this line a rename answers the next navigation with a 304
     and the old name stays on screen."""
     post = BUILDERS["filed"]()
-    before = web_app._feed_cards_sig([post], {"matsedel": "Matsedel"})
-    after = web_app._feed_cards_sig([post], {"matsedel": "Lunch"})
+    before = web_app._feed_cards_sig(cards.build_page([post], {"matsedel": "Matsedel"}))
+    after = web_app._feed_cards_sig(cards.build_page([post], {"matsedel": "Lunch"}))
     assert before != after
 
 
@@ -246,6 +246,6 @@ def test_an_extra_item_moves_the_filed_validator():
     """The card counts the items ("+2 more"), and a correction that adds one does
     not touch a single column on the post row."""
     post = BUILDERS["filed"]()
-    before = web_app._feed_cards_sig([post])
+    before = web_app._feed_cards_sig(cards.build_page([post], {}))
     post.story.items = [_item(), _item(id=2, url="https://example.org/second")]
-    assert web_app._feed_cards_sig([post]) != before
+    assert web_app._feed_cards_sig(cards.build_page([post], {})) != before

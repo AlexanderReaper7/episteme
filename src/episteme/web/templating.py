@@ -380,6 +380,5 @@ templates.env.filters["ago"] = _ago
 templates.env.filters["ago_tag"] = _ago_tag
 templates.env.filters["duration"] = _duration
 templates.env.filters["banner_image"] = _banner_image
-templates.env.filters["story_banner"] = _story_banner
 templates.env.filters["markdown"] = _markdown
 templates.env.filters["video_embed"] = _video_embed

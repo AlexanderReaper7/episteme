@@ -17,11 +17,11 @@
    #main-content out from under the feed. It sits above the stretched
    `.card-link` on position + z-index, the same lift `.card-provenance` takes, or
    the click would navigate to the post instead of opening the summary. #}
-{% if post.summary %}
+{% if card.summary %}
 <div class="card-summary">
-  <p class="card-snippet" id="card-summary-{{ post.id }}">{{ post.summary }}</p>
+  <p class="card-snippet" id="card-summary-{{ card.post_id }}">{{ card.summary }}</p>
   <button class="card-expand" type="button" data-card-expand
-          aria-expanded="false" aria-controls="card-summary-{{ post.id }}">
+          aria-expanded="false" aria-controls="card-summary-{{ card.post_id }}">
     {{ ico.icon("disclosure", "card-expand-caret") }}
     <span data-card-expand-label>Show more</span>
   </button>

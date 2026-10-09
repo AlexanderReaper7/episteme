@@ -22,6 +22,7 @@ from .admin import _group_calls
 from .admin import router as admin_router
 from .api import api_post_llm_calls, api_story
 from .api import router as api_router
+from . import cards
 from .bench import router as bench_router
 from .chat import router as chat_router
 from .correspondents import router as correspondents_router
@@ -30,7 +31,7 @@ from .errors import install_error_handlers
 from .feedback import feed_context as feedback_contexts
 from .feedback import post_context as feedback_context
 from .feedback import router as feedback_router
-from .templating import BASE_DIR, fragment_block, render, templates
+from .templating import BASE_DIR, _banner_image, fragment_block, render, templates
 
 
 class RevalidateStaticFiles(StaticFiles):
@@ -171,19 +172,6 @@ def _rank_value(post: Post) -> float:
     return shift + age_term
 
 
-def _agg_banner(items) -> str | None:
-    """The banner an aggregate card shows: the first image across its items'
-    `media_refs`, in item order. Mirrors `templating._story_banner` (and
-    `pipeline.story_banner_url`) so the etag captures a banner that changes when an
-    item is re-fetched with new media, even if the item count / `last_item_at` don't
-    move. `getattr` keeps it usable with DB-free test stand-ins."""
-    for item in items:
-        for ref in getattr(item, "media_refs", None) or []:
-            if ref.get("kind") == "image" and ref.get("url"):
-                return ref["url"]
-    return None
-
-
 async def _load_story_items(session, posts: list[Post]) -> None:
     """Eager-load items (+ their sources) for the kinds whose cards read them, in
     one batched query keyed by story.
@@ -322,7 +310,7 @@ async def _feed_page(session, cursor: tuple[float, int] | None = None) -> dict:
     if has_more and rows:
         next_cursor = {"at": repr(float(rows[-1].rank)), "id": rows[-1].Post.id}
     return {
-        "posts": posts,
+        "cards": cards.build_page(posts, await _correspondent_labels(session, posts)),
         "has_more": has_more,
         "next_cursor": next_cursor,
         "first_page": cursor is None,
@@ -330,7 +318,6 @@ async def _feed_page(session, cursor: tuple[float, int] | None = None) -> dict:
         # and topic chips render in whatever state the reader left them
         # (web.feedback.feed_context).
         "feedback_contexts": await feedback_contexts(session, posts),
-        "correspondent_labels": await _correspondent_labels(session, posts),
     }
 
 
@@ -377,83 +364,13 @@ async def _items_page(session, cursor: tuple[datetime | None, int] | None = None
     }
 
 
-def _feed_cards_sig(posts, labels: dict[str, str] | None = None) -> list:
-    """The per-card render signature for `_feed.html` — every field the cards read,
-    in order — shared by the full-feed validator (`_feed_etag`) and the
-    infinite-scroll partial validator (`_feed_partial_etag`) so both mirror the
-    template identically and neither can drift into a stale 304. An article card reads
-    only row columns (title / summary / banner / meta), so a QA revision that rewrites
-    only body sections legitimately leaves it unchanged (the post PAGE etag still
-    moves). An aggregate card renders from `story.items | first` + the item count +
-    topics + `last_item_at`, so those are folded in — the row alone can't see a new
-    cluster item. A filed card reads the row plus its correspondent's LABEL, which
-    is not on the row at all: `labels` is the page's slug -> label map, and folding
-    the resolved label in is what keeps a renamed correspondent from being hidden
-    behind a 304."""
-    labels = labels or {}
-    sig: list = []
-    for post in posts:
-        if post.kind == "aggregate":
-            story = post.story
-            items = story.items if story is not None else []
-            primary = items[0] if items else None
-            sig.append(
-                (
-                    "a",
-                    post.id,
-                    story.last_item_at.isoformat() if story and story.last_item_at else None,
-                    tuple(story.topics or ()) if story else (),
-                    len(items),
-                    _agg_banner(items),
-                    None
-                    if primary is None
-                    else (
-                        primary.id,
-                        primary.title,
-                        primary.url,
-                        primary.source.name if primary.source else None,
-                        primary.extracted_text,
-                        primary.raw_content,
-                    ),
-                )
-            )
-        elif post.kind == "filed":
-            story = post.story
-            items = story.items if story is not None else []
-            primary = items[0] if items else None
-            slug = primary.source.type_name if primary and primary.source else None
-            sig.append(
-                (
-                    "c",
-                    post.id,
-                    post.title,
-                    post.summary,
-                    tuple(post.topics or ()),
-                    (post.publish_at or post.generated_at).isoformat()
-                    if (post.publish_at or post.generated_at)
-                    else None,
-                    len(items),
-                    _agg_banner(items),
-                    slug,
-                    labels.get(slug),
-                    None if primary is None else (primary.source.name if primary.source else None),
-                )
-            )
-        else:
-            sig.append(
-                (
-                    "art",
-                    post.id,
-                    post.generated_at.isoformat() if post.generated_at else None,
-                    post.title,
-                    post.summary,
-                    post.banner_url,
-                    post.reading_time_minutes,
-                    post.difficulty,
-                    tuple(post.topics or ()),
-                )
-            )
-    return sig
+def _feed_cards_sig(page_cards: list[cards.Card]) -> list:
+    """The per-card render signature, shared by the full-feed validator
+    (`_feed_etag`) and the infinite-scroll one (`_feed_partial_etag`). It is the
+    cards themselves: `_feed.html` renders nothing about a card that is not on its
+    `Card` (0061), so hashing them covers exactly what is shown. A hand-written
+    list of fields stood here before and missed an aggregate's summary and href."""
+    return [cards.as_json(card) for card in page_cards]
 
 
 def _weak_etag(sig: list) -> str:
@@ -501,7 +418,7 @@ def _feed_etag(page: dict, block: str | None) -> str:
     one tag over two different bodies (see `fragment_block`)."""
     sig = [
         ("frag", block),
-        *_feed_cards_sig(page["posts"], page.get("correspondent_labels")),
+        *_feed_cards_sig(page["cards"]),
         _pagination_sig(page),
         ("fb", _feedback_sig(page)),
     ]
@@ -518,7 +435,7 @@ def _feed_partial_etag(page: dict) -> str:
     304 and re-scrolls within the freshness window are pure cache hits."""
     return _weak_etag(
         [
-            *_feed_cards_sig(page["posts"], page.get("correspondent_labels")),
+            *_feed_cards_sig(page["cards"]),
             _pagination_sig(page),
             ("fb", _feedback_sig(page)),
         ]
@@ -541,7 +458,7 @@ def _items_partial_etag(page: dict) -> str:
                 item.published_at.isoformat() if item.published_at else None,
                 item.extracted_text,
                 item.raw_content,
-                _agg_banner([item]),  # first image ref — same as `_items.html`
+                _banner_image(item.media_refs),  # same as `_items.html`
             )
         )
     sig.append(_pagination_sig(page))
@@ -607,7 +524,7 @@ async def feed(request: Request):
         # Before the pipeline has produced anything, fall back to raw items so
         # the feed is useful from day one.
         fallback = None
-        if not page["posts"]:
+        if not page["cards"]:
             fallback = await _items_page(session)
 
     # Conditional GET for the composed feed — for BOTH representations (full document
@@ -809,23 +726,26 @@ async def post_provenance(request: Request, post_id: int):
     return _apply_validators(response, etag)
 
 
+def _feed_cursor(cursor_at: str | None, cursor_id: int | None) -> tuple[float, int] | None:
+    """The cursor is the last rendered row's rank (a float, see `_rank_expr`).
+    `cursor_at` keeps its name so an in-flight sentinel URL from an older page
+    doesn't 500; a malformed value just serves the head."""
+    if not cursor_at or cursor_id is None:
+        return None
+    try:
+        return (float(cursor_at), cursor_id)
+    except ValueError:
+        return None
+
+
 @app.get("/partials/feed", response_class=HTMLResponse)
 async def feed_partial(
     request: Request,
     cursor_at: str | None = None,
     cursor_id: int | None = None,
 ):
-    # The cursor is the last rendered row's rank (a float, see `_rank_expr`) —
-    # `cursor_at` keeps its name so an in-flight sentinel URL from an older page
-    # doesn't 500; a malformed value just serves the head.
-    cursor = None
-    if cursor_at and cursor_id is not None:
-        try:
-            cursor = (float(cursor_at), cursor_id)
-        except ValueError:
-            cursor = None
     async with SessionLocal() as session:
-        context = await _feed_page(session, cursor=cursor)
+        context = await _feed_page(session, cursor=_feed_cursor(cursor_at, cursor_id))
     # Single representation (always the fragment, cursor-keyed) → no Vary: HX-Request.
     # The ETag makes a re-fetched deep page a cheap 304; the short max-age lets a
     # re-scroll within the window hit the cache with no network round trip at all.
@@ -835,6 +755,44 @@ async def feed_partial(
         return not_modified
     response = templates.TemplateResponse(request, "_feed.html", context)
     return _apply_validators(response, etag, vary=None)
+
+
+def _card_feedback(context: dict) -> dict:
+    """A card's feedback state as JSON: each recorded signal carries its event id,
+    so the client undoes exactly that event (`DELETE /api/feedback/{id}`), the
+    same way `_feedback.html` does."""
+    topic_signals = context["topic_signals"]
+    return {
+        "signals": context["signals"],
+        "topics": [
+            {
+                "label": entry["label"],
+                "slug": entry["slug"],
+                "more": topic_signals.get((entry["slug"], "more_topic")),
+                "less": topic_signals.get((entry["slug"], "less_topic")),
+            }
+            for entry in context["post_topics"]
+        ],
+    }
+
+
+# The JSON twin of `/partials/feed`, for the Android app (0061). Declared on `app`
+# rather than the `/api` router because `_feed_page` lives here and api.py is
+# imported by this module. Same page, same cards, same cursor.
+@app.get("/api/feed")
+async def api_feed(cursor_at: str | None = None, cursor_id: int | None = None):
+    async with SessionLocal() as session:
+        page = await _feed_page(session, cursor=_feed_cursor(cursor_at, cursor_id))
+    return {
+        "cards": [
+            {
+                **cards.as_json(card),
+                "feedback": _card_feedback(page["feedback_contexts"][card.post_id]),
+            }
+            for card in page["cards"]
+        ],
+        "next_cursor": page["next_cursor"],
+    }
 
 
 @app.get("/partials/items", response_class=HTMLResponse)

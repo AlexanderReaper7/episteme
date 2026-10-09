@@ -17,6 +17,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from episteme.web import cards
 from episteme.web.templating import BASE_DIR, templates
 
 CSS = (BASE_DIR / "static" / "style.css").read_text(encoding="utf-8")
@@ -47,7 +48,7 @@ def _post(kind: str, summary: str | None = "A summary that runs long.") -> Simpl
 
 def _render(post) -> str:
     return templates.env.get_template("_feed.html").render(
-        posts=[post],
+        cards=cards.build_page([post], {}),
         feedback_contexts={
             42: {
                 "post_id": 42,
@@ -59,7 +60,6 @@ def _render(post) -> str:
                 "variant": post.kind,
             }
         },
-        correspondent_labels={},
         has_more=False,
         next_cursor=None,
         first_page=True,

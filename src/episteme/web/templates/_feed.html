@@ -1,14 +1,13 @@
-{# Unified feed cards. Every unit is a Post; the WHOLE card is one link
-   (`.card-link` stretched over it) - never image and title as separate anchors.
-   Secondary links (provenance) sit above the stretch via z-index.
+{# Unified feed cards. Every unit is a Post, rendered from the `Card` that
+   `web/cards.py` built for it (0061): where it goes, which picture, which time
+   and whose name are decided there, once, for this template and `/api/feed`
+   alike. What is left here is how each kind LOOKS.
 
-   One destination rule for every kind (0047): a post stores where it goes, and a
-   NULL href means it renders itself. So an article card opens /post/{id} and an
-   aggregate card goes straight to the source instead of to a page that relists
-   the cluster the card just showed. `/post/{id}` redirects to the same place, so
-   the card and the canonical URL cannot disagree. #}
-{% for post in posts %}
-{% set destination = post.href or "/post/" ~ post.id %}
+   The WHOLE card is one link (`.card-link` stretched over it) - never image and
+   title as separate anchors. Secondary links (provenance) sit above the stretch
+   via z-index. #}
+{% for card in cards %}
+{% set destination = card.destination %}
 {# Off-site, so there is nothing of ours to prefetch. `preload="none"` binds the
    extension's listener to an event name that never fires, which is the only way
    it can be told to leave a link alone.
@@ -19,15 +18,12 @@
    in the console is that guard working) and an UNBOOSTED one through a raw
    XMLHttpRequest, which no guard sees. Turning boost off here would start
    firing a GET at the source on every hover, outside `polite_get` (0005). #}
-{% set offsite = destination.startswith("http") %}
-{% if post.kind == "aggregate" %}
-  {% set story = post.story %}
-  {% set primary = story.items | first %}
-  {% if primary %}
-  {% set banner = story | story_banner %}
+{% set offsite = card.offsite %}
+{% set banner = card.banner %}
+{% if card.kind == "aggregate" %}
   <article class="card card--aggregate">
     <a class="card-link" href="{{ destination }}"{% if offsite %} preload="none"{% endif %}
-       aria-label="{{ primary.title or primary.url }}"></a>
+       aria-label="{{ card.title }}"></a>
     {% if banner %}
     {# Hotlinked (never cached, per spec §6) - drop the banner if the image is gone. #}
     <div class="card-banner">
@@ -38,14 +34,14 @@
     <div class="card-body">
       <div class="card-meta">
         <span class="card-kind card-kind--aggregate">{{ ico.icon("aggregate") }} Aggregated</span>
-        <span class="source-name">{{ primary.source.name }}</span>
-        {% if story.items | length > 1 %}
-        <span class="muted">+{{ (story.items | length) - 1 }} more</span>
+        <span class="source-name">{{ card.source_name }}</span>
+        {% if card.more_items %}
+        <span class="muted">+{{ card.more_items }} more</span>
         {% endif %}
-        {% if story.last_item_at %}<time>{{ story.last_item_at | dt }}</time>{% endif %}
-        <a class="card-provenance" href="/post/{{ post.id }}/provenance">{{ ico.icon("provenance") }} provenance</a>
+        {% if card.at %}<time>{{ card.at | dt }}</time>{% endif %}
+        <a class="card-provenance" href="/post/{{ card.post_id }}/provenance">{{ ico.icon("provenance") }} provenance</a>
       </div>
-      <h2 class="card-title">{{ primary.title or primary.url }}</h2>
+      <h2 class="card-title">{{ card.title }}</h2>
       {# The card's own text, written by the `summarize` stage from the whole
          cluster (0050) - never the item's raw feed blurb, which was a mid-word
          slice of whatever the outlet put in its RSS body. This card links
@@ -53,32 +49,23 @@
          Episteme about the story, and the expand control is the only place the
          clamped tail of it can be read at all. #}
       {% include "_card_summary.html" %}
-      {% if story.topics %}
+      {% if card.topics %}
       <div class="topic-chips">
-        {% for topic in story.topics %}<span class="chip">{{ topic }}</span>{% endfor %}
+        {% for topic in card.topics %}<span class="chip">{{ topic }}</span>{% endfor %}
       </div>
       {% endif %}
-      {% with fb = feedback_contexts[post.id] %}{% include "_feedback.html" %}{% endwith %}
+      {% with fb = feedback_contexts[card.post_id] %}{% include "_feedback.html" %}{% endwith %}
     </div>
   </article>
-  {% endif %}
-{% elif post.kind == "filed" %}
+{% elif card.kind == "filed" %}
   {# Filed by a correspondent (0046): read somewhere else and handed over whole.
      Nothing generated it, so there is no byline, no reading time, no difficulty
      and no narration - a card claiming any of those would be claiming Episteme
      wrote it. The chip names the correspondent instead, and `href` sends the
      reader to the correspondent's page, where the standing content lives.
-
-     The correspondent's identity comes from the item's source: `type_name` IS
-     the slug (0046), and `web.app._correspondent_labels` resolves the page's
-     slugs to labels in one query. A slug with no row falls back to the source's
-     own name, which is what an external correspondent whose row was deleted
-     while its posts were still in the feed would render as. #}
-  {% set story = post.story %}
-  {% set primary = story.items | first %}
-  {% set banner = story | story_banner %}
+     `cards.build` resolves whose name that is. #}
   <article class="card card--filed">
-    <a class="card-link" href="{{ destination }}"{% if offsite %} preload="none"{% endif %} aria-label="{{ post.title }}"></a>
+    <a class="card-link" href="{{ destination }}"{% if offsite %} preload="none"{% endif %} aria-label="{{ card.title }}"></a>
     {% if banner %}
     <div class="card-banner">
       <img src="{{ banner }}" alt="" loading="lazy"
@@ -87,44 +74,38 @@
     {% endif %}
     <div class="card-body">
       <div class="card-meta">
-        {% set slug = primary.source.type_name if primary else none %}
         <span class="card-kind card-kind--filed">
           {{ ico.icon("filed") }}
-          {{ correspondent_labels.get(slug) or (primary.source.name if primary else "Filed") }}
+          {{ card.correspondent }}
         </span>
-        {% if primary %}
-        <span class="source-name">{{ primary.source.name }}</span>
-        {% if story.items | length > 1 %}
-        <span class="muted">+{{ (story.items | length) - 1 }} more</span>
+        {% if card.source_name %}
+        <span class="source-name">{{ card.source_name }}</span>
+        {% if card.more_items %}
+        <span class="muted">+{{ card.more_items }} more</span>
         {% endif %}
         {% endif %}
-        {# When it became visible, not when the correspondent read it: one read of
-           a week mints five posts, and all five would otherwise wear Monday. #}
-        <time>{{ (post.publish_at or post.generated_at) | dt }}</time>
-        <a class="card-provenance" href="/post/{{ post.id }}/provenance">{{ ico.icon("provenance") }} provenance</a>
+        <time>{{ card.at | dt }}</time>
+        <a class="card-provenance" href="/post/{{ card.post_id }}/provenance">{{ ico.icon("provenance") }} provenance</a>
       </div>
-      <h2 class="card-title">{{ post.title }}</h2>
+      <h2 class="card-title">{{ card.title }}</h2>
       {# A correspondent's own words: `filed` does not declare `summarized`, so no
          stage rewrites this one (models.POST_KINDS). Nothing guarantees its
          length either, which is the case the expand control has to cover. #}
       {% include "_card_summary.html" %}
-      {% if post.topics %}
+      {% if card.topics %}
       <div class="topic-chips">
-        {% for topic in post.topics %}<span class="chip">{{ topic }}</span>{% endfor %}
+        {% for topic in card.topics %}<span class="chip">{{ topic }}</span>{% endfor %}
       </div>
       {% endif %}
       {# Kept, though a filed post is never scored (models.POST_KINDS): the rating
          still moves the topic weights, so it steers the rest of the feed even
          when it cannot move this card. #}
-      {% with fb = feedback_contexts[post.id] %}{% include "_feedback.html" %}{% endwith %}
+      {% with fb = feedback_contexts[card.post_id] %}{% include "_feedback.html" %}{% endwith %}
     </div>
   </article>
 {% else %}
-  {# Denormalized at write time (pipeline.write_posts) so the feed never loads a
-     article's story items just to find its banner - see web.app._feed_page. #}
-  {% set banner = post.banner_url %}
   <article class="card card--article">
-    <a class="card-link" href="{{ destination }}"{% if offsite %} preload="none"{% endif %} aria-label="{{ post.title }}"></a>
+    <a class="card-link" href="{{ destination }}"{% if offsite %} preload="none"{% endif %} aria-label="{{ card.title }}"></a>
     {% if banner %}
     <div class="card-banner">
       <img src="{{ banner }}" alt="" loading="lazy"
@@ -135,22 +116,22 @@
       <div class="card-meta">
         <span class="card-kind card-kind--article">{{ ico.icon("article") }} Article</span>
         <span class="byline">Episteme</span>
-        <span class="muted">{{ ico.icon("clock") }} {{ post.reading_time_minutes }} min · {{ post.difficulty }}</span>
-        <time>{{ post.generated_at | dt }}</time>
-        <a class="card-provenance" href="/post/{{ post.id }}/provenance">{{ ico.icon("provenance") }} provenance</a>
+        <span class="muted">{{ ico.icon("clock") }} {{ card.reading_time_minutes }} min · {{ card.difficulty }}</span>
+        <time>{{ card.at | dt }}</time>
+        <a class="card-provenance" href="/post/{{ card.post_id }}/provenance">{{ ico.icon("provenance") }} provenance</a>
       </div>
-      <h2 class="card-title">{{ post.title }}</h2>
+      <h2 class="card-title">{{ card.title }}</h2>
       {# Never truncated here: the summary is written to stand alone and sized to
          fit (0050), and `.card-snippet` clamps at however many lines this card
          has room for as a backstop (0052). A `truncate()` filter cut it mid-word
          before, which guaranteed the one thing the card exists to avoid. #}
       {% include "_card_summary.html" %}
-      {% if post.topics %}
+      {% if card.topics %}
       <div class="topic-chips">
-        {% for topic in post.topics %}<span class="chip">{{ topic }}</span>{% endfor %}
+        {% for topic in card.topics %}<span class="chip">{{ topic }}</span>{% endfor %}
       </div>
       {% endif %}
-      {% with fb = feedback_contexts[post.id] %}{% include "_feedback.html" %}{% endwith %}
+      {% with fb = feedback_contexts[card.post_id] %}{% include "_feedback.html" %}{% endwith %}
     </div>
   </article>
 {% endif %}

@@ -2,6 +2,7 @@
 
 - Date: 2026-09-10
 - Status: live-verified 2026-09-10, both messages seen arriving on the phone; the tap and the home screen icon are still unwatched (see [verification.md](../verification.md))
+- Superseded in part by [0061](0061-the-phone-gets-a-native-reader.md), 2026-10-10: the manifest was installed and fell short, so the rejected native app is being built. The notifications stand.
 - Rule: outbound notification goes through `notify.publish` and nowhere else, and **a notification never fails the work it reports on**. Two events, both on their own cron: the digest at 06:00 UTC and lunch at 09:00 UTC on weekdays. The home screen icon is a manifest, not an app.
 
 ## Context
