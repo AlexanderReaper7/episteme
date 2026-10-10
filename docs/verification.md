@@ -16,7 +16,7 @@ Watch the next pipeline run rather than assuming these.
 
   Not yet seen:
 
-  - **Any of it on the phone.** Android 13, over the tailnet, against `https://episteme.java-tint.ts.net`, which does not serve `/api/feed` until the selfhosting clone is updated past 7f4f80c.
+  - **On the phone, beyond the first screen.** Installed 2026-10-10 over wireless adb on the OnePlus 8 Pro (Android 13), built against `https://episteme.java-tint.ts.net`; the feed loaded from the live server. That hostname had been dead since the move to strix: nothing published `svc:episteme` and the tailnet still routed it to the offline Windows desktop, until the compose file gained DockTail labels the same day. Nothing past the first screen has been watched on the phone.
   - Infinite scroll past page 1, pull to refresh, a filed card (none were visible on a Saturday), an aggregate card's Custom Tab.
   - The WebView screen's interception of a boosted `/post/{id}` link, and `/admin` and `/c/matsedel` in it. `/tune` rendered.
   - A chart, video, timeline or diagram section from a real post. The corpus holds none of the first three and one diagram (post 361), so every renderer was checked on 2026-10-10 against fixture sections appended to post 523 by a throwaway proxy: five charts (nominal bars, two coloured lines on a numeric x, points, stacked bars, an area), a timeline, a video and a mermaid flowchart. A real quiz (wrong pick marked, right one shown, explanation revealed), image with credit link and sources were on the same page. `plotOf` and `sectionOf` have JVM tests (`android/app/src/test`).
