@@ -14,20 +14,30 @@ import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import net.episteme.app.EpistemeApplication
 import net.episteme.app.MainActivity
+
+/** How long before the end the next article is queued: the web's lead, `app.js`. */
+private const val LEAD_MS = 15_000L
 
 /**
  * Narration outside the activity: the player lives here, so it keeps playing
  * with the screen off or the app in the background, and Media3 draws the
  * notification and the lock screen controls from the session (0061).
  *
- * Continuous mode is the web's "podcast" toggle: with it on, the article after
- * the current one is queued as soon as the current one starts, so the handoff
- * has no gap and the lock screen offers a Next button.
+ * Continuous mode is the web's "podcast" toggle: with it on, the next article is
+ * queued [LEAD_MS] before the current one ends, the lead the web warms its next
+ * post with. Queued, it starts loading at once, so Fish has those seconds to
+ * start talking. A live stream has no length, and ExoPlayer learns its duration
+ * only when the download completes, so an article Fish is slower to send than
+ * that is queued when it ends instead, and the handoff waits for Fish, as on the
+ * web. Queued any earlier, a reader who stops listening has already paid for an
+ * article they never heard.
  */
 class PlaybackService : MediaSessionService() {
     private var session: MediaSession? = null
@@ -35,8 +45,13 @@ class PlaybackService : MediaSessionService() {
     private lateinit var prefs: NarrationPrefs
     private val api get() = (application as EpistemeApplication).api
 
+    private var ticker: Job? = null
+    // The item a next-article request is out for, so the clock and the end of
+    // playback do not both fetch one.
+    private var queueing: String? = null
+
     private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-        if (key == NarrationPrefs.CONTINUOUS) session?.player?.let(::syncQueue)
+        if (key == NarrationPrefs.CONTINUOUS) session?.player?.let(::dropQueueIfOff)
     }
 
     override fun onCreate() {
@@ -51,7 +66,24 @@ class PlaybackService : MediaSessionService() {
             .setWakeMode(C.WAKE_MODE_NETWORK)
             .build()
         player.addListener(object : Player.Listener {
-            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) = syncQueue(player)
+            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) = dropQueueIfOff(player)
+
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                ticker?.cancel()
+                if (isPlaying) {
+                    ticker = scope.launch {
+                        while (true) {
+                            val duration = player.duration
+                            if (duration != C.TIME_UNSET && duration - player.currentPosition <= LEAD_MS) queueNext(player)
+                            delay(1_000)
+                        }
+                    }
+                }
+            }
+
+            override fun onPlaybackStateChanged(state: Int) {
+                if (state == Player.STATE_ENDED) queueNext(player)
+            }
         })
         val open = PendingIntent.getActivity(
             this,
@@ -84,27 +116,31 @@ class PlaybackService : MediaSessionService() {
         super.onDestroy()
     }
 
-    /** Make the queue match the toggle: the next article queued while it is on,
-     * nothing after the current item while it is off. */
-    private fun syncQueue(player: Player) {
+    /** Turning Continuous off takes back whatever it queued. */
+    private fun dropQueueIfOff(player: Player) {
         val index = player.currentMediaItemIndex
-        if (!prefs.continuous) {
-            if (player.mediaItemCount > index + 1) player.removeMediaItems(index + 1, player.mediaItemCount)
-            return
-        }
-        if (player.hasNextMediaItem()) return
-        val current = player.currentMediaItem?.mediaId?.toLongOrNull() ?: return
+        if (!prefs.continuous && player.mediaItemCount > index + 1) player.removeMediaItems(index + 1, player.mediaItemCount)
+    }
+
+    /** Queue the article after the current one, and start it if the current one
+     * has already ended. */
+    private fun queueNext(player: Player) {
+        if (!prefs.continuous || player.hasNextMediaItem()) return
+        val current = player.currentMediaItem?.mediaId ?: return
+        if (queueing == current) return
+        queueing = current
         scope.launch {
-            val item = try {
-                val next = api.nextArticle(current) ?: return@launch
-                narrationItem(api, api.post(next), prefs.voice ?: return@launch)
+            try {
+                val next = api.nextArticle(current.toLong()) ?: return@launch
+                val item = narrationItem(api, api.post(next), prefs.voice ?: return@launch)
+                // The reader may have moved on while the request was out.
+                if (!prefs.continuous || player.currentMediaItem?.mediaId != current || player.hasNextMediaItem()) return@launch
+                player.addMediaItem(item)
+                if (player.playbackState == Player.STATE_ENDED) player.seekToDefaultPosition(player.mediaItemCount - 1)
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
-                return@launch
-            }
-            // The reader may have moved on while the request was out.
-            if (prefs.continuous && player.currentMediaItem?.mediaId == current.toString() && !player.hasNextMediaItem()) {
-                player.addMediaItem(item)
+            } finally {
+                queueing = null
             }
         }
     }
