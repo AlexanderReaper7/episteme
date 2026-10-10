@@ -93,6 +93,16 @@ services:
       - ${AUDIO_DIR:-./media}:/media
     ports:
       - "127.0.0.1:8200:8200"
+    # svc:episteme on the tailnet, the name the phone opens (PUBLIC_BASE_URL).
+    # DockTail publishes from these labels and REMOVES any serve entry no label
+    # claims, so a hand-run `tailscale serve` for this lasts about three minutes.
+    labels:
+      - "docktail.service.enable=true"
+      - "docktail.service.name=episteme"
+      - "docktail.service.port=8200"
+      - "docktail.service.service-port=443"
+      - "docktail.service.direct=false"
+      - "docktail.tags=tag:default"
     # Interactive: the reader is waiting on every call the web makes.
     secrets:
       - source: infermux-web
