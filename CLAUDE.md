@@ -182,14 +182,20 @@ adb reverse tcp:8201 tcp:8201
 (cd android && ./gradlew -q assembleDebug -Pepisteme.baseUrl=http://127.0.0.1:8201)
 adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 # Judge scrolling only on a release build: on the phone the debug feed missed 40%
-# of frame deadlines and release 3.5%. Signed with the debug key until there is a
+# of frame deadlines and release 1%, 0.4% installed with the .dm below. Signed with the debug key until there is a
 # release key, so it installs over a debug build. The phone: `adb pair`/`connect`.
-(cd android && ./gradlew -q assembleRelease) && adb install -r android/app/build/outputs/apk/release/app-release.apk
-# Frame times while flinging, and the baseline profile the release build ships.
-# Both drive a release build against its own server URL. The emulator's frame
-# times measure its host display, not the app: benchmark on the phone.
-(cd android && ./gradlew :baselineprofile:connectedBenchmarkReleaseAndroidTest -Pandroid.testInstrumentationRunnerArguments.androidx.benchmark.enabledRules=Macrobenchmark)
+# WITH the .dm: it carries the baseline profile in Android 13's format, and the
+# install compiles from it (`status=speed-profile`). A plain `adb install` leaves
+# the app interpreted until the phone's overnight dexopt, and janks twice as often.
+(cd android && ./gradlew -q assembleRelease) && R=android/app/build/outputs/apk/release && adb install-multiple -r $R/app-release.apk $R/baselineProfiles/0/app-release.dm
+# Frame times on the phone: plain install against .dm install, alternating. Not
+# Macrobenchmark, which OxygenOS defeats twice (FeedScrollBenchmark's comment);
+# that module still GENERATES the profile, on the emulator, against its own URL.
+ANDROID_SERIAL=192.168.0.4:<port> android/frames.sh
 (cd android && ./gradlew :app:generateReleaseBaselineProfile -Pandroid.testInstrumentationRunnerArguments.androidx.benchmark.enabledRules=BaselineProfile)  # 12 min; after UI changes
+# The launcher icon's foreground is GENERATED from the same SVG as the PWA icons;
+# tests/test_icons.py fails when it is stale.
+uv run tools/build_android_icon.py
 GET    /api/status  # /api/{status,sources,runs,jobs,stories,posts,llm-calls}
 GET    /api/llm-calls?story_id=284&full=true  # full prompts/responses
 # /post/{id}/provenance is every LLM call behind THIS post version. Retention pins

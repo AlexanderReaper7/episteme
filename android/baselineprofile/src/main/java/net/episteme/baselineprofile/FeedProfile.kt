@@ -21,22 +21,16 @@ class FeedProfile {
         pressHome()
         startActivityAndWait()
 
-        val feed = device.wait(Until.findObject(By.scrollable(true)), 20_000)
-            ?: error("no feed on screen; is the server reachable from the device?")
-        // Off the edges, so a fling is not taken for the back gesture.
-        feed.setGestureMargin(device.displayWidth / 5)
-        repeat(4) { feed.fling(Direction.DOWN) }
-        repeat(4) { feed.fling(Direction.UP) }
+        scrollable(timeoutMs = 20_000)
+        fling(Direction.DOWN, 4)
+        fling(Direction.UP, 4)
 
         // The Meta row's "Article" label sits inside the card, so a tap on it is
         // a tap on the card.
-        val article = feed.scrollUntil(Direction.DOWN, Until.findObject(By.text("Article")))
+        val article = scrollable().scrollUntil(Direction.DOWN, Until.findObject(By.text("Article")))
             ?: error("no article in the feed")
         article.click()
-        val body = device.wait(Until.findObject(By.scrollable(true)), 10_000)
-            ?: error("the article did not open")
-        body.setGestureMargin(device.displayWidth / 5)
-        repeat(3) { body.fling(Direction.DOWN) }
+        fling(Direction.DOWN, 3)
         device.pressBack()
         device.waitForIdle()
     }

@@ -6,9 +6,7 @@ import androidx.benchmark.macro.FrameTimingMetric
 import androidx.benchmark.macro.StartupMode
 import androidx.benchmark.macro.junit4.MacrobenchmarkRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.uiautomator.By
 import androidx.test.uiautomator.Direction
-import androidx.test.uiautomator.Until
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -19,6 +17,12 @@ import org.junit.runner.RunWith
  *     -Pandroid.testInstrumentationRunnerArguments.androidx.benchmark.enabledRules=Macrobenchmark
  * On the emulator add `...androidx.benchmark.suppressErrors=EMULATOR`; its times
  * compare one build with another and say nothing about the phone.
+ *
+ * Neither test runs on the OnePlus 8 Pro. OxygenOS 13.1 refuses every
+ * `cmd package compile` with "Failed to cpmpile !", which is how [profiled]
+ * compiles, and [interpreted] flings to the end and then fails in
+ * FrameTimingMetric: "Observed frame in trace missing id". On that phone,
+ * `android/frames.sh` compares the two installs through gfxinfo instead.
  */
 @RunWith(AndroidJUnit4::class)
 class FeedScrollBenchmark {
@@ -42,12 +46,9 @@ class FeedScrollBenchmark {
         setupBlock = {
             pressHome()
             startActivityAndWait()
-            device.wait(Until.findObject(By.scrollable(true)), 20_000)
-                ?: error("no feed on screen; is the server reachable from the device?")
+            scrollable(timeoutMs = 20_000)
         },
     ) {
-        val feed = device.findObject(By.scrollable(true))
-        feed.setGestureMargin(device.displayWidth / 5)
-        repeat(6) { feed.fling(Direction.DOWN) }
+        fling(Direction.DOWN, 6)
     }
 }
