@@ -47,7 +47,9 @@ from ..tts import (
     build_script,
     default_voice_id,
     get_voice,
+    list_voices,
     media_type_for,
+    pick_default,
     script_hash,
     tee_to_client,
 )
@@ -999,6 +1001,20 @@ def _audio_is_current(row: PostAudio | None, digest: str, fmt: str, params: dict
         and row.audio_format == fmt
         and (row.params or {}) == (params or {})
     )
+
+
+@router.get("/voices")
+async def api_voices():
+    """What the article page's narration controls read (`post.html`): the enabled
+    voices in catalog order, the effective default, and whether Fish is configured.
+    The Android app shows its player on the same condition (0061)."""
+    async with SessionLocal() as session:
+        voices = await list_voices(session)
+    return {
+        "configured": bool(settings.fish_api_key),
+        "default_voice": pick_default(voices, settings.tts_default_voice),
+        "voices": [{"id": v.id, "label": v.label} for v in voices],
+    }
 
 
 @router.get("/posts/{post_id}/audio/stream")

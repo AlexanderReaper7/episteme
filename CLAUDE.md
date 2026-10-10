@@ -193,6 +193,7 @@ POST   /api/llm-calls/pin?attempt_id=<uuid>
 # on-demand streaming works regardless. FISH_API_KEY in .env. Voices are DB rows.
 POST   /api/posts/247/narrate  # worker batch
 GET    /api/posts/247/audio/stream?voice=  # web, on-demand
+GET    /api/voices  # enabled voices, the default, and whether Fish is configured; the app's player
 docker compose exec -T db psql -U episteme -d episteme -c 'select id,label,sort_order,enabled from voices order by sort_order;'
 
 docker compose exec -T db psql -U episteme -d episteme
