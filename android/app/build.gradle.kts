@@ -2,6 +2,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.baselineprofile)
 }
 
 // Where the server is. The default is the tailnet name the phone resolves; the
@@ -72,5 +73,9 @@ dependencies {
     implementation(libs.vico.compose.m3)
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.session)
+    // Hands the shipped profile to ART on first launch. Without the Play Store
+    // nothing else does, and a sideloaded APK stays interpreted and JIT-compiled.
+    implementation(libs.androidx.profileinstaller)
+    baselineProfile(project(":baselineprofile"))
     testImplementation(libs.junit)
 }

@@ -185,6 +185,11 @@ adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 # of frame deadlines and release 3.5%. Signed with the debug key until there is a
 # release key, so it installs over a debug build. The phone: `adb pair`/`connect`.
 (cd android && ./gradlew -q assembleRelease) && adb install -r android/app/build/outputs/apk/release/app-release.apk
+# Frame times while flinging, and the baseline profile the release build ships.
+# Both drive a release build against its own server URL. The emulator's frame
+# times measure its host display, not the app: benchmark on the phone.
+(cd android && ./gradlew :baselineprofile:connectedBenchmarkReleaseAndroidTest -Pandroid.testInstrumentationRunnerArguments.androidx.benchmark.enabledRules=Macrobenchmark)
+(cd android && ./gradlew :app:generateReleaseBaselineProfile -Pandroid.testInstrumentationRunnerArguments.androidx.benchmark.enabledRules=BaselineProfile)  # 12 min; after UI changes
 GET    /api/status  # /api/{status,sources,runs,jobs,stories,posts,llm-calls}
 GET    /api/llm-calls?story_id=284&full=true  # full prompts/responses
 # /post/{id}/provenance is every LLM call behind THIS post version. Retention pins

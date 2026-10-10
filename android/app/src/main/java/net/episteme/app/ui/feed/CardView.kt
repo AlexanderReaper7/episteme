@@ -6,30 +6,17 @@ import net.episteme.app.ui.feedback.TopicChips
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Bookmark
-import androidx.compose.material.icons.filled.ThumbDown
-import androidx.compose.material.icons.filled.ThumbUp
-import androidx.compose.material.icons.outlined.BookmarkBorder
-import androidx.compose.material.icons.outlined.ThumbDown
-import androidx.compose.material.icons.outlined.ThumbUp
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconToggleButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -41,8 +28,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -151,23 +138,43 @@ private fun Meta(card: Card) {
 }
 
 /** The summary, clamped, with a control to read the rest. Whether the control
- * shows is measured from the laid-out text, never assumed from a length. */
+ * shows is measured from the laid-out text, never assumed from a length.
+ *
+ * The decision is made inside one measure pass. Kept as state, it took a second
+ * composition one frame after each card scrolled into view, and the card grew
+ * under the list when the control appeared. */
 @Composable
 private fun Summary(text: String) {
     var expanded by rememberSaveable { mutableStateOf(false) }
-    var clamped by remember { mutableStateOf(false) }
+    // Written by the Text's measure and read by the Layout's, in that order, so
+    // nothing has to be recomposed to carry it.
+    val overflow = remember { Overflow() }
     Spacer(Modifier.size(6.dp))
-    Text(
-        text,
-        style = MaterialTheme.typography.bodyMedium,
-        color = Palette.text.copy(alpha = 0.85f),
-        maxLines = if (expanded) Int.MAX_VALUE else 4,
-        overflow = TextOverflow.Ellipsis,
-        onTextLayout = { if (!expanded) clamped = it.hasVisualOverflow },
-    )
-    if (clamped || expanded) {
-        TextButton(onClick = { expanded = !expanded }, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
-            Text(if (expanded) "Show less" else "Show more", style = MaterialTheme.typography.labelMedium)
+    Layout(
+        content = {
+            Text(
+                text,
+                style = MaterialTheme.typography.bodyMedium,
+                color = Palette.text.copy(alpha = 0.85f),
+                maxLines = if (expanded) Int.MAX_VALUE else 4,
+                overflow = TextOverflow.Ellipsis,
+                onTextLayout = { overflow.clamped = it.hasVisualOverflow },
+            )
+            TextButton(onClick = { expanded = !expanded }, contentPadding = PaddingValues(0.dp)) {
+                Text(if (expanded) "Show less" else "Show more", style = MaterialTheme.typography.labelMedium)
+            }
+        },
+    ) { (body, control), constraints ->
+        val loose = constraints.copy(minWidth = 0, minHeight = 0)
+        val b = body.measure(loose)
+        val c = if (expanded || overflow.clamped) control.measure(loose) else null
+        layout(maxOf(b.width, c?.width ?: 0), b.height + (c?.height ?: 0)) {
+            b.place(0, 0)
+            c?.place(0, b.height)
         }
     }
+}
+
+private class Overflow {
+    var clamped = false
 }

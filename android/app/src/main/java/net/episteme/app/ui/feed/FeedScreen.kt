@@ -1,5 +1,6 @@
 package net.episteme.app.ui.feed
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -9,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.layout.LazyLayoutCacheWindow
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Dashboard
@@ -44,12 +46,17 @@ import androidx.navigation3.runtime.NavKey
 // How close to the end the next page is asked for. A page is 20 cards.
 private const val PREFETCH = 5
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun FeedScreen(api: Api, open: (String, String) -> Unit, openKey: (NavKey) -> Unit) {
     val vm: FeedViewModel = viewModel { FeedViewModel(api) }
     val state by vm.state.collectAsStateWithLifecycle()
-    val list = rememberLazyListState()
+    // A card is most of a screen tall and the default prefetch prepares one item,
+    // so a fling reached cards nobody had composed yet. This composes and measures
+    // a screen ahead in the idle time between frames, and keeps half a screen
+    // behind composed for a flick back. Experimental in foundation 1.12, so a
+    // Compose update that changes it fails the build rather than the scroll.
+    val list = rememberLazyListState(cacheWindow = LazyLayoutCacheWindow(aheadFraction = 1f, behindFraction = 0.5f))
     val scroll = TopAppBarDefaults.enterAlwaysScrollBehavior()
 
     LaunchedEffect(list) {
