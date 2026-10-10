@@ -795,6 +795,15 @@ async def api_feed(cursor_at: str | None = None, cursor_id: int | None = None):
     }
 
 
+# One card's feedback state, re-read after every tap. The app never tracks the
+# controls' state itself, for the same reason `_feedback.html` swaps itself back
+# in from the database: what is shown is what was recorded.
+@app.get("/api/posts/{post_id}/feedback")
+async def api_post_feedback(post_id: int):
+    async with SessionLocal() as session:
+        return _card_feedback(await feedback_context(session, post_id, "card"))
+
+
 @app.get("/partials/items", response_class=HTMLResponse)
 async def items_partial(
     request: Request,

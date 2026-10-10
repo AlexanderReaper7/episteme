@@ -168,6 +168,16 @@ POST   /api/jobs/defer/matsedel_notify  # 09:00 UTC weekdays; sends today's lunc
 uv run tools/build_pwa_icons.py
 
 GET    /api/feed  # the ranked feed as JSON cards (0061); ?cursor_at=&cursor_id= from next_cursor
+GET    /api/posts/458/feedback  # one card's recorded signals; the app re-reads it after every toggle
+
+# The Android app (android/, 0061). The SDK comes from nixcfg (`android.enable`).
+# The emulator cannot reach the host through 10.0.2.2 on this machine (connects
+# time out), so tunnel the port with adb and build against loopback. A debug
+# build allows cleartext to 127.0.0.1 only; release is HTTPS only.
+emulator -avd episteme -no-window &   # the AVD is google_apis x86_64, API 37
+adb reverse tcp:8201 tcp:8201
+(cd android && ./gradlew -q assembleDebug -Pepisteme.baseUrl=http://127.0.0.1:8201)
+adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 GET    /api/status  # /api/{status,sources,runs,jobs,stories,posts,llm-calls}
 GET    /api/llm-calls?story_id=284&full=true  # full prompts/responses
 # /post/{id}/provenance is every LLM call behind THIS post version. Retention pins

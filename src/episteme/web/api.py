@@ -184,6 +184,8 @@ def _post_dict(post: Post, with_sections: bool = False) -> dict:
         "kind": post.kind,
         "title": post.title,
         "summary": post.summary,
+        "href": post.href,
+        "banner_url": post.banner_url,
         "difficulty": post.difficulty,
         "topics": post.topics,
         "reading_time_minutes": post.reading_time_minutes,
