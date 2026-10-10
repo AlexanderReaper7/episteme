@@ -299,12 +299,25 @@ private fun Choice(text: String, index: Int, answer: Int, picked: Int?, onPick: 
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        when {
-            correct -> Icon(Icons.Filled.CheckCircle, contentDescription = "Correct", tint = Palette.ok, modifier = Modifier.size(18.dp))
-            wrong -> Icon(Icons.Filled.Cancel, contentDescription = "Wrong", tint = Palette.bad, modifier = Modifier.size(18.dp))
-            else -> Spacer(Modifier.size(18.dp))
+        // No mark until there is something to mark, as on the web: an empty slot
+        // in front of every choice read as a broken indent.
+        if (correct || wrong) {
+            Icon(
+                if (correct) Icons.Filled.CheckCircle else Icons.Filled.Cancel,
+                contentDescription = if (correct) "Correct" else "Wrong",
+                tint = edge,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(Modifier.width(10.dp))
         }
-        Spacer(Modifier.width(10.dp))
-        Text(text, style = MaterialTheme.typography.bodyMedium, color = if (picked == null || correct || wrong) Palette.text else Palette.muted)
+        Text(
+            text,
+            style = MaterialTheme.typography.bodyMedium,
+            color = when {
+                correct || wrong -> edge
+                picked == null -> Palette.text
+                else -> Palette.muted
+            },
+        )
     }
 }
