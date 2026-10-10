@@ -56,5 +56,7 @@ dependencies {
     implementation(libs.androidx.webkit)
     implementation(libs.markdown.renderer.m3)
     implementation(libs.vico.compose.m3)
+    implementation(libs.media3.exoplayer)
+    implementation(libs.media3.session)
     testImplementation(libs.junit)
 }

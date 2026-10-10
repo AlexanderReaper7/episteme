@@ -67,3 +67,17 @@ data class Post(
     val modelUsed: String? = null,
     val sections: List<kotlinx.serialization.json.JsonObject> = emptyList(),
 )
+
+/** `/api/voices`: what the web's narration controls read. */
+@Serializable
+data class Voices(
+    val configured: Boolean,
+    val defaultVoice: String? = null,
+    val voices: List<Voice> = emptyList(),
+)
+
+@Serializable
+data class Voice(val id: String, val label: String)
+
+@Serializable
+data class NextPost(val nextId: Long? = null)

@@ -50,6 +50,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import net.episteme.app.data.Api
 import net.episteme.app.data.Post
+import net.episteme.app.data.Voices
+import net.episteme.app.playback.Narration
 import net.episteme.app.ui.formatAt
 import net.episteme.app.ui.theme.Palette
 
@@ -78,7 +80,15 @@ class ArticleViewModel(private val api: Api, private val postId: Long) : ViewMod
     private val _feedbackError = MutableStateFlow<String?>(null)
     val feedbackError: StateFlow<String?> = _feedbackError.asStateFlow()
 
+    // Null until loaded, and stays null when the server cannot narrate: the
+    // player shows on the web's condition, Fish configured and a voice enabled.
+    private val _voices = MutableStateFlow<Voices?>(null)
+    val voices: StateFlow<Voices?> = _voices.asStateFlow()
+
     init {
+        viewModelScope.launch {
+            _voices.value = runCatching { api.voices() }.getOrNull()?.takeIf { it.configured && it.voices.isNotEmpty() }
+        }
         viewModelScope.launch {
             api.feedbackChanges.collect { if (it.postId == postId) _feedback.value = it.feedback }
         }
@@ -105,7 +115,7 @@ class ArticleViewModel(private val api: Api, private val postId: Long) : ViewMod
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ArticleScreen(api: Api, postId: Long, open: (String, String) -> Unit, back: () -> Unit) {
+fun ArticleScreen(api: Api, narration: Narration, postId: Long, open: (String, String) -> Unit, back: () -> Unit) {
     val vm: ArticleViewModel = viewModel { ArticleViewModel(api, postId) }
     val state by vm.state.collectAsStateWithLifecycle()
     val scroll = TopAppBarDefaults.enterAlwaysScrollBehavior()
@@ -129,13 +139,13 @@ fun ArticleScreen(api: Api, postId: Long, open: (String, String) -> Unit, back: 
             is ArticleState.Failed -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(s.message, color = MaterialTheme.colorScheme.error)
             }
-            is ArticleState.Loaded -> Article(api, vm, s.post, padding, open)
+            is ArticleState.Loaded -> Article(api, narration, vm, s.post, padding, open)
         }
     }
 }
 
 @Composable
-private fun Article(api: Api, vm: ArticleViewModel, post: Post, padding: PaddingValues, open: (String, String) -> Unit) {
+private fun Article(api: Api, narration: Narration, vm: ArticleViewModel, post: Post, padding: PaddingValues, open: (String, String) -> Unit) {
     val sections = remember(post) { post.sections.map { sectionOf(api.json, it) } }
     LazyColumn(
         contentPadding = PaddingValues(top = padding.calculateTopPadding(), bottom = padding.calculateBottomPadding() + 32.dp),
@@ -167,6 +177,11 @@ private fun Article(api: Api, vm: ArticleViewModel, post: Post, padding: Padding
                     if (post.topics.isNotEmpty()) {
                         Spacer(Modifier.size(10.dp))
                         TopicChips(post.topics)
+                    }
+                    val voices by vm.voices.collectAsStateWithLifecycle()
+                    voices?.takeIf { post.kind == "article" }?.let {
+                        Spacer(Modifier.size(12.dp))
+                        NarrationBar(narration, post, it)
                     }
                 }
             }

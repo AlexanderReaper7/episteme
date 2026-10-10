@@ -43,6 +43,17 @@ class Api(baseUrl: String, val client: OkHttpClient) {
 
     suspend fun post(postId: Long): Post = get(url("api", "posts", postId.toString()))
 
+    suspend fun voices(): Voices = get(url("api", "voices"))
+
+    /** The article after this one, in the order continuous narration plays them. */
+    suspend fun nextArticle(postId: Long): Long? =
+        get<NextPost>(url("api", "posts", postId.toString(), "next")).nextId
+
+    /** Cached audio is served with Range support; otherwise the server synthesizes
+     * live and tees to its cache, so the first play of a post is billed by Fish. */
+    fun audioUrl(postId: Long, voice: String): String =
+        url("api", "posts", postId.toString(), "audio", "stream") { addQueryParameter("voice", voice) }.toString()
+
     suspend fun cardFeedback(postId: Long): CardFeedback =
         get(url("api", "posts", postId.toString(), "feedback"))
 
