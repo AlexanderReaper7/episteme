@@ -4,7 +4,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -40,14 +39,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.compose.AsyncImage
-import com.mikepenz.markdown.m3.Markdown
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonPrimitive
 import net.episteme.app.data.Api
 import net.episteme.app.data.Post
 import net.episteme.app.ui.formatAt
@@ -69,22 +63,6 @@ class ArticleViewModel(private val api: Api, private val postId: Long) : ViewMod
                 ArticleState.Failed(e.message ?: e.toString())
             }
         }
-    }
-}
-
-/** One section, by its `type`. */
-sealed interface Section {
-    data class Prose(val text: String) : Section
-    data class KeyPoints(val items: List<String>) : Section
-    data class Unsupported(val type: String) : Section
-}
-
-fun sectionOf(raw: JsonObject): Section {
-    val type = raw["type"]?.jsonPrimitive?.contentOrNull ?: "?"
-    return when (type) {
-        "prose" -> Section.Prose(raw["text"]?.jsonPrimitive?.contentOrNull.orEmpty())
-        "key_points" -> Section.KeyPoints(raw["items"]?.jsonArray?.map { it.jsonPrimitive.content }.orEmpty())
-        else -> Section.Unsupported(type)
     }
 }
 
@@ -114,14 +92,14 @@ fun ArticleScreen(api: Api, postId: Long, open: (String, String) -> Unit, back: 
             is ArticleState.Failed -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(s.message, color = MaterialTheme.colorScheme.error)
             }
-            is ArticleState.Loaded -> Article(s.post, padding, open)
+            is ArticleState.Loaded -> Article(api, s.post, padding, open)
         }
     }
 }
 
 @Composable
-private fun Article(post: Post, padding: PaddingValues, open: (String, String) -> Unit) {
-    val sections = remember(post) { post.sections.map(::sectionOf) }
+private fun Article(api: Api, post: Post, padding: PaddingValues, open: (String, String) -> Unit) {
+    val sections = remember(post) { post.sections.map { sectionOf(api.json, it) } }
     LazyColumn(
         contentPadding = PaddingValues(top = padding.calculateTopPadding(), bottom = padding.calculateBottomPadding() + 32.dp),
     ) {
@@ -154,25 +132,7 @@ private fun Article(post: Post, padding: PaddingValues, open: (String, String) -
         }
         itemsIndexed(sections, key = { i, _ -> "s$i" }) { _, section ->
             Box(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                when (section) {
-                    is Section.Prose -> Markdown(section.text)
-                    is Section.KeyPoints -> Column(
-                        Modifier.fillMaxWidth().background(Palette.cardBg, MaterialTheme.shapes.medium).padding(12.dp),
-                    ) {
-                        Text("Key points", style = MaterialTheme.typography.titleSmall, color = Palette.accent)
-                        section.items.forEach { point ->
-                            Row(Modifier.padding(top = 6.dp)) {
-                                Text("•  ", color = Palette.accent)
-                                Text(point, style = MaterialTheme.typography.bodyMedium)
-                            }
-                        }
-                    }
-                    is Section.Unsupported -> Text(
-                        "A ${section.type} section, not drawn by the app yet.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Palette.muted,
-                    )
-                }
+                SectionView(section, api.base.toString(), open)
             }
         }
     }

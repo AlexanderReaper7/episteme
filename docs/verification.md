@@ -18,8 +18,10 @@ Watch the next pipeline run rather than assuming these.
 
   - **Any of it on the phone.** Android 13, over the tailnet, against `https://episteme.java-tint.ts.net`, which does not serve `/api/feed` until the selfhosting clone is updated past 7f4f80c.
   - Infinite scroll past page 1, pull to refresh, a filed card (none were visible on a Saturday), an aggregate card's Custom Tab.
-  - The WebView screen (`/admin`, `/tune`, `/c/matsedel`) and its interception of a boosted `/post/{id}` link.
-  - Every article section except prose and key points: those render as a muted "A <type> section, not drawn by the app yet." line.
+  - The WebView screen's interception of a boosted `/post/{id}` link, and `/admin` and `/c/matsedel` in it. `/tune` rendered.
+  - A chart, video, timeline or diagram section from a real post. The corpus holds none of the first three and one diagram (post 361), so every renderer was checked on 2026-10-10 against fixture sections appended to post 523 by a throwaway proxy: five charts (nominal bars, two coloured lines on a numeric x, points, stacked bars, an area), a timeline, a video and a mermaid flowchart. A real quiz (wrong pick marked, right one shown, explanation revealed), image with credit link and sources were on the same page. `plotOf` and `sectionOf` have JVM tests (`android/app/src/test`).
+  - Split areas overlap where the web stacks them; Vico cannot stack line layers.
+  - On the phone: the first WebView draw. On the emulator's software renderer it hung forever; on the host GPU it is fine, and `startUpWebView` reports 86-90 ms of UI-thread start-up at launch.
 
 - **The web's InferMux key** (0058, built 2026-10-03). The worker's half was watched 2026-10-08, after the deployment gained its key mounts and a route to InferMux (compose `extra_hosts` and the `br-episteme` bridge, nixcfg `modules/nixos/episteme.nix`). During pipeline run 321, InferMux's `/warden/verdict` listed the worker's `/v1/embeddings` in flight as `batch`. When Firefox reached the warden's 25% threshold at 17:27 UTC, the warden yielded, the run ended `paused` with reason `resource`, and a batch call got `gpu_yielded`.
 

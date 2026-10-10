@@ -16,6 +16,7 @@ object Palette {
     val border = Color(0xFF1E1F26)
     val articleBorder = Color(0xFF2B3A5E)
     val filed = Color(0xFFB48EAD)
+    val ok = Color(0xFF17D98E)
     val bad = Color(0xFFC7082F)
     val bannerBg = Color(0xFF0A0A0D)
 }

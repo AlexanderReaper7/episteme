@@ -174,7 +174,10 @@ GET    /api/posts/458/feedback  # one card's recorded signals; the app re-reads 
 # The emulator cannot reach the host through 10.0.2.2 on this machine (connects
 # time out), so tunnel the port with adb and build against loopback. A debug
 # build allows cleartext to 127.0.0.1 only; release is HTTPS only.
-emulator -avd episteme -no-window &   # the AVD is google_apis x86_64, API 37
+# Host GPU, through XWayland's display. `-gpu swiftshader_indirect` hangs the
+# first WebView draw forever (an ANR on any diagram or admin page), and
+# `-gpu host` without DISPLAY cannot start its renderer and never boots.
+DISPLAY=:1 emulator -avd episteme -no-window -gpu host &   # google_apis x86_64, API 37
 adb reverse tcp:8201 tcp:8201
 (cd android && ./gradlew -q assembleDebug -Pepisteme.baseUrl=http://127.0.0.1:8201)
 adb install -r android/app/build/outputs/apk/debug/app-debug.apk

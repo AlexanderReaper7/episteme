@@ -55,5 +55,6 @@ dependencies {
     implementation(libs.androidx.browser)
     implementation(libs.androidx.webkit)
     implementation(libs.markdown.renderer.m3)
+    implementation(libs.vico.compose.m3)
     testImplementation(libs.junit)
 }
