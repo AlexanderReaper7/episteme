@@ -1,0 +1,1 @@
+- [Deploy to the live clone](deploy-to-live-clone.md) — pre-approved 2026-10-10, no need to ask; GitHub push still needs asking
