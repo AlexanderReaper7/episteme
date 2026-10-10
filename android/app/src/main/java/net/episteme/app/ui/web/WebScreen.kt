@@ -3,6 +3,7 @@ package net.episteme.app.ui.web
 import android.annotation.SuppressLint
 import android.graphics.Bitmap
 import android.webkit.JavascriptInterface
+import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -121,11 +122,18 @@ fun WebScreen(api: Api, key: WebKey, open: (String, String) -> Unit, back: () ->
 
                             override fun onPageFinished(view: WebView, url: String?) {
                                 progress = 0f
-                                view.title?.takeIf { it.isNotBlank() }?.let { title = it }
                             }
 
                             override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) {
                                 canGoBack = view.canGoBack()
+                            }
+                        }
+                        // Here and not in onPageFinished: a boosted click swaps the
+                        // title with no page load. The server sends the app the page's
+                        // name without "Episteme • " (templating.document_title).
+                        webChromeClient = object : WebChromeClient() {
+                            override fun onReceivedTitle(view: WebView, received: String?) {
+                                received?.takeIf { it.isNotBlank() }?.let { title = it }
                             }
                         }
                         loadUrl(api.resolve(key.path).toString())

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <title>Episteme{% block title %}{% endblock %}</title>
+  <title>{% filter document_title %}{% block title %}{% endblock %}{% endfilter %}</title>
   {# `asset()` fingerprints the URL (?v=<hash>) so it can be cached immutably and
      re-fingerprints on any edit - see web.app.RevalidateStaticFiles. #}
   <link rel="stylesheet" href="{{ asset('style.css') }}">
@@ -56,7 +56,8 @@
       hx-target="#main-content"
       hx-swap="innerHTML"
       hx-ext="preload"
-      preload="mouseover">
+      preload="mouseover"{% if in_app() %}
+      class="in-app"{% endif %}>
   {# Above the swap boundary on purpose - see the sprite's own header comment. #}
   {% include "_icon_sprite.html" %}
   {# The app's WebView screen draws its own header and has its own assistant

@@ -11,7 +11,7 @@ import re
 
 from starlette.requests import Request
 
-from episteme.web.templating import APP_USER_AGENT, BASE_DIR, templates
+from episteme.web.templating import APP_USER_AGENT, document_title, BASE_DIR, templates
 
 CSS = (BASE_DIR / "static" / "style.css").read_text(encoding="utf-8")
 JS = (BASE_DIR / "static" / "app.js").read_text(encoding="utf-8")
@@ -41,6 +41,26 @@ def test_the_app_gets_no_second_header_and_no_second_assistant():
     assert 'id="main-content"' in app
     browser = _page()
     assert 'class="site-header"' in browser and 'id="chat-rail"' in browser
+    # what sticks below the header reads its height, which is 0 without one
+    assert 'class="in-app"' in app and 'class="in-app"' not in browser
+
+
+def test_the_app_titles_a_page_by_its_name_alone():
+    """The app's top bar shows the document title, inside a screen that is already
+    Episteme, so "Episteme • Matsedel" there named the app twice (0061). Escaped
+    once, whichever way it is composed."""
+    # from_string picks no autoescape from an extension, so the block asks for it
+    page = templates.env.from_string(
+        '{% extends "base.html" %}{% block title %}{% autoescape true %}{{ name }}{% endautoescape %}{% endblock %}'
+    )
+    app_ua = f"Mozilla/5.0 (Linux; Android 13; wv) {APP_USER_AGENT}0.1"
+    for ua, want in ((app_ua, "Fish &amp; chips"), (BROWSER, "Episteme • Fish &amp; chips")):
+        request = Request({"type": "http", "headers": [(b"user-agent", ua.encode())]})
+        assert f"<title>{want}</title>" in page.render(request=request, name="Fish & chips")
+        # the boosted fragment and the error page compose it from the rendered block
+        assert document_title(request, "Fish &amp; chips") == want
+    assert "<title>Episteme</title>" in _page()
+    assert document_title(None, "") == "Episteme"
 
 
 def test_the_links_exist_once():

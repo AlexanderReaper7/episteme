@@ -103,7 +103,7 @@ def render(request: Request, template: str, context: dict, status_code: int = 20
         ctx = {"request": request, **context}
         title = render_block(templates.env, template, "title", **ctx)
         body = render_block(templates.env, template, block, **ctx)
-        return HTMLResponse(f"<title>Episteme{title}</title>\n{body}", status_code=status_code)
+        return HTMLResponse(f"<title>{document_title(request, title)}</title>\n{body}", status_code=status_code)
     return templates.TemplateResponse(request, template, context, status_code=status_code)
 
 
@@ -381,17 +381,39 @@ templates.env.globals["asset"] = asset
 APP_USER_AGENT = "EpistemeApp/"
 
 
+def _from_app(request: Request | None) -> bool:
+    return request is not None and APP_USER_AGENT in request.headers.get("user-agent", "")
+
+
 @pass_context
 def in_app(ctx) -> bool:
     """Whether the page is drawn inside the Android app's WebView screen. That
     screen has its own top bar, back button and assistant, so base.html leaves out
     the site header and the chat rail rather than showing two of each (0061).
     A render without a request is a browser's."""
-    request = ctx.get("request")
-    return request is not None and APP_USER_AGENT in request.headers.get("user-agent", "")
+    return _from_app(ctx.get("request"))
+
+
+def document_title(request: Request | None, name: str) -> Markup:
+    """The `<title>` text for a page whose `title` block rendered to `name`.
+
+    A browser tab is told which site it is, `Episteme • Feed`. The app's top bar
+    shows this as its heading, inside a screen that is already Episteme, so it
+    gets the page's name alone (0061). `name` is a rendered block, already escaped.
+    The full document, a boosted fragment and the error page all call this."""
+    name = Markup(name.strip())
+    if _from_app(request) and name:
+        return name
+    return Markup("Episteme • ") + name if name else Markup("Episteme")
+
+
+@pass_context
+def _document_title(ctx, name: str) -> Markup:
+    return document_title(ctx.get("request"), name)
 
 
 templates.env.globals["in_app"] = in_app
+templates.env.filters["document_title"] = _document_title
 templates.env.filters["dt"] = _format_dt
 templates.env.filters["ago"] = _ago
 templates.env.filters["ago_tag"] = _ago_tag

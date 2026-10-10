@@ -3,7 +3,7 @@
    failure is still a page, and the header and the chat rail are the way back out
    of one. If base.html is what broke, errors.py never gets here - it falls back
    to a self-contained document with no template and no CSS. #}
-{% block title %} • {{ status }} {{ reason }}{% endblock %}
+{% block title %}{{ status }} {{ reason }}{% endblock %}
 {% block content %}
 <article class="error-page">
   <header class="error-head">

@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %} • {{ post.title }}{% endblock %}
+{% block title %}{{ post.title }}{% endblock %}
 
 {# Only a self-rendering post reaches this template: /post/{id} redirects when
    the post stores an href (0047), so the aggregate branch that used to relist the

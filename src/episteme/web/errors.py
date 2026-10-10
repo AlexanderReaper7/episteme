@@ -38,7 +38,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse
 from jinja2_fragments import render_block
 
-from .templating import templates
+from .templating import document_title, templates
 
 # Everything under here is ours; anything else is a dependency frame. Templates
 # live inside the package, so a Jinja frame classifies as app code for free.
@@ -234,7 +234,7 @@ def _render(request: Request, status: int, exc: BaseException | None) -> HTMLRes
         title = render_block(templates.env, "error.html", "title", **context)
         body = render_block(templates.env, "error.html", "content", **context)
         return HTMLResponse(
-            f"<title>Episteme{title}</title>\n{body}",
+            f"<title>{document_title(request, title)}</title>\n{body}",
             status_code=status,
             headers={
                 # Every error lands in the top-level outlet, whichever outlet

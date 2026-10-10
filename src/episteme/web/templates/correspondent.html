@@ -19,7 +19,7 @@
    #main-content and never re-renders <head>. Here it arrives with the fragment
    and leaves with it, which is also what keeps it off the feed. #}
 
-{% block title %} • {{ correspondent.label }}{% endblock %}
+{% block title %}{{ correspondent.label }}{% endblock %}
 
 {% block content %}
 <div class="correspondent-page correspondent--{{ correspondent.slug }}">

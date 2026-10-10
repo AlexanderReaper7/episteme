@@ -71,6 +71,13 @@
   --frost-blur: blur(10px);
 }
 
+/* Inside the app there is no site header (templating.in_app, 0061), so nothing
+   sticks below one: the kitchen bar and the admin sidebar park at the top.
+   0px, not 0: calc() rejects a unitless zero added to a length. */
+.in-app {
+  --header-height: 0px;
+}
+
 * { box-sizing: border-box; }
 
 body {
