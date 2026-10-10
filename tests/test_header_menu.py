@@ -9,7 +9,9 @@ markup, and the menu is a second layout of it.
 
 import re
 
-from episteme.web.templating import BASE_DIR, templates
+from starlette.requests import Request
+
+from episteme.web.templating import APP_USER_AGENT, BASE_DIR, templates
 
 CSS = (BASE_DIR / "static" / "style.css").read_text(encoding="utf-8")
 JS = (BASE_DIR / "static" / "app.js").read_text(encoding="utf-8")
@@ -22,8 +24,23 @@ NARROW = CSS.split("@media (max-width: 40rem) {\n  .site-menu-toggle {")[1].spli
 NARROW_CODE = re.sub(r"/\*.*?\*/", "", NARROW, flags=re.S)
 
 
-def _page() -> str:
-    return templates.env.get_template("base.html").render()
+BROWSER = "Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0"
+
+
+def _page(user_agent: str = BROWSER) -> str:
+    request = Request({"type": "http", "headers": [(b"user-agent", user_agent.encode())]})
+    return templates.env.get_template("base.html").render(request=request)
+
+
+def test_the_app_gets_no_second_header_and_no_second_assistant():
+    """The app's WebView screen has its own top bar and back button (0061), so
+    the site header inside it was a second header. The chat rail goes too: its
+    button opens an assistant the app means to have natively."""
+    app = _page(f"Mozilla/5.0 (Linux; Android 13; wv) Chrome/140.0 Mobile {APP_USER_AGENT}0.1")
+    assert 'class="site-header"' not in app and 'id="chat-rail"' not in app
+    assert 'id="main-content"' in app
+    browser = _page()
+    assert 'class="site-header"' in browser and 'id="chat-rail"' in browser
 
 
 def test_the_links_exist_once():

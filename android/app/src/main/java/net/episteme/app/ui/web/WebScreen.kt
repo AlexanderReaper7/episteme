@@ -33,6 +33,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import net.episteme.app.BuildConfig
 import net.episteme.app.data.Api
 import net.episteme.app.ui.Route
 import net.episteme.app.ui.WebKey
@@ -88,6 +89,12 @@ fun WebScreen(api: Api, key: WebKey, open: (String, String) -> Unit, back: () ->
                         setBackgroundColor(Palette.bg.toArgb())
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
+                        // The server drops its own header and chat rail for this
+                        // marker, since the top bar above already is one
+                        // (templating.in_app). Every request carries the agent,
+                        // htmx's included, where an extra header on loadUrl would
+                        // reach only the first page.
+                        settings.userAgentString = "${settings.userAgentString} EpistemeApp/${BuildConfig.VERSION_NAME}"
                         addJavascriptInterface(
                             object {
                                 @JavascriptInterface

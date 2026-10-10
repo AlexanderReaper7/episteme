@@ -490,7 +490,9 @@ _HTML_CACHE_CONTROL = (
 # fragment, and `HX-Target` says WHICH region a boosted request wants — an htmx
 # history-restore sends `HX-Request` with no target and must get the whole document.
 # Keying on `HX-Request` alone put those two bodies in one cache entry.
-_HTML_VARY = "HX-Request, HX-Target"
+# User-Agent because the app's WebView gets a document without the site header
+# (templating.in_app). One client never changes its agent, so no cache splits.
+_HTML_VARY = "HX-Request, HX-Target, User-Agent"
 
 
 def _conditional_response(

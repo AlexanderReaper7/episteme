@@ -23,6 +23,8 @@ A TWA or a WebView shell would not have changed any of that. Both draw the same 
 
 **Web-only pages go through one WebView screen, as a temporary measure the reader chose.** `/admin`, `/tune`, `/glance` and `/c/<slug>` render there unchanged. A link to `/post/{id}` opens the native article screen, and an off-site link opens a Custom Tab, so the WebView never shows an article and native screens can replace it one page at a time.
 
+**Inside the app, a web page leaves out the site header and the chat rail** (2026-10-10). The WebView screen's own top bar already names the page and goes back, so `/c/matsedel` showed two headers, and the rail's button would open a second assistant. The WebView appends `EpistemeApp/<version>` to its user agent and `templating.in_app` reads it. A user agent and not an extra request header, because a WebView sends extra headers only with the first `loadUrl`, never with a followed link or an htmx request. HTML responses `Vary` on `User-Agent` for it.
+
 **Sideloaded over adb, no store.** The phone reaches the server at `PUBLIC_BASE_URL` over the tailnet, so the Tailscale app has to be connected.
 
 ## Rejected

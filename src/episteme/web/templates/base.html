@@ -59,6 +59,9 @@
       preload="mouseover">
   {# Above the swap boundary on purpose - see the sprite's own header comment. #}
   {% include "_icon_sprite.html" %}
+  {# The app's WebView screen draws its own header and has its own assistant
+     (templating.in_app, 0061). #}
+  {% if not in_app() %}
   <header class="site-header">
     <h1><a href="/">Episteme</a></h1>
     {# Below 40rem the three links do not fit beside the wordmark and wrap onto a
@@ -81,6 +84,7 @@
       <a href="/admin" hx-boost="false">{{ ico.icon("admin") }} Admin</a>
     </nav>
   </header>
+  {% endif %}
   <main id="main-content">
     {% block content %}{% endblock %}
   </main>
@@ -88,7 +92,9 @@
      anything in there is destroyed on every click. A shell fetched on load rather
      than rendered inline, so the conversation's state never enters a page's ETag
      (see web/chat.py). #}
+  {% if not in_app() %}
   <aside id="chat-rail" class="chat-rail chat-rail-loading"
          hx-get="/chat/panel" hx-trigger="load" hx-target="this" hx-swap="outerHTML"></aside>
+  {% endif %}
 </body>
 </html>

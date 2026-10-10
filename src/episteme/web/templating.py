@@ -12,7 +12,7 @@ import nh3
 from fastapi import Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
-from jinja2 import ChoiceLoader, FileSystemLoader
+from jinja2 import ChoiceLoader, FileSystemLoader, pass_context
 from jinja2_fragments import render_block
 from markupsafe import Markup, escape
 
@@ -375,6 +375,23 @@ def asset(path: str) -> str:
 
 
 templates.env.globals["asset"] = asset
+
+
+# The Android app's WebView appends this to its user agent (android/, 0061).
+APP_USER_AGENT = "EpistemeApp/"
+
+
+@pass_context
+def in_app(ctx) -> bool:
+    """Whether the page is drawn inside the Android app's WebView screen. That
+    screen has its own top bar, back button and assistant, so base.html leaves out
+    the site header and the chat rail rather than showing two of each (0061).
+    A render without a request is a browser's."""
+    request = ctx.get("request")
+    return request is not None and APP_USER_AGENT in request.headers.get("user-agent", "")
+
+
+templates.env.globals["in_app"] = in_app
 templates.env.filters["dt"] = _format_dt
 templates.env.filters["ago"] = _ago
 templates.env.filters["ago_tag"] = _ago_tag
