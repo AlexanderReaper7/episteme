@@ -12,7 +12,7 @@ One exception is kept deliberately separate: a dated section for work a design s
 
 Watch the next pipeline run rather than assuming these.
 
-- **The Android app** (0061, built 2026-10-10). Watched on the emulator (API 37, `google_apis` x86_64) against a dev uvicorn from this checkout on the live database, through `adb reverse`. The feed loaded 20 cards with banners, the summary clamp showed "Show more" only on overflowing text, the top bar collapsed on scroll, a like on post 519 wrote feedback row 1 and filled the thumb and raised the steering chips, the same tap undid it (`DELETE /api/feedback/1`, table back to 0 rows), a card opened the native article for post 527, and back returned to the feed at the same scroll position.
+- **The Android app** (0061, built 2026-10-10). Watched on the emulator (API 37, `google_apis` x86_64) against a dev uvicorn from this checkout on the live database, through `adb reverse`. The feed loaded 20 cards with banners, the summary clamp showed "Show more" only on overflowing text, the top bar collapsed on scroll, a like on post 519 wrote feedback row 1 and filled the thumb and raised the steering chips, the same tap undid it (`DELETE /api/feedback/1`, table back to 0 rows), a card opened the native article for post 527, and back returned to the feed at the same scroll position. The article page carries the web's feedback block: a like on post 523 at the article's foot filled the thumb and raised "More of" chips there, back showed the feed card in the same state without a reload (`Api.feedbackChanges`), and the same tap on the card undid it, `/api/posts/523/feedback` empty again.
 
   Not yet seen:
 

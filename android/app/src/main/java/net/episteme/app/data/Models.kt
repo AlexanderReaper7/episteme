@@ -64,5 +64,6 @@ data class Post(
     val topics: List<String> = emptyList(),
     val readingTimeMinutes: Int? = null,
     val generatedAt: String? = null,
+    val modelUsed: String? = null,
     val sections: List<kotlinx.serialization.json.JsonObject> = emptyList(),
 )

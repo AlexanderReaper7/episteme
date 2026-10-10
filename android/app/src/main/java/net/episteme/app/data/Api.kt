@@ -1,6 +1,9 @@
 package net.episteme.app.data
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.Json
@@ -12,6 +15,9 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 
 class ApiError(message: String) : Exception(message)
+
+/** What one post's controls now show, after a tap anywhere in the app. */
+data class FeedbackChange(val postId: Long, val feedback: CardFeedback)
 
 class Api(baseUrl: String, val client: OkHttpClient) {
     val base: HttpUrl = baseUrl.toHttpUrl()
@@ -40,7 +46,32 @@ class Api(baseUrl: String, val client: OkHttpClient) {
     suspend fun cardFeedback(postId: Long): CardFeedback =
         get(url("api", "posts", postId.toString(), "feedback"))
 
-    suspend fun record(kind: String, postId: Long, topic: String? = null) {
+    private val _feedbackChanges = MutableSharedFlow<FeedbackChange>(extraBufferCapacity = 16)
+
+    /** Every recorded change to a post's feedback, from the feed or the article,
+     * so a card the reader comes back to shows what was recorded meanwhile. */
+    val feedbackChanges: SharedFlow<FeedbackChange> = _feedbackChanges.asSharedFlow()
+
+    /** Record or undo one signal, then re-read what was recorded: the controls
+     * show the database, never a guess, as `_feedback.html` swaps itself back in. */
+    suspend fun toggleSignal(postId: Long, current: CardFeedback, kind: String): CardFeedback {
+        val existing = current.signals[kind]
+        if (existing != null) undo(existing) else record(kind, postId)
+        return reread(postId)
+    }
+
+    /** A topic chip: a second tap undoes the event the first one recorded. */
+    suspend fun toggleTopic(postId: Long, current: CardFeedback, slug: String, kind: String): CardFeedback {
+        val topic = current.topics.first { it.slug == slug }
+        val existing = topic.more ?: topic.less
+        if (existing != null) undo(existing) else record(kind, postId, topic = slug)
+        return reread(postId)
+    }
+
+    private suspend fun reread(postId: Long): CardFeedback =
+        cardFeedback(postId).also { _feedbackChanges.emit(FeedbackChange(postId, it)) }
+
+    private suspend fun record(kind: String, postId: Long, topic: String? = null) {
         send(
             "POST",
             url("api", "feedback") {
@@ -51,7 +82,7 @@ class Api(baseUrl: String, val client: OkHttpClient) {
         )
     }
 
-    suspend fun undo(feedbackId: Long) {
+    private suspend fun undo(feedbackId: Long) {
         send("DELETE", url("api", "feedback", feedbackId.toString()))
     }
 

@@ -71,27 +71,27 @@ class FeedViewModel(private val api: Api) : ViewModel() {
         load(reset = _state.value.cards.isEmpty())
     }
 
-    /** Record or undo one signal, then re-read the card's state from the server:
-     * what the controls show is what was recorded, as on the web. */
-    fun toggle(card: Card, kind: String) = mutate(card) {
-        val existing = card.feedback.signals[kind]
-        if (existing != null) api.undo(existing) else api.record(kind, card.postId)
+    init {
+        // One path for every tap, here or on an article: whatever was recorded
+        // replaces the card's controls.
+        viewModelScope.launch {
+            api.feedbackChanges.collect { change ->
+                _state.update { s ->
+                    s.copy(cards = s.cards.map { if (it.postId == change.postId) it.copy(feedback = change.feedback) else it })
+                }
+            }
+        }
     }
 
-    fun toggleTopic(card: Card, slug: String, kind: String) = mutate(card) {
-        val topic = card.feedback.topics.first { it.slug == slug }
-        val existing = topic.more ?: topic.less
-        if (existing != null) api.undo(existing) else api.record(kind, card.postId, topic = slug)
-    }
+    fun toggle(card: Card, kind: String) = mutate { api.toggleSignal(card.postId, card.feedback, kind) }
 
-    private fun mutate(card: Card, action: suspend () -> Unit) {
+    fun toggleTopic(card: Card, slug: String, kind: String) =
+        mutate { api.toggleTopic(card.postId, card.feedback, slug, kind) }
+
+    private fun mutate(action: suspend () -> Unit) {
         viewModelScope.launch {
             try {
                 action()
-                val fresh = api.cardFeedback(card.postId)
-                _state.update { s ->
-                    s.copy(cards = s.cards.map { if (it.postId == card.postId) it.copy(feedback = fresh) else it })
-                }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 _state.update { it.copy(error = e.message ?: e.toString()) }

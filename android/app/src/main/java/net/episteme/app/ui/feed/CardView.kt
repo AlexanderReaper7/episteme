@@ -1,5 +1,8 @@
 package net.episteme.app.ui.feed
 
+import net.episteme.app.ui.feedback.FeedbackControls
+import net.episteme.app.ui.feedback.TopicChips
+
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -87,7 +90,7 @@ fun CardView(
                 Spacer(Modifier.size(8.dp))
                 TopicChips(card.topics)
             }
-            Feedback(card, onToggle, onTopic)
+            FeedbackControls(card.feedback, onToggle, onTopic)
         }
     }
 }
@@ -166,75 +169,5 @@ private fun Summary(text: String) {
         TextButton(onClick = { expanded = !expanded }, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
             Text(if (expanded) "Show less" else "Show more", style = MaterialTheme.typography.labelMedium)
         }
-    }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun TopicChips(topics: List<String>) {
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        topics.forEach { topic ->
-            Text(
-                topic,
-                style = MaterialTheme.typography.labelSmall,
-                color = Palette.muted,
-                modifier = Modifier
-                    .background(Palette.border, RoundedCornerShape(50))
-                    .padding(horizontal = 10.dp, vertical = 4.dp),
-            )
-        }
-    }
-}
-
-/** Like, dislike, save, and after a rating the topics it can be narrowed to.
- * The direction is inherited from the rating, as on the web (`_feedback.html`):
- * after a dislike a chip can only mean less. A chip already picked stays,
- * because its event still exists. No counts: these steer, they do not score. */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun Feedback(card: Card, onToggle: (String) -> Unit, onTopic: (String, String) -> Unit) {
-    val signals = card.feedback.signals
-    val direction = when {
-        signals.containsKey("dislike") -> "less_topic"
-        signals.containsKey("like") -> "more_topic"
-        else -> null
-    }
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Toggle(signals.containsKey("like"), Icons.Filled.ThumbUp, Icons.Outlined.ThumbUp, "More like this") { onToggle("like") }
-        Toggle(signals.containsKey("dislike"), Icons.Filled.ThumbDown, Icons.Outlined.ThumbDown, "Less like this") { onToggle("dislike") }
-        Toggle(signals.containsKey("save"), Icons.Filled.Bookmark, Icons.Outlined.BookmarkBorder, "Save for later") { onToggle("save") }
-    }
-    val topics = card.feedback.topics.filter { direction != null || it.more != null || it.less != null }
-    if (topics.isEmpty()) return
-    FlowRow(
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalArrangement = Arrangement.Center,
-        itemVerticalAlignment = Alignment.CenterVertically,
-    ) {
-        if (direction != null) {
-            Text(
-                if (direction == "less_topic") "Less of" else "More of",
-                style = MaterialTheme.typography.labelMedium,
-                color = Palette.muted,
-            )
-        }
-        topics.forEach { topic ->
-            val picked = topic.more != null || topic.less != null
-            FilterChip(
-                selected = picked,
-                onClick = { onTopic(topic.slug, direction ?: if (topic.less != null) "less_topic" else "more_topic") },
-                label = { Text(topic.label) },
-                colors = FilterChipDefaults.filterChipColors(
-                    selectedContainerColor = if (topic.less != null) Palette.bad.copy(alpha = 0.25f) else Palette.accent.copy(alpha = 0.2f),
-                ),
-            )
-        }
-    }
-}
-
-@Composable
-private fun Toggle(on: Boolean, onIcon: ImageVector, offIcon: ImageVector, label: String, onClick: () -> Unit) {
-    IconToggleButton(checked = on, onCheckedChange = { onClick() }) {
-        Icon(if (on) onIcon else offIcon, contentDescription = label, tint = if (on) Palette.accent else Palette.muted)
     }
 }
