@@ -27,6 +27,20 @@ android {
         buildConfigField("String", "BASE_URL", "\"$baseUrl\"")
     }
 
+    buildTypes {
+        release {
+            // A debuggable, unshrunk build is not what the reader should judge
+            // scrolling by: on the phone the debug feed missed 40% of frame
+            // deadlines, nearly all on the UI thread.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
+            // There is no release key yet. The debug key lets this install over a
+            // debug build without losing app data.
+            signingConfig = signingConfigs.getByName("debug")
+        }
+    }
+
     buildFeatures {
         compose = true
         buildConfig = true

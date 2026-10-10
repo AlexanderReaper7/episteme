@@ -181,6 +181,10 @@ DISPLAY=:1 emulator -avd episteme -no-window -gpu host &   # google_apis x86_64,
 adb reverse tcp:8201 tcp:8201
 (cd android && ./gradlew -q assembleDebug -Pepisteme.baseUrl=http://127.0.0.1:8201)
 adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+# Judge scrolling only on a release build: on the phone the debug feed missed 40%
+# of frame deadlines and release 3.5%. Signed with the debug key until there is a
+# release key, so it installs over a debug build. The phone: `adb pair`/`connect`.
+(cd android && ./gradlew -q assembleRelease) && adb install -r android/app/build/outputs/apk/release/app-release.apk
 GET    /api/status  # /api/{status,sources,runs,jobs,stories,posts,llm-calls}
 GET    /api/llm-calls?story_id=284&full=true  # full prompts/responses
 # /post/{id}/provenance is every LLM call behind THIS post version. Retention pins
