@@ -12,6 +12,15 @@ One exception is kept deliberately separate: a dated section for work a design s
 
 Watch the next pipeline run rather than assuming these.
 
+- **The Android app** (0061, built 2026-10-10). Watched on the emulator (API 37, `google_apis` x86_64) against a dev uvicorn from this checkout on the live database, through `adb reverse`. The feed loaded 20 cards with banners, the summary clamp showed "Show more" only on overflowing text, the top bar collapsed on scroll, a like on post 519 wrote feedback row 1 and filled the thumb and raised the steering chips, the same tap undid it (`DELETE /api/feedback/1`, table back to 0 rows), a card opened the native article for post 527, and back returned to the feed at the same scroll position.
+
+  Not yet seen:
+
+  - **Any of it on the phone.** Android 13, over the tailnet, against `https://episteme.java-tint.ts.net`, which does not serve `/api/feed` until the selfhosting clone is updated past 7f4f80c.
+  - Infinite scroll past page 1, pull to refresh, a filed card (none were visible on a Saturday), an aggregate card's Custom Tab.
+  - The WebView screen (`/admin`, `/tune`, `/c/matsedel`) and its interception of a boosted `/post/{id}` link.
+  - Every article section except prose and key points: those render as a muted "A <type> section, not drawn by the app yet." line.
+
 - **The web's InferMux key** (0058, built 2026-10-03). The worker's half was watched 2026-10-08, after the deployment gained its key mounts and a route to InferMux (compose `extra_hosts` and the `br-episteme` bridge, nixcfg `modules/nixos/episteme.nix`). During pipeline run 321, InferMux's `/warden/verdict` listed the worker's `/v1/embeddings` in flight as `batch`. When Firefox reached the warden's 25% threshold at 17:27 UTC, the warden yielded, the run ended `paused` with reason `resource`, and a batch call got `gpu_yielded`.
 
   Not yet seen: an interactive request from the web, which a chat turn makes, going through while the worker's batch calls are refused.
