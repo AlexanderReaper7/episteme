@@ -27,6 +27,10 @@ A TWA or a WebView shell would not have changed any of that. Both draw the same 
 
 **Sideloaded over adb, no store.** The phone reaches the server at `PUBLIC_BASE_URL` over the tailnet, so the Tailscale app has to be connected.
 
+**A sideload carries the baseline profile's dex metadata** (2026-10-10). The Play Store compiles an app from its baseline profile at install; `adb install` does not, and profileinstaller only hands the profile to the phone's overnight dexopt. AGP already writes the profile as a `.dm` in each API range's format, and `adb install-multiple` with the APK compiles from it on the spot. Measured on the phone over three alternating rounds, janky frames went from about 1% to 0.4% and slow UI-thread frames from 13-18 to 3-5 per 15 flings. The profile in the APK's assets is the older P format, which Android 13's `profman` rejects with "Profile version mismatch", so it is AGP's `baselineProfiles/0/` file and not one rebuilt from the APK.
+
+**The launcher icon is the mark, translated** (2026-10-10). `tools/build_android_icon.py` turns the generated `episteme.svg` into the adaptive icon's VectorDrawable on black, scaled so the octahedron fills the 66dp circle every launcher mask keeps, with the field lines running out under the mask. A translation rather than PNGs, because every path in the SVG has a VectorDrawable equivalent; the script stops on anything it cannot translate.
+
 ## Rejected
 
 - **A TWA or WebView wrapper around the whole site.** Same engine as the PWA that fell short, so the same feel.

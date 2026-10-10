@@ -228,3 +228,18 @@ def test_generated_sprite_is_current():
     filled = set(re.findall(r'"([\w-]+)"', re.search(r"FILLED = \((.*?)\)", source, re.S).group(1)))
     assert names, "could not read the glyph inventory out of the generator"
     assert _sprite_ids() == names | {f"{name}-filled" for name in filled}
+
+
+def test_the_launcher_icon_is_current():
+    """The Android launcher icon is translated from the generated mark
+    (tools/build_android_icon.py), so a new mark that never re-ran it would leave
+    the phone showing the old one. The translation needs no network, so this
+    compares the whole file rather than an inventory."""
+    import importlib.util
+
+    root = Path(BASE_DIR).parents[2]
+    spec = importlib.util.spec_from_file_location("build_android_icon", root / "tools" / "build_android_icon.py")
+    gen = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gen)
+    xml, _, _ = gen.build(gen.SOURCE.read_text(encoding="utf-8"))
+    assert gen.OUT.read_text(encoding="utf-8") == xml, "run: uv run tools/build_android_icon.py"
