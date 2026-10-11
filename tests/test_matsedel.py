@@ -1116,6 +1116,55 @@ def test_no_dish_is_dropped_for_being_far_down_the_menu(glance_template):
     assert "…" not in out
 
 
+def test_the_json_block_says_what_the_html_block_says():
+    """The panel's native block (0062) is built from the same `day` as the HTML
+    one, so the heading, the link and the label/dish split cannot disagree."""
+    from episteme.correspondents.matsedel.views import glance_json
+
+    friday = THAT_MONDAY + timedelta(days=4)
+    day = {
+        "name": "Friday",
+        "date": friday,
+        "kitchens": [
+            {
+                "kitchen": {"name": "Restaurang Italia", "site": "italia"},
+                "lines": [
+                    {"text": "FRÅN BUFFÉ:", "label": True},
+                    {"text": "Lasagne Al Forno", "label": False},
+                ],
+            }
+        ],
+    }
+    block = glance_json(day, THAT_MONDAY).model_dump()
+    assert block["heading"] == f"Friday {friday}"
+    assert block["href"] == f"/c/matsedel#day-{friday}"
+    assert block["groups"] == [
+        {
+            "name": "Restaurang Italia",
+            "lines": [
+                {"text": "FRÅN BUFFÉ:", "label": True},
+                {"text": "Lasagne Al Forno", "label": False},
+            ],
+        }
+    ]
+    assert block["empty"] is None
+
+
+def test_a_json_block_with_no_day_is_a_sentence_and_not_an_error():
+    from episteme.correspondents.matsedel.views import glance_json
+
+    block = glance_json(None, THAT_MONDAY)
+    assert block.groups == []
+    assert block.empty == f"No menus read for the week of {THAT_MONDAY} yet."
+
+
+def test_matsedel_serves_the_json_contract():
+    from episteme.correspondents import glance
+    from episteme.correspondents.registry import get_plugin
+
+    assert glance.serves_json(get_plugin("matsedel"))
+
+
 # --- reading for a WEEK, not just for a week (0054) -------------------------
 
 

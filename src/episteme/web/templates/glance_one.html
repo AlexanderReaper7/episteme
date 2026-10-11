@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+
+{# One correspondent's Glance block on a page of its own, for the app's launcher
+   panel when the correspondent serves no `glance.json` (0062). The panel shows
+   it in a WebView under a title it drew itself, so the block carries none, and
+   the app's user agent drops the site header (templating.in_app). #}
+
+{% block title %}{{ block.label }}{% endblock %}
+
+{% block content %}
+<div class="glance glance--one">
+  {% if block.stylesheet %}
+  <link rel="stylesheet" href="/c/{{ block.slug }}/style.css">
+  {% endif %}
+  {% set titled = false %}
+  {% include "_glance_block.html" %}
+</div>
+{% endblock %}

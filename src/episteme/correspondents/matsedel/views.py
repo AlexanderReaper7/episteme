@@ -16,9 +16,11 @@ from sqlalchemy import func, select
 
 from ...db import SessionLocal
 from ...models import Source
+from ..glance import GLANCE_JSON_PATH, GlanceBlock, GlanceGroup, GlanceLine
 from ..registry import get_plugin
 from ...web.templating import correspondent_page, templates
 from .models import MatsedelDish, MatsedelWeek
+from .posts import day_href
 from .store import latest_monday, stored_weeks, week_of
 from .tags import DISH, HIDDEN, LABEL, tag_of
 
@@ -114,26 +116,54 @@ async def week_view(request: Request, monday: str | None = None):
     return correspondent_page(request, get_plugin(SLUG), "matsedel_week.html", context)
 
 
+async def _glance_day(session) -> tuple[dict | None, date]:
+    """Today's lunch, or the next weekday's once the kitchens have closed, and
+    the Monday of the week it came from. One choice, read by both blocks."""
+    today = date.today()
+    # Saturday and Sunday look forward to Monday rather than back at Friday.
+    wanted = today + timedelta(days=(7 - today.weekday()) if today.weekday() > 4 else 0)
+    context = await _week_context(session, _monday_of(wanted))
+    for candidate in context["days"]:
+        candidate["kitchens"] = [c for c in candidate["cells"] if c["lines"]]
+    day = next((d for d in context["days"] if d["date"] == wanted), None)
+    if day is None or not day["kitchens"]:
+        day = next((d for d in context["days"] if d["kitchens"]), None)
+    return day, context["monday"]
+
+
 @router.get("/glance", response_class=HTMLResponse)
 async def glance_block(request: Request):
-    """Today's lunch, or the next weekday's once the kitchens have closed.
-
-    A fragment, not a page: core's Glance swaps it into a block it already drew,
-    so this response carries no wrapper and no stylesheet link.
-    """
+    """A fragment, not a page: core's Glance swaps it into a block it already
+    drew, so this response carries no wrapper and no stylesheet link."""
     async with SessionLocal() as session:
-        today = date.today()
-        # Saturday and Sunday look forward to Monday rather than back at Friday.
-        wanted = today + timedelta(days=(7 - today.weekday()) if today.weekday() > 4 else 0)
-        context = await _week_context(session, _monday_of(wanted))
-        for candidate in context["days"]:
-            candidate["kitchens"] = [c for c in candidate["cells"] if c["lines"]]
-        day = next((d for d in context["days"] if d["date"] == wanted), None)
-        if day is None or not day["kitchens"]:
-            day = next((d for d in context["days"] if d["kitchens"]), None)
+        day, monday = await _glance_day(session)
     return templates.TemplateResponse(
-        request, "matsedel_glance.html", {"day": day, "monday": context["monday"]}
+        request, "matsedel_glance.html", {"day": day, "monday": monday}
     )
+
+
+def glance_json(day: dict | None, monday: date) -> GlanceBlock:
+    """The block as data, for the app's launcher panel (0062). The same day and
+    the same words as `matsedel_glance.html`, which is the HTML of this."""
+    if day is None:
+        return GlanceBlock(empty=f"No menus read for the week of {monday} yet.")
+    return GlanceBlock(
+        heading=f"{day['name']} {day['date']}",
+        href=day_href(day["date"]),
+        groups=[
+            GlanceGroup(
+                name=cell["kitchen"]["name"],
+                lines=[GlanceLine(text=line["text"], label=line["label"]) for line in cell["lines"]],
+            )
+            for cell in day["kitchens"]
+        ],
+    )
+
+
+@router.get(GLANCE_JSON_PATH, response_model=GlanceBlock)
+async def glance_block_json():
+    async with SessionLocal() as session:
+        return glance_json(*await _glance_day(session))
 
 
 @router.get("/stats", response_class=HTMLResponse)

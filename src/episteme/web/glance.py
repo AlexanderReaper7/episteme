@@ -19,10 +19,11 @@ writes down for the status panel: absent and broken must look different.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy import select
 
+from ..correspondents import glance as glance_contract
 from ..correspondents import registry
 from ..db import SessionLocal
 from ..models import Correspondent
@@ -31,8 +32,9 @@ from .templating import render
 router = APIRouter(tags=["glance"])
 
 
-@router.get("/glance", response_class=HTMLResponse)
-async def glance(request: Request):
+async def _blocks() -> list[dict]:
+    """One entry per enabled correspondent, label order. The page, the app's list
+    and the one-block page all read this."""
     async with SessionLocal() as session:
         rows = (
             (
@@ -59,6 +61,29 @@ async def glance(request: Request):
                 # An external correspondent has no local stylesheet to serve, so
                 # its block is styled by core alone.
                 "stylesheet": plugin is not None and plugin.stylesheet is not None,
+                "json": glance_contract.serves_json(plugin),
             }
         )
-    return render(request, "glance.html", {"blocks": blocks})
+    return blocks
+
+
+@router.get("/glance", response_class=HTMLResponse)
+async def glance(request: Request):
+    return render(request, "glance.html", {"blocks": await _blocks()})
+
+
+@router.get("/api/glance")
+async def api_glance():
+    """The blocks the app's launcher panel lays out (0062). `json` says whether
+    the correspondent serves `/c/<slug>/glance.json`; the panel draws that one
+    natively and shows `/glance/<slug>` in a WebView for any other."""
+    return [{"slug": b["slug"], "label": b["label"], "json": b["json"]} for b in await _blocks()]
+
+
+@router.get("/glance/{slug}", response_class=HTMLResponse)
+async def glance_one(request: Request, slug: str):
+    """One block on a page of its own, untitled: the WebView half of the panel."""
+    block = next((b for b in await _blocks() if b["slug"] == slug), None)
+    if block is None:
+        raise HTTPException(status_code=404, detail=f"No enabled correspondent {slug!r}")
+    return render(request, "glance_one.html", {"block": block})

@@ -81,3 +81,23 @@ data class Voice(val id: String, val label: String)
 
 @Serializable
 data class NextPost(val nextId: Long? = null)
+
+/** `/api/glance`: one entry per enabled correspondent (0062). With [json] the
+ * panel draws `/c/<slug>/glance.json`; without it, `/glance/<slug>` in a WebView. */
+@Serializable
+data class GlanceEntry(val slug: String, val label: String, val json: Boolean = false)
+
+/** `correspondents/glance.py:GlanceBlock`, field for field. */
+@Serializable
+data class GlanceBlock(
+    val heading: String? = null,
+    val href: String? = null,
+    val groups: List<GlanceGroup> = emptyList(),
+    val empty: String? = null,
+)
+
+@Serializable
+data class GlanceGroup(val name: String, val lines: List<GlanceLine> = emptyList())
+
+@Serializable
+data class GlanceLine(val text: String, val label: Boolean = false)

@@ -43,6 +43,10 @@ class Api(baseUrl: String, val client: OkHttpClient) {
 
     suspend fun post(postId: Long): Post = get(url("api", "posts", postId.toString()))
 
+    suspend fun glance(): List<GlanceEntry> = get(url("api", "glance"))
+
+    suspend fun glanceBlock(slug: String): GlanceBlock = get(url("c", slug, "glance.json"))
+
     suspend fun voices(): Voices = get(url("api", "voices"))
 
     /** The article after this one, in the order continuous narration plays them. */

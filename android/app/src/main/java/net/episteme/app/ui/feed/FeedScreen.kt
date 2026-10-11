@@ -108,9 +108,9 @@ fun FeedScreen(api: Api, open: (String, String) -> Unit, openKey: (NavKey) -> Un
                         CardView(
                             card = card,
                             onOpen = { open(card.destination, card.title) },
+                            modifier = Modifier.animateItem(),
                             onToggle = { kind -> vm.toggle(card, kind) },
                             onTopic = { slug, kind -> vm.toggleTopic(card, slug, kind) },
-                            modifier = Modifier.animateItem(),
                         )
                     }
                     item(key = "footer") {

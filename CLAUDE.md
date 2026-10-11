@@ -115,6 +115,8 @@ POST   /api/llm/unload  # free VRAM now, no pause
 # prefix; a plugin's router is mounted under it with the enabled flag as one
 # Depends, and every plugin must declare GET /glance. No plugins ship yet.
 GET    /glance  # one block per enabled correspondent, each an htmx fragment
+GET    /glance/<slug>  # one block alone, untitled: the launcher panel's WebView fallback (0062)
+GET    /api/glance  # [{slug,label,json}]; json = the plugin serves the OPTIONAL /c/<slug>/glance.json
 GET    /c/<slug>  # the correspondent's own page; /c/<slug>/style.css is its CSS
 docker compose exec -T db psql -U episteme -d episteme -c 'select slug,label,enabled from correspondents;'
 
@@ -167,6 +169,9 @@ POST   /api/jobs/defer/matsedel_notify  # 09:00 UTC weekdays; sends today's lunc
 # from web/static/logo/episteme.svg, which is itself generated - never hand-edit.
 uv run tools/build_pwa_icons.py
 
+# The launcher panel (0062): Lawnchair's swipe-right page. One-time setup on the
+# phone: type /lawnchairdebug in the drawer search, enable "ignore feed whitelist"
+# in the debug menu, pick Episteme as Feed provider (the sheet scrolls).
 GET    /api/feed  # the ranked feed as JSON cards (0061); ?cursor_at=&cursor_id= from next_cursor
 GET    /api/posts/458/feedback  # one card's recorded signals; the app re-reads it after every toggle
 

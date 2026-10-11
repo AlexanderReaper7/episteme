@@ -182,6 +182,14 @@ The identity a correspondent gives one period of its content. Opaque to core, ch
 
 The page for standing content, and the navbar's fourth entry (0046). A dashboard of one summary block per correspondent, each block linking through to that correspondent's own page. Core lays the blocks out and fetches each from the correspondent's own `GET /c/<slug>/glance`, so a slow one delays only itself and a block that fails says which correspondent is not responding rather than rendering empty. The feed never carries standing content.
 
+### Glance JSON
+
+A Glance block as data rather than HTML, `GET /c/<slug>/glance.json` (0062): a heading with an optional link, then named groups of lines, each line a label or content. Optional. The Android app's launcher panel draws it natively, and draws a correspondent without it from `/glance/<slug>` in a WebView. `GET /api/glance` lists the enabled blocks and says which serve it.
+
+### Panel
+
+The launcher's left page on the phone, the screen a swipe right on the home screen opens (0062). The app's `panel/PanelService` serves it to Lawnchair through the launcher-overlay protocol. It shows Glance, then the ranked feed, and records no feedback; a tap opens the app or a Custom Tab.
+
 ### Matsedel
 
 The first correspondent, built 2026-08-28 (`correspondents/matsedel/`, 0046): the lunch menus of four restaurants in Vanersborg, read from their own sites once a week. A plugin rather than an external service, because it fetches from someone else's site and only in-process code can be held to `polite_get`. One read of a week is stored and then files five posts, one per weekday, each publishing at 06:00 and expiring at 14:00 local. The week itself lives on `/c/matsedel` and outlives the posts.

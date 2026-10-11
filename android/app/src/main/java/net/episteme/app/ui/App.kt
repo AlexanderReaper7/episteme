@@ -2,6 +2,7 @@ package net.episteme.app.ui
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.navigation3.rememberViewModelStoreNavEntryDecorator
@@ -10,6 +11,7 @@ import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
 import androidx.navigation3.ui.NavDisplay
+import kotlinx.coroutines.flow.Flow
 import net.episteme.app.EpistemeApplication
 import net.episteme.app.playback.Narration
 import net.episteme.app.ui.article.ArticleScreen
@@ -17,7 +19,7 @@ import net.episteme.app.ui.feed.FeedScreen
 import net.episteme.app.ui.web.WebScreen
 
 @Composable
-fun App() {
+fun App(opened: Flow<Opened>) {
     val context = LocalContext.current
     val api = (context.applicationContext as EpistemeApplication).api
     val backStack = rememberNavBackStack(FeedKey)
@@ -30,6 +32,7 @@ fun App() {
             is Route.External -> openExternal(context, r.url)
         }
     }
+    LaunchedEffect(opened) { opened.collect { open(it.destination, it.title) } }
     val openKey: (NavKey) -> Unit = { backStack.add(it) }
     val back: () -> Unit = { backStack.removeLastOrNull() }
 

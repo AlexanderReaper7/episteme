@@ -96,6 +96,7 @@ Nothing here is edited to reflect later changes. A decision that was replaced ge
 | [0059](0059-embeds-go-through-infermux.md) | Embeds go through InferMux, where the CPU embedder is a peer | 2026-10-03 |
 | [0060](0060-the-warden-client-reads-infermux.md) | The warden client reads InferMux; lifecycle, logs and model flags stay there, and the sweep goes | 2026-10-08 |
 | [0061](0061-the-phone-gets-a-native-reader.md) | The phone gets a native reader, and the server decides what a card shows | 2026-10-10 |
+| [0062](0062-the-launcher-panel.md) | The launcher's left panel is Episteme, and Glance has an optional JSON twin | 2026-10-11 |
 | [0034](0034-logs-stream-as-byte-offset-deltas.md) | Logs stream as byte-offset deltas | 2026-08-03 |
 | [0042](0042-the-agent-owns-one-console-hidden-behind-a-tray-icon.md) | The host agent owns one console, born hidden, behind a tray icon | 2026-08-15 |
 

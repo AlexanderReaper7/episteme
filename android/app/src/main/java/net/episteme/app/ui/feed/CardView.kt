@@ -41,14 +41,15 @@ import net.episteme.app.ui.theme.Palette
 private val SHAPE = RoundedCornerShape(12.dp)
 
 /** One feed card. On a phone held upright the picture sits above the text,
- * the web's rule for a window taller than it is wide (0052). */
+ * the web's rule for a window taller than it is wide (0052). Without
+ * [onToggle] it has no feedback controls, as in the launcher panel (0062). */
 @Composable
 fun CardView(
     card: Card,
     onOpen: () -> Unit,
-    onToggle: (String) -> Unit,
-    onTopic: (slug: String, kind: String) -> Unit,
     modifier: Modifier = Modifier,
+    onToggle: ((String) -> Unit)? = null,
+    onTopic: (slug: String, kind: String) -> Unit = { _, _ -> },
 ) {
     val border = when (card.kind) {
         "article" -> Palette.articleBorder
@@ -77,7 +78,7 @@ fun CardView(
                 Spacer(Modifier.size(8.dp))
                 TopicChips(card.topics)
             }
-            FeedbackControls(card.feedback, onToggle, onTopic)
+            if (onToggle != null) FeedbackControls(card.feedback, onToggle, onTopic)
         }
     }
 }

@@ -1,0 +1,46 @@
+{# One Glance block: the frame core draws, and the body that fetches the
+   correspondent's own `/c/<slug>/glance` into itself. `glance.html` lays out one
+   per enabled correspondent; `glance_one.html` is a single block for the app's
+   launcher panel, which draws the title itself and so passes `titled=false`
+   (0062). Expects `block` and `titled`. #}
+<section class="glance-block correspondent--{{ block.slug }}" data-glance-slug="{{ block.slug }}">
+  {% if titled %}
+  <h3 class="glance-block-title">
+    {# No trailing slash: a plugin's index route is `""`, so `/c/<slug>/`
+       answers 307 and costs a round trip on every click. #}
+    <a href="/c/{{ block.slug }}">{{ block.label }}</a>
+  </h3>
+  {% endif %}
+  {# `preload="false"` opts out of the extension base.html turns on for the
+     whole document: it preloads anything carrying `hx-get` on mouseover, and
+     this element already fetches itself on `load`. Watched costing a second
+     404 exactly 100 ms after every retry (the extension's own hover delay),
+     because unhiding the body under the cursor fires `mouseover` on it. #}
+  {# `hx-disinherit="*"` is load-bearing, and it is the reason this block can
+     hold HTML core did not write. htmx inherits hx-target from the nearest
+     ancestor that declares one, so without this every boosted <a> a
+     correspondent puts in its block inherits `hx-target="this"` and swaps
+     its own page - header, sprite, chat rail - into the block instead of
+     into #main-content. Watched happening on 2026-08-28 the first time a
+     block carried a link. Disinheritance applies to descendants only, so
+     this element's own fetch below is unaffected. #}
+  <div class="glance-block-body"
+       hx-get="/c/{{ block.slug }}/glance"
+       hx-trigger="load, retry"
+       hx-target="this"
+       hx-swap="innerHTML"
+       hx-request='{"timeout": 8000}'
+       hx-disinherit="*"
+       preload="false">
+    <span class="loading">loading…</span>
+  </div>
+  <p class="glance-block-failed" hidden>
+    {{ ico.icon("bad") }} {{ block.label }} is not responding.
+    {# A button, not an anchor: every <a> on this page is boosted, and
+       `preventDefault` on the bubbled click does not stop htmx, which has
+       already taken the event. A boosted `href="#"` fired a second request
+       and swapped #main-content, wiping the blocks that HAD loaded. Watched
+       in the browser on 2026-08-28, not reasoned about. #}
+    <button type="button" class="glance-retry" data-glance-retry>try again</button>
+  </p>
+</section>

@@ -85,6 +85,8 @@ A plugin ships a Jinja template for its Glance block and may ship its own additi
 
 The standing-content page is called **Glance** and is the navbar's fourth entry. It is a dashboard: one summary block per correspondent, laid out by core, each block linking through to that correspondent's page. Blocks load as htmx fragments so a slow external service never delays the page, and a block that fails keeps its frame and title and says which correspondent is not responding, with a link that re-fires the fragment. An empty block is indistinguishable from a correspondent that has nothing this week, which is the discipline `llm/host.py:11` already writes down for the status panel.
 
+A block may also be served as data, `GET /c/<slug>/glance.json`, which the Android app's launcher panel draws natively. That is optional and the HTML block stays required (amended 2026-10-11, [0062](0062-the-launcher-panel.md)).
+
 The name describes the content class, not the layout. "Dashboard" is taken (`admin/admin.html:7`), and naming the page for its current arrangement would make it a lie the first time the arrangement changed.
 
 ## Rejected

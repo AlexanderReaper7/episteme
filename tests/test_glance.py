@@ -31,7 +31,7 @@ def plugin(slug, stylesheet=None):
 def page(monkeypatch):
     """Render /glance over a fabricated set of correspondent rows."""
 
-    def build(rows, plugins=()):
+    def build(rows, plugins=(), path="/glance", status=200):
         class _Session:
             async def execute(self, _statement):
                 return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: list(rows)))
@@ -44,8 +44,8 @@ def page(monkeypatch):
 
         monkeypatch.setattr(glance_module, "SessionLocal", lambda: _Session())
         monkeypatch.setattr(registry, "_PLUGINS", {p.slug: p for p in plugins})
-        response = TestClient(app).get("/glance")
-        assert response.status_code == 200
+        response = TestClient(app).get(path)
+        assert response.status_code == status
         return response.text
 
     return build
@@ -131,3 +131,49 @@ def test_nothing_enabled_is_an_empty_state_not_an_empty_page(page):
 def test_glance_is_in_the_navbar(page):
     html = page([])
     assert '<a href="/glance">' in html
+
+
+# --- the app's launcher panel (0062) -----------------------------------------
+
+
+def json_plugin(slug):
+    router = APIRouter()
+
+    @router.get("/glance.json")
+    def _block():
+        return {}
+
+    return SimpleNamespace(slug=slug, label=slug, router=router, stylesheet=None, templates=None)
+
+
+def test_the_api_says_which_blocks_have_a_json_twin(page):
+    """The panel draws a `glance.json` block natively and any other in a WebView,
+    so the list has to say which is which. An external correspondent has no
+    plugin here and serves HTML only."""
+    import json
+
+    out = json.loads(
+        page(
+            [row("matsedel", "Matsedel"), row("trains", "Departures"), row("weather", "Weather")],
+            plugins=[json_plugin("matsedel"), plugin("trains")],
+            path="/api/glance",
+        )
+    )
+    assert out == [
+        {"slug": "matsedel", "label": "Matsedel", "json": True},
+        {"slug": "trains", "label": "Departures", "json": False},
+        {"slug": "weather", "label": "Weather", "json": False},
+    ]
+
+
+def test_one_block_alone_is_untitled_and_fetches_itself(page):
+    """The panel draws the title natively above the WebView, so the page must
+    not draw a second one."""
+    html = page([row("trains", "Departures")], plugins=[plugin("trains")], path="/glance/trains")
+    assert 'hx-get="/c/trains/glance"' in html
+    assert "glance-block-title" not in html
+    assert "Departures is not responding." in html
+
+
+def test_one_block_of_a_disabled_or_unknown_correspondent_is_a_404(page):
+    page([row("trains", "Departures")], path="/glance/matsedel", status=404)

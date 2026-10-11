@@ -16,4 +16,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "episteme"
 include(":app")
+include(":launcherclient")
 include(":baselineprofile")

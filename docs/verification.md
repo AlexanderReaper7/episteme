@@ -26,6 +26,17 @@ Watch the next pipeline run rather than assuming these.
   - The app's WebView without the site header and chat rail (`templating.in_app`, 2026-10-10). Checked over HTTP on the dev server: `/c/matsedel` carries both for a Firefox agent and neither for `EpistemeApp/0.1`. Deployed, and seen in the app on the emulator: one header on `/c/matsedel`, the bar titled `Matsedel`, and `/c/matsedel#day-2026-10-08` landing the day at y = 0 under the bar. Not seen on the phone.
   - On the phone: the first WebView draw. On the emulator's software renderer it hung forever; on the host GPU it is fine, and `startUpWebView` reports 86-90 ms of UI-thread start-up at launch.
 
+- **The launcher panel** (0062, built 2026-10-11). Watched on the phone (OnePlus 8 Pro, Lawnchair 15 Beta 3) against the dev server through `adb reverse`. Lawnchair bound `PanelService` once its feed whitelist was off, the window attached, the panel slid in on a swipe right, and the Matsedel block's frame and title drew. Then it froze on that first frame, and the cause was the vendored binder's transaction table (0062). The fixed build is installed and has not been watched, because the phone is locked.
+
+  Not yet seen:
+
+  - Content loading and animating, the title row, the top inset under the status bar.
+  - A card tap opening the native article, an off-site card's Custom Tab, the Glance heading opening `/c/matsedel#day-…` at its day.
+  - The home key closing the panel (transaction 6), pull to refresh, paging past the first 20 cards, the 15-minute refetch on resume.
+  - A Glance block with dishes in it. The only check so far was on a Saturday, when the JSON block was the `empty` sentence.
+  - **The WebView fallback at all.** Every plugin in the tree serves JSON, so `/glance/<slug>` in the panel has only been tested on the server (`tests/test_glance.py`). The height report and the link routing have never run.
+  - Any launcher other than Lawnchair, and Lawnchair across a reboot.
+
 - **The web's InferMux key** (0058, built 2026-10-03). The worker's half was watched 2026-10-08, after the deployment gained its key mounts and a route to InferMux (compose `extra_hosts` and the `br-episteme` bridge, nixcfg `modules/nixos/episteme.nix`). During pipeline run 321, InferMux's `/warden/verdict` listed the worker's `/v1/embeddings` in flight as `batch`. When Firefox reached the warden's 25% threshold at 17:27 UTC, the warden yielded, the run ended `paused` with reason `resource`, and a batch call got `gpu_yielded`.
 
   Not yet seen: an interactive request from the web, which a chat turn makes, going through while the worker's batch calls are refused.

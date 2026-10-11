@@ -76,6 +76,8 @@ dependencies {
     // Hands the shipped profile to ART on first launch. Without the Play Store
     // nothing else does, and a sideloaded APK stays interpreted and JIT-compiled.
     implementation(libs.androidx.profileinstaller)
+    // The launcher panel's protocol, vendored from Neo Feed (0062).
+    implementation(project(":launcherclient"))
     baselineProfile(project(":baselineprofile"))
     testImplementation(libs.junit)
 }
