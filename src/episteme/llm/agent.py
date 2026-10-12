@@ -103,7 +103,7 @@ DEMOTE_STORY = register(
         schema=function(
             "demote_story",
             "DECLINE to write an article for this story because even after research "
-            "the material is too thin or of too little learning value. The story "
+            "the material is too thin or of too little substance. The story "
             "falls back to the aggregation stream, a fine outcome for minor items. Do "
             "NOT call this when the material IS worth an article - to proceed to "
             "writing, call finish_research instead.",
@@ -327,8 +327,9 @@ async def close(harness: Harness, messages: list[dict], schema: type[T]) -> T | 
 # --- The writer ---------------------------------------------------------------
 
 
-def writer_harness(*, allow_demote: bool = True) -> Harness:
+def writer_harness(*, language: str, allow_demote: bool = True) -> Harness:
     """The writer's harness. `allow_demote=False` is a reader-requested story.
+    `language` is the name the post is written in, `Source.language` (0063).
 
     One flag decides three things that must agree and previously did not: whether
     `demote_story` is on the table, whether the prompt tells the model to reach
@@ -368,6 +369,7 @@ def writer_harness(*, allow_demote: bool = True) -> Harness:
         name="writer" if allow_demote else "writer.requested",
         system=fill(
             WRITER_AGENT_SYSTEM,
+            language=language,
             demote=WRITER_MAY_DEMOTE if allow_demote else WRITER_MUST_WRITE,
         ),
         tools=tools,
@@ -383,13 +385,13 @@ def writer_harness(*, allow_demote: bool = True) -> Harness:
     )
 
 
-async def run_writer_loop(seed: str, *, allow_demote: bool = True) -> WriteOutcome:
+async def run_writer_loop(seed: str, *, language: str, allow_demote: bool = True) -> WriteOutcome:
     with llm_conversation():  # calls log as one chain (delta storage, see observe)
-        return await _run_writer_loop(seed, allow_demote=allow_demote)
+        return await _run_writer_loop(seed, language=language, allow_demote=allow_demote)
 
 
-async def _run_writer_loop(seed: str, *, allow_demote: bool) -> WriteOutcome:
-    harness = writer_harness(allow_demote=allow_demote)
+async def _run_writer_loop(seed: str, *, language: str, allow_demote: bool) -> WriteOutcome:
+    harness = writer_harness(language=language, allow_demote=allow_demote)
     context: WriterContext = harness.context  # type: ignore[assignment]
     messages: list[dict] = [
         {"role": "system", "content": harness.system},

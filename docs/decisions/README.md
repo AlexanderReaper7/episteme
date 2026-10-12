@@ -12,6 +12,7 @@ Nothing here is edited to reflect later changes. A decision that was replaced ge
 |---|---|---|
 | [0005](0005-politeness-and-the-source-access-policy.md) | Politeness is hard; blocked sources are worked around without raising volume | 2026-07-17 |
 | [0006](0006-two-http-transport-modes.md) | Two HTTP transport modes, chosen per source | 2026-07-18 |
+| [0063](0063-a-general-news-feed-in-the-sources-language.md) | A feed of informative news, not only science, written in its source's language; a first fetch keeps one cluster window | 2026-10-12 |
 
 ## LLM plumbing
 

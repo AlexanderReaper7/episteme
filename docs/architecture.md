@@ -738,7 +738,8 @@ LLM (instead of multiple choice).
 ## Appendix A: Seed Sources
 
 Starting set (carried over from the v1 planning doc); all managed as `Source` rows,
-trivially extendable from the admin panel.
+trivially extendable from the admin panel. The current list is `src/episteme/seeds.py`
+and, live, the `sources` table; the 2026-10-12 additions are in 0063.
 
 ```python
 SEED_FEEDS = [

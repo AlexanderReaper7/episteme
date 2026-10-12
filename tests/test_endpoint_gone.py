@@ -144,8 +144,12 @@ def test_summarize_stops_at_the_first_dead_call(monkeypatch):
     async def never(_session):
         return False
 
+    async def one_item(_session, _story):
+        return [SimpleNamespace(source=SimpleNamespace(language="English"))]
+
     monkeypatch.setattr(pipeline, "gateway", _Gateway())
     monkeypatch.setattr(pipeline, "pause_requested", never)
+    monkeypatch.setattr(pipeline, "_story_items", one_item)
 
     with pytest.raises(LLMUnavailable):
         asyncio.run(pipeline.summarize_posts(_Session()))

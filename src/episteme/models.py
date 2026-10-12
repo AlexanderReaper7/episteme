@@ -30,6 +30,13 @@ class Base(DeclarativeBase):
     pass
 
 
+#: The languages a source may declare as `config["language"]` (0063). A post is
+#: written in the language of its story's primary item, and a source that
+#: declares none is English. An unknown code raises rather than falling back, so
+#: a typo in a row is a failed stage and not a post in the wrong language.
+LANGUAGES = {"en": "English", "sv": "Swedish"}
+
+
 class Source(Base):
     __tablename__ = "sources"
 
@@ -48,6 +55,11 @@ class Source(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     items: Mapped[list[SourceItem]] = relationship(back_populates="source")
+
+    @property
+    def language(self) -> str:
+        """The name of the language this source writes in, as a prompt says it."""
+        return LANGUAGES[self.config.get("language", "en")]
 
 
 class SourceItem(Base):

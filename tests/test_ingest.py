@@ -99,3 +99,21 @@ def test_fetch_interval_gates_scheduled_ingest_only():
     assert _due_for_scheduled_fetch(due, now)
     assert _due_for_scheduled_fetch(never_fetched, now)
     assert _due_for_scheduled_fetch(no_interval, now)
+
+
+def test_a_new_source_keeps_only_the_cluster_window():
+    """A source never fetched has no `last_fetched_at`; its first fetch used to
+    keep the whole feed and fetch every page in it (0063)."""
+    from datetime import UTC, datetime, timedelta
+
+    from episteme.config import settings
+    from episteme.models import Source
+    from episteme.worker.tasks import _since
+
+    fresh = Source(type_name="rss", name="S", config={})
+    expected = datetime.now(UTC) - timedelta(days=settings.cluster_window_days)
+    assert abs((_since(fresh) - expected).total_seconds()) < 5
+
+    fetched = datetime(2026, 10, 1, tzinfo=UTC)
+    seen = Source(type_name="rss", name="S", config={}, last_fetched_at=fetched)
+    assert _since(seen) == fetched

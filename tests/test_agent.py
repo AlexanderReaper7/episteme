@@ -98,7 +98,7 @@ async def test_loop_gathers_then_writes(monkeypatch):
 
     monkeypatch.setattr(research, "fetch_page", fake_fetch)
 
-    outcome = await agent.run_writer_loop("seed")
+    outcome = await agent.run_writer_loop("seed", language="English")
 
     assert outcome.decision == "write"
     assert outcome.draft is not None and outcome.draft.title == "T"
@@ -125,7 +125,7 @@ async def test_demote_story_skips_drafting(monkeypatch):
 
     monkeypatch.setattr(research, "fetch_page", fake_fetch)
 
-    outcome = await agent.run_writer_loop("seed")
+    outcome = await agent.run_writer_loop("seed", language="English")
 
     assert outcome.decision == "aggregate"
     assert outcome.reason == "just a photo caption"
@@ -151,7 +151,7 @@ async def test_finish_research_ends_loop_and_carries_note(monkeypatch):
 
     monkeypatch.setattr(research, "fetch_page", fake_fetch)
 
-    outcome = await agent.run_writer_loop("seed")
+    outcome = await agent.run_writer_loop("seed", language="English")
 
     assert outcome.decision == "write"
     assert outcome.notes == "Nature piece is strongest."
@@ -180,7 +180,7 @@ async def test_loop_nudges_when_model_narrates_instead_of_acting(monkeypatch):
 
     monkeypatch.setattr(research, "fetch_page", fake_fetch)
 
-    outcome = await agent.run_writer_loop("seed")
+    outcome = await agent.run_writer_loop("seed", language="English")
     assert len(outcome.fetch_log) == 2  # the nudge got it to act
     assert outcome.decision == "write"
 
@@ -207,7 +207,7 @@ async def test_fetch_budget_is_enforced(monkeypatch):
 
     monkeypatch.setattr(research, "fetch_page", fake_fetch)
 
-    outcome = await agent.run_writer_loop("seed")
+    outcome = await agent.run_writer_loop("seed", language="English")
 
     assert calls == ["https://a.org"]  # second fetch refused by the budget
     assert len(outcome.fetch_log) == 1
@@ -239,7 +239,7 @@ async def test_stuck_budget_loop_forces_draft(monkeypatch):
 
     monkeypatch.setattr(research, "web_search", fake_search)
 
-    outcome = await agent.run_writer_loop("seed")
+    outcome = await agent.run_writer_loop("seed", language="English")
     # Turn 1 spends the budget; turns 2 and 3 are all-refused -> break. Never 12.
     assert gw.tool_turns == 3
     assert outcome.decision == "write"
@@ -254,7 +254,7 @@ async def test_draft_validation_retries_with_repair(monkeypatch):
         ],
     )
     monkeypatch.setattr(agent, "gateway", gw)
-    outcome = await agent.run_writer_loop("seed")
+    outcome = await agent.run_writer_loop("seed", language="English")
     assert outcome.decision == "write"
     assert outcome.draft is not None
     assert gw.draft_turns == 2
@@ -267,7 +267,7 @@ async def test_draft_failure_demotes(monkeypatch):
         draft_script=[_assistant_final("not json"), _assistant_final("still not json")],
     )
     monkeypatch.setattr(agent, "gateway", gw)
-    outcome = await agent.run_writer_loop("seed")
+    outcome = await agent.run_writer_loop("seed", language="English")
     assert outcome.decision == "aggregate"
     assert "validation" in outcome.reason
 
@@ -296,7 +296,7 @@ async def test_loop_stops_at_max_steps(monkeypatch):
 
     monkeypatch.setattr(research, "web_search", fake_search)
 
-    outcome = await agent.run_writer_loop("seed")
+    outcome = await agent.run_writer_loop("seed", language="English")
     assert gw.tool_turns == 3  # capped at enrich_max_steps, no runaway
     assert outcome.decision == "write"  # still drafts from what it has
 

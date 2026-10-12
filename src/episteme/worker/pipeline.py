@@ -23,6 +23,7 @@ from ..config import settings
 from ..db import SessionLocal
 from ..llm import LLMError, LLMUnavailable, gateway
 from ..llm.agent import run_writer_loop
+from ..llm.harness import fill
 from ..llm.observe import llm_context
 from ..llm.prompts import (
     AGGREGATE_SUMMARY_SYSTEM,
@@ -274,6 +275,8 @@ async def triage_stories(
 
 
 async def _story_items(session: AsyncSession, story: Story) -> list[SourceItem]:
+    """The story's items, primary first: `PRIMARY_ITEM_ORDER`, the order a card
+    and `_primary_item` use, so `story_language` reads the same item they do."""
     from sqlalchemy.orm import joinedload
 
     return list(
@@ -282,13 +285,19 @@ async def _story_items(session: AsyncSession, story: Story) -> list[SourceItem]:
                 select(SourceItem)
                 .options(joinedload(SourceItem.source))
                 .where(SourceItem.story_id == story.id)
-                .order_by(SourceItem.published_at.asc().nulls_last())
+                .order_by(*PRIMARY_ITEM_ORDER)
                 .limit(settings.max_sources_per_story)
             )
         )
         .scalars()
         .all()
     )
+
+
+def story_language(items: list[SourceItem]) -> str:
+    """The language a story's post and card are written in: its primary item's
+    source's (0063). `items` is `_story_items`, whose first item is the primary."""
+    return items[0].source.language
 
 
 def _writer_sources(items: list[SourceItem]) -> list[str]:
@@ -796,7 +805,9 @@ async def write_posts(
         requested = story.origin == "user"
         try:
             with llm_context(stage="write", story_id=story.id, attempt_id=attempt):
-                outcome = await run_writer_loop(seed, allow_demote=not requested)
+                outcome = await run_writer_loop(
+                    seed, language=story_language(items), allow_demote=not requested
+                )
         except LLMUnavailable:
             raise
         except Exception as exc:
@@ -909,15 +920,17 @@ def _summary_input(post: Post, items: list[SourceItem]) -> tuple[str, str]:
 
     The kind decides what the summary is written FROM, and the two are different
     jobs: an article is summarized from the body the reader would open, an
-    aggregate from the coverage behind a card that opens nothing.
+    aggregate from the coverage behind a card that opens nothing. `items` is
+    every kind's, because the card is written in its primary item's language.
     """
+    language = story_language(items)
     if post.kind == "article":
         body = [
             section
             for section in (post.sections or [])
             if section.get("type") not in _UNSUMMARIZED_SECTIONS
         ]
-        return ARTICLE_SUMMARY_SYSTEM, (
+        return fill(ARTICLE_SUMMARY_SYSTEM, language=language), (
             f"Title: {post.title}\n\nBody:\n{json.dumps(body, ensure_ascii=False)}"
         )
     budget = settings.max_summary_source_chars
@@ -928,7 +941,7 @@ def _summary_input(post: Post, items: list[SourceItem]) -> tuple[str, str]:
         parts.append(f"[{item.source.name}] {item.title}\n{text}")
         if budget <= 0:
             break
-    return AGGREGATE_SUMMARY_SYSTEM, "\n\n---\n\n".join(parts)
+    return fill(AGGREGATE_SUMMARY_SYSTEM, language=language), "\n\n---\n\n".join(parts)
 
 
 async def summarize_posts(
@@ -963,15 +976,13 @@ async def summarize_posts(
         post = await session.get(Post, pid)
         if post is None:
             continue
-        items: list[SourceItem] = []
-        if post.kind != "article":
-            story = await session.get(Story, post.story_id)
-            if story is None:
-                continue
-            items = list(await _story_items(session, story))
-            if not items:
-                log.warning("Post %d has no items to summarize", pid)
-                continue
+        story = await session.get(Story, post.story_id)
+        if story is None:
+            continue
+        items = list(await _story_items(session, story))
+        if not items:
+            log.warning("Post %d has no items to summarize", pid)
+            continue
         system, user = _summary_input(post, items)
         try:
             with llm_context(stage="summarize", story_id=post.story_id, post_id=pid):

@@ -63,6 +63,7 @@ def _editor(candidates=None, sections=None, *, session=None, renderer=None, visu
         editor,
         session or FakeSession(),
         renderer or FakeRenderer(),
+        language="English",
         visual=visual,
         on_idle=lambda _text: None,
     )

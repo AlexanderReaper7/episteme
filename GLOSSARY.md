@@ -34,7 +34,7 @@ Where a post's card and its canonical URL both go (0047). NULL means the post re
 
 ### Primary item
 
-The item that stands for a story: earliest `published_at`, then lowest `id` (0047). It supplies an aggregate card's title, source name, snippet and destination, which is why it is one definition rather than four call sites.
+The item that stands for a story: earliest `published_at`, then lowest `id` (0047). It supplies an aggregate card's title, source name, snippet and destination, and the language every post and card of the story is written in (0063), which is why it is one definition rather than four call sites.
 
 ### Story
 
@@ -60,7 +60,7 @@ A post that left `published`, superseded by a rewrite or demoted by QA. At most 
 
 ### Source
 
-One row naming an adapter plus its config. It carries a credibility rating, HTTP cache validators and a cooldown.
+One row naming an adapter plus its config. It carries a credibility rating, HTTP cache validators and a cooldown. Its config may declare `language` (`sv`; absent means English), and a story's post and card are written in its primary item's source's language (0063).
 
 ### Adapter
 

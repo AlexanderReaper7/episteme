@@ -17,13 +17,24 @@ log = logging.getLogger("episteme.worker")
 BLOCKED_STATUSES = (403, 429)
 
 
+def _since(source: Source) -> datetime:
+    """The oldest entry a fetch keeps. A source never fetched before has no
+    `last_fetched_at`, and without this bound its first fetch kept the whole feed
+    and fetched every page in it: 1287 for OpenAI's, back to April for SVT's
+    ekonomi (0063). An item older than the cluster window could only ever start a
+    story of its own, so the window is also the bound."""
+    return source.last_fetched_at or datetime.now(UTC) - timedelta(
+        days=settings.cluster_window_days
+    )
+
+
 async def _fetch_with_escalation(adapter, source: Source) -> list[RawItem]:
     """Fetch a source, escalating its HTTP mode past a block once (policy: a
     source that fails politely gets stronger, still-non-destructive means before
     we cool it down). Persists the working mode onto the source so the next run
     starts there. Raises FetchError if even the escalated attempt is blocked."""
     try:
-        return await adapter.fetch(source, source.last_fetched_at)
+        return await adapter.fetch(source, _since(source))
     except FetchError as exc:
         stronger = escalate_mode(source.config.get("http_mode"))
         if exc.status_code not in BLOCKED_STATUSES or not settings.http_escalate_on_block:
@@ -37,7 +48,7 @@ async def _fetch_with_escalation(adapter, source: Source) -> list[RawItem]:
             stronger,
         )
         source.config = {**source.config, "http_mode": stronger}
-        return await adapter.fetch(source, source.last_fetched_at)
+        return await adapter.fetch(source, _since(source))
 
 
 @app.task(name="episteme.ingest_source", retry=2)

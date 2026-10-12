@@ -12,11 +12,11 @@ from pydantic import BaseModel, Field, TypeAdapter, model_validator
 
 class TriageResult(BaseModel):
     decision: Literal["write", "aggregate", "skip"]
-    # Ranking signal: higher = more learning value / more interesting. Deliberately
+    # Ranking signal: higher = more informative / more interesting. Deliberately
     # unbounded above (guide the model to ~0-10 but let it exceed for standouts) so the
     # scale keeps meaning as the feed grows — the writer works candidates best-first.
     quality_score: float = Field(
-        ge=0, description="Learning value + interest; ~0-10, higher is better"
+        ge=0, description="How informative + interesting; ~0-10, higher is better"
     )
     topics: list[str] = Field(min_length=1, max_length=3)
     reason: str = Field(max_length=500)

@@ -27,6 +27,35 @@ SEED_FEEDS: list[tuple[str, str] | tuple[str, str, dict]] = [
     ("MIT Technology Review", "https://www.technologyreview.com/feed/"),
     # Archaeology / history
     ("Archaeology Magazine", "https://www.archaeology.org/feed"),
+    # Hardware and engineering (0063). Phoronix and OpenAI serve their feeds to an
+    # honest client but 403 its article fetches, and extraction does not escalate;
+    # robots.txt permits both paths, so they start impersonating. Verified 2026-10-12.
+    ("TechPowerUp", "https://www.techpowerup.com/rss/news"),
+    ("Tom's Hardware", "https://www.tomshardware.com/feeds/all"),
+    ("Chips and Cheese", "https://chipsandcheese.com/feed/"),
+    ("ServeTheHome", "https://www.servethehome.com/feed/"),
+    ("SweClockers", "https://www.sweclockers.com/feeds/nyheter", {"language": "sv"}),
+    ("Phoronix", "https://www.phoronix.com/rss.php", {"http_mode": "impersonate"}),
+    ("LWN", "https://lwn.net/headlines/rss"),
+    ("IEEE Spectrum", "https://spectrum.ieee.org/feeds/feed.rss"),
+    ("Ars Technica Gadgets", "https://feeds.arstechnica.com/arstechnica/gadgets"),
+    # AI models, frontier and open-weight
+    ("Google DeepMind", "https://deepmind.google/blog/rss.xml"),
+    ("Mistral AI", "https://mistral.ai/rss.xml"),
+    ("OpenAI", "https://openai.com/news/rss.xml", {"http_mode": "impersonate"}),
+    ("Hugging Face", "https://huggingface.co/blog/feed.xml"),
+    ("Interconnects", "https://www.interconnects.ai/feed"),
+    ("Ahead of AI", "https://magazine.sebastianraschka.com/feed"),
+    ("Simon Willison", "https://simonwillison.net/atom/everything/"),
+    ("Ars Technica AI", "https://arstechnica.com/ai/feed/"),
+    ("Import AI", "https://importai.substack.com/feed"),
+    # Swedish news: section feeds, because SVT's main feed is mostly every
+    # region's local news and sport
+    ("SVT Inrikes", "https://www.svt.se/nyheter/inrikes/rss.xml", {"language": "sv"}),
+    ("SVT Ekonomi", "https://www.svt.se/nyheter/ekonomi/rss.xml", {"language": "sv"}),
+    ("SVT Vetenskap", "https://www.svt.se/nyheter/vetenskap/rss.xml", {"language": "sv"}),
+    ("SVT Väst", "https://www.svt.se/nyheter/lokalt/vast/rss.xml", {"language": "sv"}),
+    ("forskning.se", "https://www.forskning.se/feed/", {"language": "sv"}),
 ]
 
 

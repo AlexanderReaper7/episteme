@@ -51,7 +51,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..config import settings
 from ..llm import LLMUnavailable
 from ..llm.agent import ToolReply, close, run_tool_loop
-from ..llm.harness import Closing, Harness, build
+from ..llm.harness import Closing, Harness, build, fill
 from ..llm.tools import Tool, ToolContext, ToolRefused, register
 from ..llm.observe import llm_context, llm_conversation
 from ..llm.prompts import QA_SYSTEM
@@ -528,7 +528,7 @@ _NUDGE = (
 _MAX_NUDGES = 1
 
 
-def qa_harness(editor, session, renderer, *, visual: bool, on_idle) -> Harness:
+def qa_harness(editor, session, renderer, *, language: str, visual: bool, on_idle) -> Harness:
     """One review's harness. `visual` decides whether `rerender` starts on the table.
 
     A text-only post does not get it, because leaving it in hands the model a
@@ -538,7 +538,7 @@ def qa_harness(editor, session, renderer, *, visual: bool, on_idle) -> Harness:
     """
     return build(
         name="qa.visual" if visual else "qa",
-        system=QA_SYSTEM,
+        system=fill(QA_SYSTEM, language=language),
         tools=QA_EDIT_TOOLS + (["rerender"] if visual else []) + ["finish_review"],
         role="main",
         max_steps=settings.qa_max_steps,
@@ -579,7 +579,7 @@ def _initial_prompt(items: list[SourceItem], story: Story, editor: _Editor, *, v
 
 
 async def _qa_post(session: AsyncSession, renderer, post: Post) -> None:
-    from .pipeline import _story_items, media_candidates
+    from .pipeline import _story_items, media_candidates, story_language
 
     story = await session.get(Story, post.story_id)
     items = await _story_items(session, story)
@@ -592,7 +592,9 @@ async def _qa_post(session: AsyncSession, renderer, post: Post) -> None:
             return _NUDGE
         return None
 
-    harness = qa_harness(editor, session, renderer, visual=visual, on_idle=on_idle)
+    harness = qa_harness(
+        editor, session, renderer, language=story_language(items), visual=visual, on_idle=on_idle
+    )
 
     with llm_conversation():  # the whole review renders as one provenance chain
         messages: list[dict] = [{"role": "system", "content": harness.system}]

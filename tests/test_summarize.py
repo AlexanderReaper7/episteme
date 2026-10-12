@@ -18,6 +18,7 @@ from sqlalchemy.dialects import postgresql
 
 from episteme.config import settings
 from episteme.llm import LLMError
+from episteme.llm.harness import fill
 from episteme.llm.prompts import AGGREGATE_SUMMARY_SYSTEM, ARTICLE_SUMMARY_SYSTEM
 from episteme.llm.schemas import CardSummary, PostDraft
 from episteme.models import POST_KINDS, Post, PostSummary
@@ -110,19 +111,25 @@ def _post(**kw) -> SimpleNamespace:
     return SimpleNamespace(**{**fields, **kw})
 
 
-def _item(name: str, title: str, text: str) -> SimpleNamespace:
+def _item(name: str, title: str, text: str, language: str = "English") -> SimpleNamespace:
     return SimpleNamespace(
         title=title,
         url=f"https://example.org/{title}",
         extracted_text=text,
         raw_content=None,
-        source=SimpleNamespace(name=name),
+        source=SimpleNamespace(name=name, language=language),
     )
 
 
+_ONE_ITEM = [_item("Nature", "First", "the coverage")]
+
+
 def test_an_article_is_summarized_from_its_body_not_its_sources():
-    system, user = _summary_input(_post(sections=[{"type": "prose", "text": "the finding"}]), [])
-    assert system is ARTICLE_SUMMARY_SYSTEM
+    system, user = _summary_input(
+        _post(sections=[{"type": "prose", "text": "the finding"}]), _ONE_ITEM
+    )
+    assert system == fill(ARTICLE_SUMMARY_SYSTEM, language="English")
+    assert "the coverage" not in user
     assert "the finding" in user
 
 
@@ -138,7 +145,7 @@ def test_an_article_summary_never_sees_the_quiz_or_the_citation_tails():
                 {"type": "further_reading", "items": ["a link"]},
             ]
         ),
-        [],
+        _ONE_ITEM,
     )
     assert "the finding" in user
     for absent in ("which?", "a citation", "a link"):
@@ -152,7 +159,7 @@ def test_an_aggregate_is_summarized_from_every_outlet_in_the_cluster():
         _post(kind="aggregate"),
         [_item("Phys.org", "First", "one telling"), _item("Nature", "Second", "another")],
     )
-    assert system is AGGREGATE_SUMMARY_SYSTEM
+    assert system == fill(AGGREGATE_SUMMARY_SYSTEM, language="English")
     assert "one telling" in user and "another" in user
     assert "Phys.org" in user and "Nature" in user
 
@@ -166,7 +173,23 @@ def test_the_aggregate_summarizer_stops_at_its_char_budget():
     assert "never read" not in user
 
 
+@pytest.mark.parametrize("kind", ["article", "aggregate"])
+def test_a_card_is_written_in_its_primary_items_language(kind):
+    """A cluster may mix languages; the card follows the item it links to, the
+    first one (0063), so a Swedish story with English follow-ups stays Swedish."""
+    system, _ = _summary_input(
+        _post(kind=kind),
+        [_item("SVT", "Först", "en text", "Swedish"), _item("Nature", "Second", "a text")],
+    )
+    assert "Write the card in Swedish." in system
+    assert "English" not in system
+
+
 # --- the stage itself -------------------------------------------------------------------
+
+
+async def _story_items(_session, _story):
+    return _ONE_ITEM
 
 
 class _Session:
@@ -179,7 +202,7 @@ class _Session:
         self.commits = 0
 
     async def get(self, model, pk):
-        return self.post if model is Post else None
+        return self.post if model is Post else SimpleNamespace(id=pk)
 
     def add(self, obj):
         self.added.append(obj)
@@ -199,6 +222,7 @@ def _run(session, monkeypatch, answer="A whole standalone summary."):
         return False
 
     monkeypatch.setattr(pipeline, "pause_requested", never)
+    monkeypatch.setattr(pipeline, "_story_items", _story_items)
     return asyncio.run(pipeline.summarize_posts(session, post_id=session.post.id))
 
 
@@ -261,6 +285,7 @@ def test_the_card_survives_a_failed_summarize(monkeypatch):
         return False
 
     monkeypatch.setattr(pipeline, "pause_requested", never)
+    monkeypatch.setattr(pipeline, "_story_items", _story_items)
 
     assert asyncio.run(pipeline.summarize_posts(session, post_id=1)) == 0
     assert post.summary == "the previous card"
