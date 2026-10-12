@@ -102,10 +102,13 @@ async def ingest_source(source_id: int) -> None:
                 continue
             fetch_status = "extracted"
             extracted_text = None
+            title, published_at = raw.title, raw.published_at
             media_refs = list(raw.media_refs)
             try:
                 extracted = await adapter.extract(raw, source)
                 extracted_text = extracted.text
+                title = title or extracted.title
+                published_at = published_at or extracted.published_at
                 seen_urls = {ref.get("url") for ref in media_refs}
                 media_refs.extend(
                     ref for ref in extracted.media_refs if ref.get("url") not in seen_urls
@@ -123,9 +126,9 @@ async def ingest_source(source_id: int) -> None:
                     source_id=source.id,
                     url=raw.url,
                     hash=item_hash,
-                    title=raw.title,
+                    title=title,
                     author=raw.author,
-                    published_at=raw.published_at,
+                    published_at=published_at,
                     raw_content=raw.summary,
                     extracted_text=extracted_text,
                     media_refs=media_refs,

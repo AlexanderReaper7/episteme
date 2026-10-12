@@ -54,11 +54,22 @@ async def test_no_escalation_when_polite_succeeds():
 async def test_reraises_when_strongest_mode_still_blocked():
     adapter = FakeAdapter(succeed_mode=None)  # blocks in every mode
     source = _source()
-    source.config = {**source.config, "http_mode": "impersonate"}
+    source.config = {**source.config, "http_mode": "browser"}
 
     with pytest.raises(FetchError):
         await _fetch_with_escalation(adapter, source)
-    assert adapter.modes_seen == ["impersonate"]  # no pointless re-tries past the top
+    assert adapter.modes_seen == ["browser"]  # no pointless re-tries past the top
+
+
+async def test_impersonate_blocked_escalates_to_the_browser():
+    adapter = FakeAdapter(succeed_mode="browser")
+    source = _source()
+    source.config = {**source.config, "http_mode": "impersonate"}
+
+    await _fetch_with_escalation(adapter, source)
+
+    assert adapter.modes_seen == ["impersonate", "browser"]
+    assert source.config["http_mode"] == "browser"
 
 
 async def test_non_block_error_is_not_escalated():

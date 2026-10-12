@@ -53,6 +53,11 @@ class ExtractedItem:
 
     text: str | None
     media_refs: list[dict[str, Any]] = field(default_factory=list)
+    # What the page says about itself, for a list that does not carry it (a
+    # `listing` source's links have no clean title and no date). The list's own
+    # value wins where it has one.
+    title: str | None = None
+    published_at: datetime | None = None
 
 
 class SourceAdapter(Protocol):

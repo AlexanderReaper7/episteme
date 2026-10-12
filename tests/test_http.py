@@ -56,12 +56,14 @@ def test_normalize_mode_defaults_to_polite():
     assert normalize_mode("") == "polite"
     assert normalize_mode("nonsense") == "polite"
     assert normalize_mode("impersonate") == "impersonate"
+    assert normalize_mode("browser") == "browser"
 
 
 def test_escalate_mode_walks_the_ladder_then_stops():
     assert escalate_mode("polite") == "impersonate"
     assert escalate_mode(None) == "impersonate"  # unknown normalizes to polite first
-    assert escalate_mode("impersonate") is None  # already strongest
+    assert escalate_mode("impersonate") == "browser"
+    assert escalate_mode("browser") is None  # already strongest
 
 
 async def test_polite_wait_enforces_per_host_gap(monkeypatch):

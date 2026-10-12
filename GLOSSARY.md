@@ -64,7 +64,7 @@ One row naming an adapter plus its config. It carries a credibility rating, HTTP
 
 ### Adapter
 
-The per-source-type implementation of `fetch` and `extract`, registered by `type_name` (0002).
+The per-source-type implementation of `fetch` and `extract`, registered by `type_name` (0002). `rss` reads a feed; `listing` reads a page of article links, for a publisher whose feed is closed (0063); both extract articles through `ingest/page.py`.
 
 ### SourceItem
 

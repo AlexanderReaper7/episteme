@@ -2,7 +2,7 @@
 
 - Date: 2026-10-12
 - Status: decided 2026-10-12, built, not yet watched running (docs/verification.md)
-- Rule: every prompt frames the feed as "high-quality, informative news". A post and its card are written in the language of the story's primary item, which its source declares as `config["language"]` (`models.LANGUAGES`; absent means English). Topic tags stay English. A source's first fetch keeps only the last `cluster_window_days`.
+- Rule: every prompt frames the feed as "high-quality, informative news". A post and its card are written in the language of the story's primary item, which its source declares as `config["language"]` (`models.LANGUAGES`; absent means English). Topic tags stay English. A source's first fetch keeps only the last `cluster_window_days`. `http_mode` has a third step, `browser`, and a source with a closed feed can be a `listing`.
 
 ## Context
 
@@ -30,11 +30,20 @@ Ekot's robots.txt names `Claude-User` and `ChatGPT-User` and disallows them, whi
 
 Left out, and why:
 
-- VideoCardz: Cloudflare answers 403 on `/feed`, `/feed/rss2`, every category feed and both sitemaps, to every client measured: honest httpx, curl_cffi as Chrome and as Firefox, and Playwright's Chromium. The homepage and article pages answer 200 to curl_cffi and 403 to Playwright. No feed transport can reach it; only an adapter that reads the homepage as its list could.
 - The Decoder: robots.txt disallows `*/feed/` for every agent.
 - SVT's main feed: 56 of its 100 entries were regional news from all of Sweden, plus sport. The section feeds carry none of that. SVT utrikes was the reader's choice to leave out.
 - DN and SvD: paywalled, so the writer's fetch reads a paywall; SvD's feed carries no summary at all.
 - Anthropic, Meta AI, r/LocalLLaMA: no feed (404, 404, Reddit 403). Qwen's blog feed stopped in 2025-09.
+
+## VideoCardz, and a third transport mode
+
+Amends [0006](0006-two-http-transport-modes.md), which had two modes. The reader's ruling: polite where a site allows it, impersonate where it blocks, and a browser for anything still blocking, because this is one private reader and not a crawler. robots.txt stays the hard line of 0005, which is why The Decoder is still out.
+
+`http_mode: "browser"` is headless Chromium through Playwright, launched per request and closed after it, and is the third step of `MODE_LADDER`, so a feed blocked under `impersonate` escalates to it. An HTML page returns its rendered DOM; anything else returns the body, because Chromium otherwise hands back its XML viewer. Measured 2026-10-12: SVT's RSS fetched in browser mode parses to 20 items, and the SR article page renders with its text. No source needs it yet.
+
+It does not reach VideoCardz. Cloudflare answers 403 on `/feed`, `/feed/rss2`, every category feed and both sitemaps, to every client measured: honest httpx, curl_cffi as Chrome and as Firefox, and Playwright's Chromium. The front page and the articles answer 200 to curl_cffi and 403 to Playwright, so the browser is the worse client there. The route that works is the new `listing` adapter (`ingest/listing.py`): it reads the front page for links matching `link_pattern`, and takes each item's title and date from its article page, which `ExtractedItem` now carries for exactly that case. Measured: 50 links, a clean title and an `article:published_time` on each article read. Article extraction moved to `ingest/page.py` so both adapters share it.
+
+A list has no dates, so `since` cannot bound it. The front page carries "popular" posts weeks old (2026-09-13 and 2026-09-23 among the first two), and those are stored and enter the pipeline like any new item.
 
 ## Rejected
 

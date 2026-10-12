@@ -67,6 +67,21 @@ SEED_FEEDS: list[tuple[str, str] | tuple[str, str, dict]] = [
 ]
 
 
+#: Sources with no usable feed, read through the `listing` adapter (0063).
+#: VideoCardz's Cloudflare 403s its feeds and sitemaps to every client, a browser
+#: included, while curl_cffi gets the front page and the articles.
+SEED_LISTINGS: list[tuple[str, dict]] = [
+    (
+        "VideoCardz",
+        {
+            "list_url": "https://videocardz.com/",
+            "link_pattern": r"https://videocardz\.com/newz/[^/?#]+/?",
+            "http_mode": "impersonate",
+        },
+    ),
+]
+
+
 async def seed_sources(session: AsyncSession) -> int:
     count = (await session.execute(select(func.count(Source.id)))).scalar_one()
     if count > 0:
@@ -74,8 +89,10 @@ async def seed_sources(session: AsyncSession) -> int:
     for name, feed_url, *rest in SEED_FEEDS:
         config = {"feed_url": feed_url, **(rest[0] if rest else {})}
         session.add(Source(type_name="rss", name=name, config=config))
+    for name, config in SEED_LISTINGS:
+        session.add(Source(type_name="listing", name=name, config=config))
     await session.commit()
-    return len(SEED_FEEDS)
+    return len(SEED_FEEDS) + len(SEED_LISTINGS)
 
 
 # The starting narration catalog: Fish reference-ids the user selected. `params`

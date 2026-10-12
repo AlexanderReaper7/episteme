@@ -1,7 +1,8 @@
 from datetime import UTC, datetime
 
 from episteme.ingest.base import canonicalize_url, content_hash
-from episteme.ingest.rss import find_video_embeds, parse_feed
+from episteme.ingest.page import find_video_embeds
+from episteme.ingest.rss import parse_feed
 
 SAMPLE_RSS = b"""<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:media="http://search.yahoo.com/mrss/">
@@ -117,3 +118,42 @@ def test_a_new_source_keeps_only_the_cluster_window():
     fetched = datetime(2026, 10, 1, tzinfo=UTC)
     seen = Source(type_name="rss", name="S", config={}, last_fetched_at=fetched)
     assert _since(seen) == fetched
+
+
+def test_a_listing_yields_each_matching_article_once_in_page_order():
+    from episteme.ingest.listing import parse_listing
+
+    page = """<html><body>
+      <a href="/newz/first-story">POPULARFirst story</a>
+      <a href="/newz/second-story/"><img src="x.webp"></a>
+      <a href="https://videocardz.com/newz/first-story">First storyOct 10</a>
+      <a href="/newz/">all news</a>
+      <a href="/about">About</a>
+      <a href="https://example.org/newz/elsewhere">elsewhere</a>
+    </body></html>"""
+    items = parse_listing(page, "https://videocardz.com/", r"https://videocardz\.com/newz/[^/?#]+/?")
+    assert [item.url for item in items] == [
+        "https://videocardz.com/newz/first-story",
+        "https://videocardz.com/newz/second-story/",
+    ]
+    assert all(item.title is None and item.published_at is None for item in items)
+
+
+def test_the_page_title_loses_the_site_name_and_nothing_else():
+    from episteme.ingest.page import page_title
+
+    assert page_title("RTX 5090 ends - VideoCardz.com", "VideoCardz.com") == "RTX 5090 ends"
+    assert page_title("Ekot | Sveriges Radio", "Sveriges Radio") == "Ekot"
+    assert page_title("A - B - C", "Other") == "A - B - C"
+    assert page_title("Plain", None) == "Plain"
+
+
+def test_the_page_date_is_the_published_time_with_its_offset():
+    from datetime import UTC, datetime
+
+    from episteme.ingest.page import page_published
+
+    html = '<meta property="article:published_time" content="2026-10-10T07:21:07+00:00" />'
+    assert page_published(html) == datetime(2026, 10, 10, 7, 21, 7, tzinfo=UTC)
+    assert page_published("<html></html>") is None
+    assert page_published('<meta property="article:published_time" content="soon">') is None

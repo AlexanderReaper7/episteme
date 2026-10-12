@@ -1,33 +1,18 @@
 from __future__ import annotations
 
 import logging
-import re
 from datetime import UTC, datetime
 from typing import Any
 
 import feedparser
-import trafilatura
-from trafilatura import extract_metadata
 
 from ..models import Source
 from .base import ExtractedItem, RawItem
-from .http import normalize_mode, polite_get
+from .http import polite_get
+from .page import extract_page, source_host_gap, source_mode
 from .registry import register
 
 log = logging.getLogger("episteme.ingest.rss")
-
-
-def _mode(source: Source):
-    """The source's HTTP transport mode (see ingest.http)."""
-    return normalize_mode(source.config.get("http_mode"))
-
-
-def _host_gap(source: Source) -> float:
-    """Extra per-host request spacing for touchy rate limiters (0 = global only)."""
-    try:
-        return float(source.config.get("min_request_gap_seconds", 0))
-    except (TypeError, ValueError):
-        return 0.0
 
 
 def _entry_published(entry: Any) -> datetime | None:
@@ -47,30 +32,6 @@ def _entry_media(entry: Any) -> list[dict[str, Any]]:
         href = enclosure.get("href") or enclosure.get("url")
         if href and str(enclosure.get("type", "")).startswith("image/"):
             refs.append({"kind": "image", "url": href})
-    return refs
-
-
-# Actual video *embeds* only (iframe players), not mere links — a page's sidebar
-# and comments are full of YouTube links, but an embed means the article itself
-# presents the video. These populate kind="video" media_refs, the closed set the
-# writer's video sections draw from.
-_VIDEO_EMBED_RE = re.compile(
-    r"https?://(?:www\.)?"
-    r"(?:youtube(?:-nocookie)?\.com/embed/[\w-]{6,}|player\.vimeo\.com/video/\d+)"
-)
-
-
-def find_video_embeds(html: str, limit: int = 3) -> list[dict[str, Any]]:
-    refs: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for match in _VIDEO_EMBED_RE.finditer(html):
-        url = match.group(0)
-        if url in seen:
-            continue
-        seen.add(url)
-        refs.append({"kind": "video", "url": url})
-        if len(refs) >= limit:
-            break
     return refs
 
 
@@ -115,9 +76,9 @@ class RssAdapter:
             conditional_headers["If-Modified-Since"] = source.http_last_modified
         response = await polite_get(
             feed_url,
-            mode=_mode(source),
+            mode=source_mode(source),
             extra_headers=conditional_headers,
-            host_gap_seconds=_host_gap(source),
+            host_gap_seconds=source_host_gap(source),
         )
         if response.status_code == 304:
             log.info("Feed unchanged (304): %s", feed_url)
@@ -128,22 +89,4 @@ class RssAdapter:
         return parse_feed(response.content, since)
 
     async def extract(self, item: RawItem, source: Source) -> ExtractedItem:
-        response = await polite_get(
-            item.url, mode=_mode(source), host_gap_seconds=_host_gap(source)
-        )
-        response.raise_for_status()
-        # favor_recall keeps more of the body ("prefer more text even when unsure")
-        # so short-but-real articles aren't reduced to a caption. Outbound links
-        # (e.g. a "Read more" to a richer source) live outside the main content and
-        # are NOT recoverable here — the research agent parses those from raw HTML
-        # via research.tools.fetch_page instead.
-        text = trafilatura.extract(response.text, include_comments=False, favor_recall=True)
-        media_refs = []
-        try:
-            metadata = extract_metadata(response.text)
-            if metadata is not None and metadata.image:
-                media_refs.append({"kind": "image", "url": metadata.image})
-        except Exception:  # metadata is best-effort; never fail extraction over it
-            pass
-        media_refs.extend(find_video_embeds(response.text))
-        return ExtractedItem(text=text, media_refs=media_refs)
+        return await extract_page(item.url, source)

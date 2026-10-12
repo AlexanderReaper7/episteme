@@ -5,7 +5,7 @@ throttle across all outbound requests (min-gap clamp over a normal distribution)
 so no matter how many sources or items are queued, upstream servers see slow,
 human-ish request pacing.
 
-Two transport *modes*, chosen per source (`http_mode` in the Source config):
+Three transport *modes*, chosen per source (`http_mode` in the Source config):
 
 - ``polite`` (default): an honest httpx client identifying as `user_agent()`.
   Correct and truthful; the right choice for any source that accepts it.
@@ -17,9 +17,14 @@ Two transport *modes*, chosen per source (`http_mode` in the Source config):
   we *look*, never how hard we hit — the throttle, conditional GETs and 429
   cooldowns all still apply. Opt a source in only after checking robots.txt
   permits the path, and never use it to reach anything robots.txt disallows.
+- ``browser``: headless Chromium through Playwright, launched for one request and
+  closed after it. For a site that answers only a browser that runs its script.
+  An HTML page comes back as the DOM after the page has rendered; anything else,
+  a feed included, as the response body, since Chromium would otherwise hand back
+  its XML viewer. Same throttle, same robots.txt rule.
 
-Escalation (policy, applied in worker.tasks): a source blocked in ``polite`` mode
-is bumped to ``impersonate`` and retried once, then the working mode is persisted.
+Escalation (policy, applied in worker.tasks): a source whose feed is blocked is
+bumped one step up the ladder and retried once, then the working mode is persisted.
 """
 
 import asyncio
@@ -35,10 +40,10 @@ from curl_cffi import requests as cffi
 
 from ..config import settings
 
-HttpMode = Literal["polite", "impersonate"]
+HttpMode = Literal["polite", "impersonate", "browser"]
 DEFAULT_MODE: HttpMode = "polite"
 # Ordered from most honest to most aggressive; escalate_mode walks this forward.
-MODE_LADDER: tuple[HttpMode, ...] = ("polite", "impersonate")
+MODE_LADDER: tuple[HttpMode, ...] = ("polite", "impersonate", "browser")
 
 _lock = asyncio.Lock()
 _last_request_at: float = 0.0
@@ -100,7 +105,7 @@ class FetchResponse:
 
 
 def normalize_mode(value: str | None) -> HttpMode:
-    return "impersonate" if value == "impersonate" else DEFAULT_MODE
+    return value if value in MODE_LADDER else DEFAULT_MODE  # type: ignore[return-value]
 
 
 def escalate_mode(mode: str | None) -> HttpMode | None:
@@ -134,6 +139,12 @@ async def polite_get(
     `host_gap_seconds` adds per-host spacing on top of the global throttle (see
     polite_wait) — adapters pass the source's `min_request_gap_seconds` config."""
     await polite_wait(urlparse(url).hostname, host_gap_seconds)
+    if mode == "browser":
+        if not follow_redirects:
+            # A browser follows every hop itself, so the research fetcher's
+            # per-hop SSRF check could not run. It never asks for this mode.
+            raise ValueError("browser mode always follows redirects")
+        return await _browser_get(url, extra_headers)
     if mode == "impersonate":
         # curl_cffi supplies a full browser header set (UA, sec-ch-ua, Accept, ...)
         # matching the impersonated profile; we add only conditional-GET headers.
@@ -169,6 +180,32 @@ async def polite_get(
     ) as client:
         response = await client.get(url, extensions=extensions)
     return FetchResponse(response.status_code, response.content, response.text, response.headers)
+
+
+async def _browser_get(url: str, extra_headers: dict[str, str] | None) -> FetchResponse:
+    """One navigation in a fresh headless Chromium (see the module docstring)."""
+    from playwright.async_api import async_playwright  # browsers exist in the image only
+
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch()
+        try:
+            context = await browser.new_context(extra_http_headers=extra_headers or {})
+            page = await context.new_page()
+            response = await page.goto(
+                url, wait_until="networkidle", timeout=settings.http_timeout_seconds * 1000
+            )
+            if response is None:  # same-document navigation; cannot happen for a fresh page
+                raise FetchError(599, httpx.Headers())
+            headers = httpx.Headers(await response.all_headers())
+            if "html" in headers.get("content-type", ""):
+                text = await page.content()
+                content = text.encode()
+            else:
+                content = await response.body()
+                text = content.decode(errors="replace")
+            return FetchResponse(response.status, content, text, headers)
+        finally:
+            await browser.close()
 
 
 def parse_retry_after(value: str | None) -> int | None:
