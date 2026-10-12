@@ -45,3 +45,4 @@ def test_qa_is_told_not_to_translate():
     ).system
     assert "written in Swedish" in system
     assert "never translate" in system
+

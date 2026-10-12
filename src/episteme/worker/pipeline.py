@@ -56,11 +56,12 @@ _TAG_RE = re.compile(r"<[^>]+>")
 
 
 def _plain_text(item: SourceItem) -> str:
-    if item.extracted_text:
-        return item.extracted_text
-    if item.raw_content:
-        return _TAG_RE.sub(" ", item.raw_content)
-    return ""
+    """The item's text: the extracted page or the feed's summary, whichever says
+    more. A page that renders its body in script extracts to its title alone, and
+    preferring any extraction hid a whole feed summary behind it (Ekot, 0063)."""
+    extracted = item.extracted_text or ""
+    summary = _TAG_RE.sub(" ", item.raw_content) if item.raw_content else ""
+    return extracted if len(extracted) >= len(summary.strip()) else summary
 
 
 def _item_time(item: SourceItem) -> datetime:

@@ -24,11 +24,13 @@ A first fetch is bounded by `cluster_window_days` (`tasks._since`). An item olde
 
 ## Sources added the same day
 
-Tech: TechPowerUp, Tom's Hardware, Chips and Cheese, ServeTheHome, SweClockers (sv), Phoronix, LWN, IEEE Spectrum, Ars Technica Gadgets. AI: Google DeepMind, Mistral, OpenAI, Hugging Face, Interconnects, Sebastian Raschka, Simon Willison, Ars Technica AI, Import AI. Swedish (sv): SVT inrikes, ekonomi, vetenskap and Väst, forskning.se.
+Tech: TechPowerUp, Tom's Hardware, Chips and Cheese, ServeTheHome, SweClockers (sv), Phoronix, LWN, IEEE Spectrum, Ars Technica Gadgets. AI: Google DeepMind, Mistral, OpenAI, Hugging Face, Interconnects, Sebastian Raschka, Simon Willison, Ars Technica AI, Import AI. Swedish (sv): SVT inrikes, ekonomi, vetenskap and Väst, forskning.se, and Sveriges Radio's Ekot, added the same evening.
+
+Ekot's robots.txt names `Claude-User` and `ChatGPT-User` and disallows them, while its `*` group permits `/artikel/`. The reader ruled that its `*` group is what applies to this client: one private reader, not a crawler, polite where a site allows it and impersonating where it blocks (0005, 0006). Akamai 403s the honest client on every article, so the row starts at `impersonate`. The page renders its text in script and extracts to its title alone, 65 characters, while the feed summary carries the whole story. `pipeline._plain_text` used to prefer any extraction; it now takes whichever of the two is longer. A browser renders the same three sentences the feed already has, measured with Playwright the same day, so a browser buys nothing there.
 
 Left out, and why:
 
-- VideoCardz: Cloudflare answers 403 on `/feed`, `/feed/rss2` and every category feed, even to the impersonating transport, while the homepage answers 200 and the HTML advertises no feed. A feed the publisher closes is not worked around (0005).
+- VideoCardz: Cloudflare answers 403 on `/feed`, `/feed/rss2`, every category feed and both sitemaps, to every client measured: honest httpx, curl_cffi as Chrome and as Firefox, and Playwright's Chromium. The homepage and article pages answer 200 to curl_cffi and 403 to Playwright. No feed transport can reach it; only an adapter that reads the homepage as its list could.
 - The Decoder: robots.txt disallows `*/feed/` for every agent.
 - SVT's main feed: 56 of its 100 entries were regional news from all of Sweden, plus sport. The section feeds carry none of that. SVT utrikes was the reader's choice to leave out.
 - DN and SvD: paywalled, so the writer's fetch reads a paywall; SvD's feed carries no summary at all.

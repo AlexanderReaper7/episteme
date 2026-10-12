@@ -299,3 +299,17 @@ def test_writer_seed_lists_available_media_only_when_present():
     assert "Available media" in seed
     assert "https://cdn.example.org/webb.jpg (from ESA Webb)" in seed
     assert "Available media" not in _writer_seed(["[A] title\nbody"], {})
+
+
+def test_a_title_only_extraction_does_not_hide_the_feed_summary():
+    """Ekot's pages render their text in script, so the page extracts to its
+    title while the feed carries the three sentences of the story."""
+    from types import SimpleNamespace
+
+    from episteme.worker.pipeline import _plain_text
+
+    thin = SimpleNamespace(extracted_text="A title", raw_content="<p>Three whole sentences.</p>")
+    assert "Three whole sentences." in _plain_text(thin)
+    full = SimpleNamespace(extracted_text="A long article body " * 20, raw_content="<p>Short.</p>")
+    assert _plain_text(full) == full.extracted_text
+    assert _plain_text(SimpleNamespace(extracted_text=None, raw_content=None)) == ""

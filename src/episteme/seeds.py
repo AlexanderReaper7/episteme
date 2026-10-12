@@ -56,6 +56,14 @@ SEED_FEEDS: list[tuple[str, str] | tuple[str, str, dict]] = [
     ("SVT Vetenskap", "https://www.svt.se/nyheter/vetenskap/rss.xml", {"language": "sv"}),
     ("SVT Väst", "https://www.svt.se/nyheter/lokalt/vast/rss.xml", {"language": "sv"}),
     ("forskning.se", "https://www.forskning.se/feed/", {"language": "sv"}),
+    # Akamai 403s an honest client on every article; robots.txt permits /api/rss/
+    # and /artikel/. The article page renders its text in script, and the feed
+    # summary carries all of it, which `pipeline._plain_text` then prefers.
+    (
+        "Sveriges Radio Ekot",
+        "https://api.sr.se/api/rss/program/83",
+        {"http_mode": "impersonate", "language": "sv"},
+    ),
 ]
 
 
