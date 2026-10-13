@@ -171,7 +171,9 @@ uv run tools/build_pwa_icons.py
 
 # The launcher panel (0062): Lawnchair's swipe-right page. One-time setup on the
 # phone: type /lawnchairdebug in the drawer search, enable "ignore feed whitelist"
-# in the debug menu, pick Episteme as Feed provider (the sheet scrolls).
+# in the debug menu, pick Episteme as Feed provider (the sheet scrolls), then
+# allow Episteme to display over other apps: without it Android blocks every
+# start from the panel's window as a background launch (0062).
 GET    /api/feed  # the ranked feed as JSON cards (0061); ?cursor_at=&cursor_id= from next_cursor
 GET    /api/posts/458/feedback  # one card's recorded signals; the app re-reads it after every toggle
 

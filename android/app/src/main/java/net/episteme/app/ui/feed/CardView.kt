@@ -4,6 +4,9 @@ import net.episteme.app.ui.feedback.FeedbackControls
 import net.episteme.app.ui.feedback.TopicChips
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
@@ -28,8 +31,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -42,12 +47,17 @@ private val SHAPE = RoundedCornerShape(12.dp)
 
 /** One feed card. On a phone held upright the picture sits above the text,
  * the web's rule for a window taller than it is wide (0052). Without
- * [onToggle] it has no feedback controls, as in the launcher panel (0062). */
+ * [onToggle] it has no feedback controls, as in the launcher panel (0062).
+ * The panel also passes [onLongPress], and a [body] that replaces the summary
+ * and its show-more control, because there a tap expands the card instead. */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun CardView(
     card: Card,
     onOpen: () -> Unit,
     modifier: Modifier = Modifier,
+    onLongPress: (() -> Unit)? = null,
+    body: (@Composable () -> Unit)? = null,
     onToggle: ((String) -> Unit)? = null,
     onTopic: (slug: String, kind: String) -> Unit = { _, _ -> },
 ) {
@@ -55,9 +65,12 @@ fun CardView(
         "article" -> Palette.articleBorder
         else -> Palette.border
     }
+    // Card's own onClick has no long press, so the panel's card is a plain Card
+    // under a combinedClickable, clipped first so the ripple keeps the corners.
+    val clicks = if (onLongPress == null) Modifier.clickable(onClick = onOpen)
+    else Modifier.combinedClickable(onClick = onOpen, onLongClick = onLongPress)
     Card(
-        onClick = onOpen,
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth().clip(SHAPE).then(clicks),
         shape = SHAPE,
         // Explicit, because `contentColorFor(cardBg)` matches `surfaceVariant`
         // first and would hand every card the muted colour.
@@ -73,7 +86,7 @@ fun CardView(
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.SemiBold,
             )
-            card.summary?.let { Summary(it) }
+            if (body != null) body() else card.summary?.let { Summary(it) }
             if (card.topics.isNotEmpty()) {
                 Spacer(Modifier.size(8.dp))
                 TopicChips(card.topics)
@@ -153,14 +166,7 @@ private fun Summary(text: String) {
     Spacer(Modifier.size(6.dp))
     Layout(
         content = {
-            Text(
-                text,
-                style = MaterialTheme.typography.bodyMedium,
-                color = Palette.text.copy(alpha = 0.85f),
-                maxLines = if (expanded) Int.MAX_VALUE else 4,
-                overflow = TextOverflow.Ellipsis,
-                onTextLayout = { overflow.clamped = it.hasVisualOverflow },
-            )
+            SummaryText(text, clamped = !expanded, onTextLayout = { overflow.clamped = it.hasVisualOverflow })
             TextButton(onClick = { expanded = !expanded }, contentPadding = PaddingValues(0.dp)) {
                 Text(if (expanded) "Show less" else "Show more", style = MaterialTheme.typography.labelMedium)
             }
@@ -174,6 +180,19 @@ private fun Summary(text: String) {
             c?.place(0, b.height)
         }
     }
+}
+
+/** The summary's text alone, clamped to four lines or whole. */
+@Composable
+fun SummaryText(text: String, clamped: Boolean, onTextLayout: (TextLayoutResult) -> Unit = {}) {
+    Text(
+        text,
+        style = MaterialTheme.typography.bodyMedium,
+        color = Palette.text.copy(alpha = 0.85f),
+        maxLines = if (clamped) 4 else Int.MAX_VALUE,
+        overflow = TextOverflow.Ellipsis,
+        onTextLayout = onTextLayout,
+    )
 }
 
 private class Overflow {

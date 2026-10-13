@@ -1,6 +1,8 @@
 package net.episteme.app.panel
 
 import android.content.Context
+import android.provider.Settings
+import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -33,7 +35,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.flow.distinctUntilChanged
 import net.episteme.app.data.Api
 import net.episteme.app.ui.Route
-import net.episteme.app.ui.feed.CardView
 import net.episteme.app.ui.feed.FeedViewModel
 import net.episteme.app.ui.openExternal
 import net.episteme.app.ui.openInApp
@@ -43,13 +44,30 @@ import net.episteme.app.ui.theme.Palette
 // How close to the end the next page is asked for, as in FeedScreen.
 private const val PREFETCH = 5
 
-/** Where a tap in the panel goes: a page of ours opens the app on it, anything
- * off-site a Custom Tab, the same split as inside the app (Routes.kt). */
-fun openFromPanel(context: Context, api: Api, destination: String, title: String) {
+/** Where opening something from the panel goes: a page of ours opens the app
+ * on it, anything off-site a Custom Tab, the same split as inside the app
+ * (Routes.kt). A null [destination] just brings the app forward. */
+fun openFromPanel(context: Context, api: Api, destination: String?, title: String) {
+    if (!mayStartActivities(context)) return
+    if (destination == null) return openInApp(context, null)
     when (val r = route(api, destination, title)) {
         is Route.External -> openExternal(context, r.url)
         is Route.Native -> openInApp(context, destination, title)
     }
+}
+
+/**
+ * Whether the panel can start an activity, and a toast saying how when it
+ * cannot. The panel's window sits on the launcher's token, so Android counts
+ * our process as having no visible window and blocks every start from it as a
+ * background activity launch, silently (0062). Lawnchair binds us without
+ * `BIND_ALLOW_ACTIVITY_STARTS`, which would have exempted us. "Display over
+ * other apps" is the exemption left; the panel never draws over anything.
+ */
+private fun mayStartActivities(context: Context): Boolean {
+    if (Settings.canDrawOverlays(context)) return true
+    Toast.makeText(context, "To open from here, allow Episteme to display over other apps", Toast.LENGTH_LONG).show()
+    return false
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -89,7 +107,7 @@ fun PanelContent(panel: Panel, api: Api, feed: FeedViewModel, glance: GlanceView
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier
-                        .clickable { openInApp(panel, null) }
+                        .clickable { openFromPanel(panel, api, null, "") }
                         .padding(horizontal = 4.dp, vertical = 8.dp),
                 )
             }
@@ -106,7 +124,7 @@ fun PanelContent(panel: Panel, api: Api, feed: FeedViewModel, glance: GlanceView
                 )
             }
             items(feedState.cards, key = { it.postId }, contentType = { it.kind }) { card ->
-                CardView(card = card, onOpen = { open(card.destination, card.title) })
+                PanelCard(card = card, api = api, open = open)
             }
             item(key = "footer") {
                 Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {

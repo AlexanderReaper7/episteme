@@ -1,9 +1,9 @@
 # 0062. The launcher's left panel is Episteme, and Glance has an optional JSON twin
 
 - Date: 2026-10-11
-- Status: decided 2026-10-11, built, partly watched (docs/verification.md)
+- Status: decided 2026-10-11, built, partly watched (docs/verification.md). Amended 2026-10-14: a tap expands a feed card, a long press opens it, and opening needs "Display over other apps".
 - Amends: [0046](0046-a-correspondent-files-finished-content.md), whose Glance block was HTML only. The HTML block stays required.
-- Rule: the app's `panel/PanelService` answers the launcher-overlay protocol through `android/launcherclient/`, a vendored copy of Neo Feed's `google-gsa` module. The panel shows Glance, then the ranked feed, and records no feedback. A correspondent MAY serve `GET /c/<slug>/glance.json`; one that does not is drawn by a WebView of `/glance/<slug>`.
+- Rule: the app's `panel/PanelService` answers the launcher-overlay protocol through `android/launcherclient/`, a vendored copy of Neo Feed's `google-gsa` module. The panel shows Glance, then the ranked feed, and records no feedback. A tap on a feed card expands it in place and a long press opens it in the app; a Glance link opens on a tap. A correspondent MAY serve `GET /c/<slug>/glance.json`; one that does not is drawn by a WebView of `/glance/<slug>`.
 
 ## Context
 
@@ -11,7 +11,9 @@ The phone runs Lawnchair 15. Swiping right on its home screen opens a "feed prov
 
 ## Decision
 
-**The panel is Glance on top, then the feed, read-only.** The panel is for glancing. Liking, steering and the article itself happen in the app, which a tap opens: a card for a post opens the native article, an off-site card a Custom Tab, a Glance heading the correspondent's page at its anchor (`Routes.kt:openInApp`, `panel/PanelContent.kt:openFromPanel`). The feed is the app's own `FeedViewModel`, so the panel has the same pages, cursor and duplicate rule and no second ranking.
+**The panel is Glance on top, then the feed, read-only.** The panel is for glancing. Liking and steering happen in the app. A tap on a feed card expands it in place and a second tap collapses it (`panel/PanelCard.kt`, amended 2026-10-14, the reader's call). A card for one of our posts expands to the post's sections, fetched from `/api/posts/{id}`. Any other card has no body the API serves: an aggregate's article is off-site and a filed post's page is its correspondent's, so it expands to its whole summary, which the feed already sent. Expanding records nothing, and `/api/posts/{id}` records nothing either. A long press opens the card in the app: a post the native article, an off-site card a Custom Tab, a lunch card the correspondent's page at its anchor. Glance blocks keep the tap, which opens the correspondent's page (`Routes.kt:openInApp`, `panel/PanelContent.kt:openFromPanel`).
+
+**Opening anything from the panel needs "Display over other apps".** Until 2026-10-14 a tap was meant to open the app and did nothing. Android dropped the start as a background activity launch. Measured on the emulator (API 37, Lawnchair 16.Dev `4793ba3` pulled from the phone), `ActivityTaskManager` logged `Background activity launch blocked` with `callingUidHasVisibleActivity: false`, `callingUidHasNonAppVisibleWindow: false`, `callingUidProcState: BOUND_TOP`, result `BAL_BLOCK`. The panel's window is an application window on the launcher's token, so the system counts no visible window for our process. The process is bound by the top app, but that exempts it only when the binder passes `BIND_ALLOW_ACTIVITY_STARTS`, and Lawnchair binds with `BIND_AUTO_CREATE | BIND_IMPORTANT` (`LauncherClient.java`). The exemption left to an app is `SYSTEM_ALERT_WINDOW`. With it granted, the same start logged `BAL_ALLOW_SAW_PERMISSION` and opened. Neo Feed, whose binder is vendored here, declares the same permission. The panel never draws over another app with it. Without the grant, opening shows a toast naming the setting instead of failing silently. The feed is the app's own `FeedViewModel`, so the panel has the same pages, cursor and duplicate rule and no second ranking.
 
 **The protocol is vendored, not written.** The overlay protocol has no published specification. Lawnchair's `ILauncherOverlay.aidl` is the client side, and the service side is a reverse-engineered Google library. Neo Feed's `google-gsa` module is a working copy of the service side, licensed GPL-3.0, which is compatible with Episteme's AGPL-3.0. It is copied into `android/launcherclient/` at commit `8dbe097`, and its README lists every change. Writing the binder from scratch would have meant re-deriving the window handling and the slide gesture, which this code already does.
 
@@ -21,7 +23,7 @@ The phone runs Lawnchair 15. Swiping right on its home screen opens a "feed prov
 
 **Glance is drawn natively where the correspondent offers data, and by a WebView where it does not.** `GET /api/glance` lists the enabled blocks as `[{slug, label, json}]`, where `json` says whether the plugin's router declares `GET /glance.json` (`correspondents/glance.py:serves_json`). That block is `{heading, href, groups: [{name, lines: [{text, label}]}], empty}`. The fields cover what a block says, never how it looks, so a native renderer can draw any correspondent's block without knowing the correspondent. `empty` keeps 0046's rule that an empty block reads as nothing to say, never as down. The contract is optional, the reader's call on 2026-10-11. A correspondent with only HTML is drawn from `GET /glance/<slug>`, its block alone on a page, untitled because the panel's card already titles it. The WebView reports the page's height and sends every link through the panel's own routing. Matsedel serves both from one choice of day (`views._glance_day`), so the two cannot disagree about which day they show.
 
-**Lawnchair accepts only whitelisted providers, by signing certificate.** Episteme is not on the whitelist and is sideloaded with a debug key. To use it, open Lawnchair's debug menu (type `/lawnchairdebug` into the app drawer's search), turn on "ignore feed whitelist", then pick Episteme in the "Feed provider" setting. The provider list is a sheet that runs past the bottom of a landscape screen, so drag it up to see Episteme.
+**Lawnchair accepts only whitelisted providers, by signing certificate.** Episteme is not on the whitelist and is sideloaded with a debug key. To use it, open Lawnchair's debug menu (type `/lawnchairdebug` into the app drawer's search), turn on "ignore feed whitelist", then pick Episteme in the "Feed provider" setting. The provider list is a sheet that runs past the bottom of a landscape screen, so drag it up to see Episteme. Then allow Episteme to display over other apps (Settings, Apps, Episteme), or `adb shell appops set net.episteme.app SYSTEM_ALERT_WINDOW allow`, or nothing in the panel opens.
 
 ## Rejected
 
@@ -29,9 +31,11 @@ The phone runs Lawnchair 15. Swiping right on its home screen opens a "feed prov
 - **Glance as HTML only, in a WebView.** One WebView per block inside a scrolling list is slow to draw and does not look native. It survives as the fallback, not as the default.
 - **A required JSON block.** That would be a second renderer every correspondent has to keep in step, including an external one that only ever wanted to serve HTML.
 - **Writing the binder ourselves.** See above. The vendored code needed two numbers changed, not a rewrite.
+- **A tap that opens the app** (2026-10-11 to 2026-10-14). The reader wanted the panel to read a card without leaving the home screen, and opening became the long press.
 
 ## Consequences
 
 - `android/launcherclient/` is GPL-3.0 inside an AGPL-3.0 repository and keeps its own LICENSE. Diffing it against upstream at the recorded commit shows only the changes its README lists.
 - A launcher other than Lawnchair may number the transactions differently. Only Lawnchair 15 Beta 3 has been measured.
+- If Lawnchair ever binds with `BIND_ALLOW_ACTIVITY_STARTS`, the permission stops being needed. Asking upstream for that flag is the fix at the root; the permission is the fix inside this repository.
 - `route()` now keeps a URL's fragment. Before this, a lunch card's `/c/matsedel#day-…` opened at the top of the week inside the app.

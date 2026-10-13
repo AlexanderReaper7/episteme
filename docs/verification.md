@@ -33,7 +33,9 @@ Watch the next pipeline run rather than assuming these.
   Not yet seen:
 
   - Content loading and animating, the title row, the top inset under the status bar.
-  - A card tap opening the native article, an off-site card's Custom Tab, the Glance heading opening `/c/matsedel#day-…` at its day.
+  - On the phone, a feed card expanding and collapsing on a tap, and a long press opening a post card's native article and an off-site card's Custom Tab. Built 2026-10-14 and watched on the emulator only (API 37, the phone's own Lawnchair 16.Dev APK, the live server through `adb reverse`): an aggregate card's summary unclamped on a tap and clamped again on a second, an article card's sections replaced its summary, a long press without "Display over other apps" showed the toast and started nothing, and with it granted a long press opened the native article (`BAL_ALLOW_SAW_PERMISSION`). The Custom Tab was watched opening from the build before the guard, by the same path.
+  - The Glance heading opening `/c/matsedel#day-…` at its day. It goes through the same `openFromPanel`, so it could not have opened before the grant either.
+  - Installing an update while Lawnchair holds the panel. On the emulator the panel did not open again until Lawnchair was force-stopped.
   - The home key closing the panel (transaction 6), pull to refresh, paging past the first 20 cards, the 15-minute refetch on resume.
   - A Glance block with dishes in it. The only check so far was on a Saturday, when the JSON block was the `empty` sentence.
   - **The WebView fallback at all.** Every plugin in the tree serves JSON, so `/glance/<slug>` in the panel has only been tested on the server (`tests/test_glance.py`). The height report and the link routing have never run.

@@ -188,7 +188,7 @@ A Glance block as data rather than HTML, `GET /c/<slug>/glance.json` (0062): a h
 
 ### Panel
 
-The launcher's left page on the phone, the screen a swipe right on the home screen opens (0062). The app's `panel/PanelService` serves it to Lawnchair through the launcher-overlay protocol. It shows Glance, then the ranked feed, and records no feedback; a tap opens the app or a Custom Tab.
+The launcher's left page on the phone, the screen a swipe right on the home screen opens (0062). The app's `panel/PanelService` serves it to Lawnchair through the launcher-overlay protocol. It shows Glance, then the ranked feed, and records no feedback. A tap on a feed card expands it in place; a long press opens it in the app or a Custom Tab.
 
 ### Matsedel
 
