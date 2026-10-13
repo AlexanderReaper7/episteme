@@ -7,7 +7,7 @@ This file is rules and navigation only. The other four:
 - [docs/architecture.md](docs/architecture.md) is the spec: data model, pipeline stages, feed-composition rules, roadmap.
 - [GLOSSARY.md](GLOSSARY.md) is what every load-bearing word means. Renaming a concept means editing it in the same commit.
 - [docs/decisions/](docs/decisions/README.md) is why anything is the way it is, and what it was measured against. **`(0017)` below means `docs/decisions/0017-*.md`.** Grep it before changing something that looks arbitrary; add to it when we decide something new.
-- [docs/verification.md](docs/verification.md) is what is built but not yet watched running. The agent maintains it. `TODO.md` is the user's, do not write to it.
+- [docs/verification.md](docs/verification.md) is what is built but not yet watched running. The agent maintains it. `TODO.md`: agents add an item the user agreed to and delete it when done. They implement no item without the user's approval, and name any item that influences a design decision.
 
 ## Current state
 

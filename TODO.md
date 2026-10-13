@@ -3,9 +3,7 @@
 This is a list of things to maybe do, in no particular order, and a place to keep notes and ideas.
 
 >[!WARNING]
->AI agents should not write here nor implement any of these TODOs without explicit approval from the human operator.
->
->They can inform the design of the system, but must be mentioned explicitly, and approval asked for, when they influence decisions.
+>Agents add an item the user agreed to and delete it when done. They implement no item without the user's approval, and name any item that influences a design decision.
 
 ---
 
@@ -23,3 +21,7 @@ This is a list of things to maybe do, in no particular order, and a place to kee
 - make sure icons are vendored.
 - admin topics nav is broken
 - time sensitive posts: today's lunch menu expires when it is no longer available, typically 1400. at that point said post becomes purely historical and has reduced value to the reader.
+- the Glance heading opening Matsedel at its day has not been tapped on the phone since the panel's opening fix (0062).
+- no unit test covers the launcher panel.
+- on the emulator, Lawnchair stopped showing the panel after an app update until it was force-stopped. Seen once on the phone without that.
+- the Android app and the feed in the launcher need a lot more work than the panel cards (the user, 2026-10-14; no detail yet).
