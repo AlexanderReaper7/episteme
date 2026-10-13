@@ -35,7 +35,6 @@ Watch the next pipeline run rather than assuming these.
   - Content loading and animating, the title row, the top inset under the status bar.
   - ~~Feed card touch on the phone.~~ Watched 2026-10-14 on the phone (release build, Lawnchair 16.Dev `4793ba3`, the live server over the tailnet). An off-site card (SVT Väst) and an article card (post "När rekryteringen misslyckas") each expanded on a tap and collapsed on a second, the article to its sections, and neither tap started an activity. Without "Display over other apps", a long press showed the toast and started nothing. Granted through `appops`, a long press opened the off-site card in a Firefox Custom Tab and the article card in the native article, both logged `BAL_ALLOW_SAW_PERMISSION`. No feedback row was written in that half hour. The same was watched first on the emulator, where the old tap logged `BAL_BLOCK`.
   - The Glance heading opening `/c/matsedel#day-…` at its day. It goes through the same `openFromPanel`, so it could not have opened before the grant either.
-  - Installing an update while Lawnchair holds the panel. On the emulator the panel did not open again until Lawnchair was force-stopped; on the phone it opened without that, once.
   - The home key closing the panel (transaction 6), pull to refresh, paging past the first 20 cards, the 15-minute refetch on resume.
   - A Glance block with dishes in it. The only check so far was on a Saturday, when the JSON block was the `empty` sentence.
   - **The WebView fallback at all.** Every plugin in the tree serves JSON, so `/glance/<slug>` in the panel has only been tested on the server (`tests/test_glance.py`). The height report and the link routing have never run.
@@ -204,6 +203,8 @@ Watch the next pipeline run rather than assuming these.
   5. **A reader-requested story writing through a pause and reaching a post.** The exemption itself is verified (see 0037's consequences): condense ran under a live `resource` pause where the same job previously returned 0 in 0.068s. Nobody has yet seen the main-model pass finish, for the budget reason below.
 
 ## Watched failing, not yet fixed
+
+- **Lawnchair stops showing the panel after Episteme is updated** (0062). Seen once, 2026-10-14, on the emulator (API 37, Lawnchair 16.Dev `4793ba3` pulled from the phone). After `adb install -r` of a new build, a swipe right on the home screen left the home screen in place, twice, a few seconds apart. The panel came back only after `am force-stop app.lawnchair.nightly`. On the phone, after one `adb install-multiple -r` of the release build, the panel opened on the first swipe with no restart. Not investigated: whether Lawnchair fails to rebind the overlay service when its package is replaced, and why the phone did not show it.
 
 - **The writer's turn cost outgrows `llm_timeout_seconds` on a dense source.** A later run of the same story did finish, and post 543 is published. What follows is the failing run.
 
