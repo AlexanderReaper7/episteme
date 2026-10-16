@@ -199,6 +199,8 @@ adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 # Macrobenchmark, which OxygenOS defeats twice (FeedScrollBenchmark's comment);
 # that module still GENERATES the profile, on the emulator, against its own URL.
 ANDROID_SERIAL=192.168.0.4:<port> android/frames.sh
+# JVM unit tests: the panel's routing and Glance loading (0062), the article sections. No device.
+(cd android && ./gradlew -q testDebugUnitTest)
 (cd android && ./gradlew :app:generateReleaseBaselineProfile -Pandroid.testInstrumentationRunnerArguments.androidx.benchmark.enabledRules=BaselineProfile)  # 12 min; after UI changes
 # The launcher icon's foreground is GENERATED from the same SVG as the PWA icons;
 # tests/test_icons.py fails when it is stale.

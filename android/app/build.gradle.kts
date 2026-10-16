@@ -80,4 +80,5 @@ dependencies {
     implementation(project(":launcherclient"))
     baselineProfile(project(":baselineprofile"))
     testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
 }

@@ -21,9 +21,7 @@
      database. The theme colour is what the Android status bar takes on. #}
   <link rel="manifest" href="{{ asset('manifest.webmanifest') }}">
   <meta name="theme-color" content="#000000">
-  <!-- Vendored htmx preferred; falls back to CDN until static/htmx.min.js exists. -->
-  <script src="{{ asset('htmx.min.js') }}"
-          onerror="var s=document.createElement('script');s.src='https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js';document.head.appendChild(s);"></script>
+  <script src="{{ asset('htmx.min.js') }}"></script>
   <script src="{{ asset('vendor/htmx-ext-preload.min.js') }}"></script>
   {# Fingerprinted vendor URLs for the lazily-loaded renderers (app.js resolves its
      dynamic imports through this map so those stay immutable-cacheable too). #}
