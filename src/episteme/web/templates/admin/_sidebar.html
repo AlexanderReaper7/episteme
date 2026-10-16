@@ -3,8 +3,12 @@
   {# Boosted nav (inherited from <body>), retargeted to #admin-main so only the inner
      region swaps and this sidebar stays in the DOM (no repaint / flash). The server
      returns just the admin_content block. Active state is synced client-side in
-     app.js, since the sidebar isn't reloaded for the server to restamp it. #}
-  <nav class="admin-sidebar-nav" hx-target="#admin-main">
+     app.js, since the sidebar isn't reloaded for the server to restamp it.
+     `preload="none"` because the extension only warms the browser's HTTP cache and
+     these pages send no validators, so a hover-preload was never reused: every
+     click fetched its page twice, 2.1 MB twice for Topics. Validators with SWR
+     would make it pay off, but would also repaint a pre-mutation page for 30s. #}
+  <nav class="admin-sidebar-nav" hx-target="#admin-main" preload="none">
     <a href="/admin" class="{{ 'active' if active == 'dashboard' else '' }}">{{ ico.icon("nav-dashboard") }} Dashboard</a>
     <a href="/admin/runs" class="{{ 'active' if active == 'runs' else '' }}">{{ ico.icon("nav-runs") }} Pipeline runs</a>
     <a href="/admin/jobs" class="{{ 'active' if active == 'jobs' else '' }}">{{ ico.icon("nav-jobs") }} Job queue</a>

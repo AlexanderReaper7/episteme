@@ -7,6 +7,8 @@ non-htmx access.
 admin_runs.html is used because its context is plain data (no DB), so we can exercise
 all three render modes as a unit test."""
 
+from html.parser import HTMLParser
+
 from starlette.requests import Request
 
 from episteme.web.templating import render
@@ -118,3 +120,42 @@ def test_htmx_request_without_known_target_falls_back_to_full_document():
         )
     )
     assert "<html" in html and "admin-sidebar-nav" in html
+
+
+class _PreloadOfLinks(HTMLParser):
+    """Each `<a>`'s effective `preload`, looked up the way htmx-ext-preload does:
+    the element's own attribute, else the nearest ancestor's."""
+
+    VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"}
+
+    def __init__(self):
+        super().__init__()
+        self.stack: list[tuple[str, dict]] = []
+        self.links: list[tuple[str, str | None, bool]] = []  # href, preload, in sidebar
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag in self.VOID:
+            return
+        self.stack.append((tag, attrs))
+        if tag == "a":
+            preload = next((a["preload"] for _, a in reversed(self.stack) if "preload" in a), None)
+            in_sidebar = any("admin-sidebar-nav" in (a.get("class") or "") for _, a in self.stack)
+            self.links.append((attrs.get("href"), preload, in_sidebar))
+
+    def handle_endtag(self, tag):
+        while self.stack and self.stack.pop()[0] != tag:
+            pass
+
+
+def test_admin_sidebar_links_are_not_preloaded():
+    """The preload extension does not keep what it fetches: it only warms the
+    browser's HTTP cache. The admin pages send no validators, so a hover-preload
+    was never reused and every sidebar click fetched its page twice - 2.1 MB twice
+    for /admin/topics (watched 2026-10-16). `<body preload="mouseover">` reaches
+    these links unless the sidebar opts out."""
+    parser = _PreloadOfLinks()
+    parser.feed(_body(render(_request({}), "admin/admin_runs.html", CTX)))
+    sidebar = [(href, preload) for href, preload, in_sidebar in parser.links if in_sidebar]
+    assert len(sidebar) == 7
+    assert [href for href, preload in sidebar if preload != "none"] == []
