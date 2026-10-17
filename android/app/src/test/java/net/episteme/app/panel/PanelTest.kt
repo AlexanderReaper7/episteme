@@ -78,6 +78,10 @@ class PanelTest {
         assertTrue(route(api(), "http://other.example:8200/post/458") is Route.External)
     }
 
+    @Test fun `a post path on our host but another port is off-site`() {
+        assertTrue(route(api(), "http://127.0.0.1:9000/post/458") is Route.External)
+    }
+
     private fun loaded(vm: GlanceViewModel, done: (GlanceState) -> Boolean): GlanceState =
         runBlocking { withTimeout(5_000) { vm.state.first(done) } }
 
